@@ -1,0 +1,30 @@
+import type { ResearchPackage } from "./research";
+
+export function narrationScript(research: Pick<ResearchPackage, "scenes">) {
+  return research.scenes.map((scene) => scene.narrationText.trim()).filter(Boolean).join("\n\n");
+}
+
+export function estimateSceneTimings(research: ResearchPackage, audioDurationSec: number, wordsPerMinute = 150, speakingRate = 1): ResearchPackage {
+  if (!Number.isFinite(audioDurationSec) || audioDurationSec <= 0) throw new Error("Durasi audio harus positif.");
+  const wpm = Number.isFinite(wordsPerMinute) && wordsPerMinute > 0 ? wordsPerMinute : 150;
+  const rate = Math.max(0.7, Math.min(1.3, speakingRate));
+  const weights = research.scenes.map((scene, index) => {
+    const text = scene.narrationText.trim();
+    const words = text.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length ?? 1;
+    const commas = text.match(/[,;:]/g)?.length ?? 0;
+    const sentenceEnds = text.match(/[.!?…]+/g)?.length ?? 0;
+    const scenePause = index < research.scenes.length - 1 ? 0.35 : 0;
+    return Math.max(0.1, words * 60 / (wpm * rate) + commas * 0.14 + sentenceEnds * 0.28 + scenePause);
+  });
+  const weightTotal = weights.reduce((total, weight) => total + weight, 0);
+  let cursor = 0;
+  const scenes = research.scenes.map((scene, index) => {
+    const startSec = cursor;
+    const endSec = index === research.scenes.length - 1
+      ? audioDurationSec
+      : Math.round((cursor + audioDurationSec * weights[index]! / weightTotal) * 1000) / 1000;
+    cursor = endSec;
+    return { ...scene, startSec, endSec };
+  });
+  return { ...research, targetDurationSec: Math.max(1, Math.ceil(audioDurationSec)), scenes };
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "id": "space-orbit-001",
+  "title": "Mengapa Planet Mengorbit Matahari?",
+  "category": "Sains & Antariksa",
+  "visualPreset": "animated-infographic",
+  "language": "id-ID",
+  "targetDurationSec": 24,
+  "aspectRatio": "9:16",
+  "narration": "Gravitasi Matahari menarik planet, sementara gerak maju planet membuatnya terus mengorbit.",
+  "references": [
+    {
+      "id": "nasa-gravity",
+      "title": "What Is Gravity?",
+      "publisher": "NASA",
+      "url": "https://spaceplace.nasa.gov/what-is-gravity/en/",
+      "checkedAt": "2026-10-24"
+    }
+  ],
+  "scenes": [
+    {"id":"orbit-01","order":1,"startSec":0,"endSec":8,"narrationText":"Matahari punya massa sangat besar.","onScreenText":"MATAHARI MENARIK PLANET","templateId":"infographic","visualDescription":"Matahari dan orbit planet.","motionCues":["zoom","pulse"],"sfxCues":[],"referenceIds":["nasa-gravity"]},
+    {"id":"orbit-02","order":2,"startSec":8,"endSec":16,"narrationText":"Gravitasinya menarik planet ke arah pusat.","onScreenText":"GRAVITASI MENARIK","templateId":"space-orbit","visualDescription":"Planet bergerak di orbit melingkar.","motionCues":["parallax","reveal"],"sfxCues":[],"referenceIds":["nasa-gravity"]},
+    {"id":"orbit-03","order":3,"startSec":16,"endSec":24,"narrationText":"Gerak maju planet membuatnya terus mengitari Matahari.","onScreenText":"GERAK + GRAVITASI = ORBIT","templateId":"space-orbit","visualDescription":"Lintasan orbit dan arah gerak planet.","motionCues":["pulse","fadeIn"],"sfxCues":[],"referenceIds":["nasa-gravity"]}
+  ]
+}

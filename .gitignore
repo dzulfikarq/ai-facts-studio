@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+data/jobs/
+data/bundle/
+renders/
+public/audio/*
+!public/audio/.gitkeep

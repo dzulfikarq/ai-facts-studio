@@ -1,0 +1,45 @@
+name: Render trusted research package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_path:
+        description: JSON package path already committed to this repository
+        required: true
+        default: samples/mountain-formation.json
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: facts-render-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: ffmpeg -version && ffprobe -version
+      - name: Validate and render package
+        env:
+          PACKAGE_PATH: ${{ inputs.package_path }}
+        run: npm run render -- "$PACKAGE_PATH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-facts-studio-render
+          path: |
+            renders/*.mp4
+            renders/*.manifest.json
+          if-no-files-found: error
+          retention-days: 7

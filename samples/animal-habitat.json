@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "id": "animal-habitat-001",
+  "title": "Mengapa Beruang Kutub Tidak Mudah Kedinginan?",
+  "category": "Hewan & Alam",
+  "visualPreset": "flat-2d-storytelling",
+  "language": "id-ID",
+  "targetDurationSec": 24,
+  "aspectRatio": "9:16",
+  "narration": "Beruang kutub hidup di lingkungan Arktik. Bulu dan lapisan lemak membantu mengurangi kehilangan panas.",
+  "references": [
+    {
+      "id": "wwf-polar-bear",
+      "title": "Polar Bear",
+      "publisher": "World Wildlife Fund",
+      "url": "https://www.worldwildlife.org/species/polar-bear",
+      "checkedAt": "2026-10-24"
+    }
+  ],
+  "scenes": [
+    {"id":"bear-01","order":1,"startSec":0,"endSec":8,"narrationText":"Arktik memiliki suhu yang sangat dingin.","onScreenText":"HIDUP DI ARKTIK","templateId":"animal-habitat","visualDescription":"Beruang kutub di lanskap es.","motionCues":["parallax","fadeIn"],"sfxCues":[],"referenceIds":["wwf-polar-bear"]},
+    {"id":"bear-02","order":2,"startSec":8,"endSec":16,"narrationText":"Bulu tebal membantu menjaga panas tubuh.","onScreenText":"BULU MENAHAN PANAS","templateId":"animal-habitat","visualDescription":"Lapisan bulu beruang.","motionCues":["zoom","reveal"],"sfxCues":[],"referenceIds":["wwf-polar-bear"]},
+    {"id":"bear-03","order":3,"startSec":16,"endSec":24,"narrationText":"Lapisan lemak juga menjadi insulasi.","onScreenText":"LEMAK SEBAGAI INSULASI","templateId":"animal-habitat","visualDescription":"Ilustrasi lapisan lemak sederhana.","motionCues":["pulse","fadeIn"],"sfxCues":[],"referenceIds":["wwf-polar-bear"]}
+  ]
+}

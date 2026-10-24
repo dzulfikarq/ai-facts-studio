@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "1.0",
+  "id": "mountain-formation-id",
+  "title": "Bagaimana Gunung Bisa Terbentuk?",
+  "category": "Sains & Antariksa",
+  "visualPreset": "cinematic-parallax",
+  "language": "id-ID",
+  "targetDurationSec": 56,
+  "aspectRatio": "9:16",
+  "narration": "Gunung terbentuk melalui proses geologi yang berlangsung sangat lama. Tumbukan lempeng dapat melipat dan mengangkat kerak bumi, sementara gunung api terbentuk dari magma yang mencapai permukaan.",
+  "references": [
+    {
+      "id": "usgs-plate-tectonics",
+      "title": "The Dynamic Earth: The Story of Plate Tectonics",
+      "publisher": "U.S. Geological Survey",
+      "url": "https://pubs.usgs.gov/gip/dynamic/dynamic.html",
+      "checkedAt": "2026-10-24"
+    },
+    {
+      "id": "britannica-himalayas",
+      "title": "Himalayas",
+      "publisher": "Encyclopaedia Britannica",
+      "url": "https://www.britannica.com/place/Himalayas",
+      "checkedAt": "2026-10-24"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene-01-hook",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 7,
+      "narrationText": "Pernah bertanya-tanya bagaimana batu raksasa bisa menjulang jadi gunung?",
+      "onScreenText": "DARI BATU JADI GUNUNG",
+      "templateId": "mountain-reveal",
+      "visualDescription": "Puncak gunung muncul dari awan saat matahari terbit.",
+      "motionCues": ["fadeIn", "zoom", "parallax"],
+      "sfxCues": ["soft-pop"],
+      "referenceIds": ["usgs-plate-tectonics"]
+    },
+    {
+      "id": "scene-02-plates",
+      "order": 2,
+      "startSec": 7,
+      "endSec": 15,
+      "narrationText": "Kerak bumi terbagi menjadi lempeng besar yang bergerak perlahan di atas mantel.",
+      "onScreenText": "LEMPENG TERUS BERGERAK",
+      "templateId": "plate-collision",
+      "visualDescription": "Dua lempeng bergerak saling mendekat.",
+      "motionCues": ["slide", "reveal", "pulse"],
+      "sfxCues": ["rumble"],
+      "referenceIds": ["usgs-plate-tectonics"]
+    },
+    {
+      "id": "scene-03-collision",
+      "order": 3,
+      "startSec": 15,
+      "endSec": 23,
+      "narrationText": "Saat dua lempeng benua bertumbukan, kerak di antaranya tertekan kuat.",
+      "onScreenText": "TUMBUKAN MENEKAN KERAK",
+      "templateId": "plate-collision",
+      "visualDescription": "Tepi lempeng tertekan dan material kerak terdorong ke atas.",
+      "motionCues": ["slide", "pulse", "zoom"],
+      "sfxCues": ["impact"],
+      "referenceIds": ["usgs-plate-tectonics"]
+    },
+    {
+      "id": "scene-04-folding",
+      "order": 4,
+      "startSec": 23,
+      "endSec": 31,
+      "narrationText": "Lapisan batuan dapat terlipat, tersesar, lalu terangkat membentuk pegunungan.",
+      "onScreenText": "LIPATAN BATUAN TERANGKAT",
+      "templateId": "folding-uplift",
+      "visualDescription": "Lapisan batuan terlipat dan terangkat secara bertahap.",
+      "motionCues": ["reveal", "scale", "parallax"],
+      "sfxCues": ["rumble"],
+      "referenceIds": ["usgs-plate-tectonics"]
+    },
+    {
+      "id": "scene-05-himalaya",
+      "order": 5,
+      "startSec": 31,
+      "endSec": 39,
+      "narrationText": "Himalaya terbentuk dari tumbukan India dan Eurasia, dan proses pengangkatan masih berlangsung.",
+      "onScreenText": "HIMALAYA: TUMBUKAN BENUA",
+      "templateId": "himalaya",
+      "visualDescription": "Jajaran puncak Himalaya terangkat di antara dua benua.",
+      "motionCues": ["zoom", "parallax", "fadeIn"],
+      "sfxCues": [],
+      "referenceIds": ["usgs-plate-tectonics", "britannica-himalayas"]
+    },
+    {
+      "id": "scene-06-volcano",
+      "order": 6,
+      "startSec": 39,
+      "endSec": 47,
+      "narrationText": "Ada juga gunung api, yang terbentuk ketika magma mencapai permukaan dan menumpuk.",
+      "onScreenText": "JALUR LAIN: GUNUNG API",
+      "templateId": "volcano",
+      "visualDescription": "Penampang gunung api dengan magma di dalam bumi.",
+      "motionCues": ["reveal", "pulse", "fadeIn"],
+      "sfxCues": ["rumble"],
+      "referenceIds": ["usgs-plate-tectonics"]
+    },
+    {
+      "id": "scene-07-takeaway",
+      "order": 7,
+      "startSec": 47,
+      "endSec": 56,
+      "narrationText": "Jadi, gunung adalah jejak bumi yang terus bergerak—dibentuk tumbukan, pengangkatan, atau aktivitas magma.",
+      "onScreenText": "BUMI SELALU BERUBAH",
+      "templateId": "mountain-reveal",
+      "visualDescription": "Gunung dan lapisan bumi membentuk komposisi penutup.",
+      "motionCues": ["zoom", "dissolve", "parallax"],
+      "sfxCues": ["soft-pop"],
+      "referenceIds": ["usgs-plate-tectonics"]
+    }
+  ]
+}

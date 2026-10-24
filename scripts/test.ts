@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
@@ -43,6 +44,18 @@ assert.equal(parseResearchPackage(badTemplate).success, false, "unknown template
 const noReference = structuredClone(mountain);
 noReference.scenes[0]!.referenceIds = ["missing-source"];
 assert.equal(parseResearchPackage(noReference).success, false, "unknown reference ID must fail");
+const captionSegments = createCaptionSegments("Awan badai bergerak. Muatan terpisah lalu kilat menyambar.", "MUATAN TERPISAH");
+assert.equal(captionSegments[0]!.startProgress, 0);
+assert.equal(captionSegments.at(-1)!.endProgress, 1);
+assert.ok(captionSegments.some((segment) => segment.emphasis.includes("muatan")), "caption emphasis can derive from on-screen text");
+assert.equal(captionSegmentsSchema.safeParse(captionSegments).success, true);
+const longCaptionSegments = createCaptionSegments("a ".repeat(999));
+assert.ok(longCaptionSegments.length <= 30, "auto captions must stay within manual schema segment limit");
+assert.ok(longCaptionSegments.every((segment) => segment.text.length <= 72), "auto caption phrases must stay bounded");
+assert.equal(captionSegmentsSchema.safeParse(longCaptionSegments).success, true);
+const phraseBoundaries = createCaptionSegments("Di dalam awan badai, air dan partikel es bergerak karena arus udara yang kuat.");
+assert.ok(phraseBoundaries.slice(0, -1).every((segment) => !/(?:dan|atau|karena|yang)$/i.test(segment.text)), "auto captions must not strand common connectors at phrase ends");
+assert.equal(captionSegmentsSchema.safeParse([{ ...captionSegments[0]!, endProgress: 0.5 }, { ...captionSegments.at(-1)!, startProgress: 0.6 }]).success, false, "manual caption segments must not gap/overlap");
 
 const unsafeVisual = structuredClone(parsedSamples.at(-1)!);
 unsafeVisual.scenes[0]!.visualComposition.layers[0]!.nodes[0] = {
@@ -148,4 +161,4 @@ try { await unavailableGemini.synthesize({ text: "test", locale: "id-ID", voiceI
 catch (error) { unavailableCode = (error as { code?: string }).code ?? ""; }
 assert.equal(unavailableCode, "model-unavailable", "unavailable model stops without paid fallback");
 
-console.log(`PASS: ${samples.length} packages; v1.0→v1.1 migration, visual schema safety, registry/cue determinism, Gemini Free Tier guard, cache, timing, and rolling limit checks.`);
+console.log(`PASS: ${samples.length} packages; v1.0→v1.1 migration, visual/caption schema safety, registry/cue determinism, Gemini Free Tier guard, cache, timing, and rolling limit checks.`);

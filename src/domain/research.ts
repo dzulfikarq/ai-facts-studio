@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { captionSegmentsSchema } from "./captions";
 import { defaultMotionPlan, defaultVisualComposition } from "./visual-defaults";
 import { motionCuePlanSchema, motionCueIds, visualCompositionSchema } from "./visual-composition";
 
@@ -43,6 +44,7 @@ const sceneV11Schema = z.object({
   ...sceneFields,
   visualComposition: visualCompositionSchema,
   motionPlan: z.array(motionCuePlanSchema).max(8),
+  captionSegments: captionSegmentsSchema.optional(),
 }).strict().superRefine((scene, ctx) => {
   if (scene.motionCues.length !== scene.motionPlan.length || scene.motionCues.some((cue, index) => cue !== scene.motionPlan[index]?.cue)) {
     ctx.addIssue({ code: "custom", message: "motionPlan harus memiliki satu konfigurasi untuk setiap motionCue dan urutan yang sama", path: ["motionPlan"] });

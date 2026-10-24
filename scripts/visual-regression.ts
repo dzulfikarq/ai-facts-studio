@@ -15,7 +15,7 @@ import type { VideoProps } from "../src/video/types";
 const root = process.cwd();
 const recordOnly = process.argv.includes("--record");
 const baselinePath = path.resolve(root, "scripts/visual-goldens.json");
-const outputDir = path.resolve(root, "renders/visual-regression/v1.0.2");
+const outputDir = path.resolve(root, "renders/visual-regression/v1.0.3");
 const raw = JSON.parse(await readFile(path.join(root, "samples/lightning-charge.json"), "utf8")) as unknown;
 const parsed = parseResearchPackage(raw);
 assert.equal(parsed.success, true, "lightning sample must migrate/validate");

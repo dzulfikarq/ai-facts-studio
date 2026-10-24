@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
 import { categories, motionCues, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
+import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
 import { durationInFrames } from "../domain/timeline";
@@ -722,6 +723,8 @@ function SceneEditor({ scene, onChange }: { scene: Scene; onChange: (change: (sc
   const [compositionError, setCompositionError] = useState("");
   const [motionDraft, setMotionDraft] = useState(JSON.stringify(scene.motionPlan, null, 2));
   const [motionError, setMotionError] = useState("");
+  const [captionDraft, setCaptionDraft] = useState(JSON.stringify(captionSegmentsForScene(scene), null, 2));
+  const [captionError, setCaptionError] = useState("");
 
   function editComposition(value: string) {
     setCompositionDraft(value);
@@ -757,6 +760,37 @@ function SceneEditor({ scene, onChange }: { scene: Scene; onChange: (change: (sc
     } catch { setMotionError("JSON motion plan belum lengkap/valid."); }
   }
 
+  function editCaptionSegments(value: string) {
+    setCaptionDraft(value);
+    try {
+      const parsed = captionSegmentsSchema.safeParse(JSON.parse(value));
+      if (!parsed.success) { setCaptionError(parsed.error.issues[0]?.message ?? "Caption segments tidak valid."); return; }
+      setCaptionError("");
+      onChange((current) => ({ ...current, captionSegments: parsed.data }));
+    } catch { setCaptionError("JSON caption segments belum lengkap/valid."); }
+  }
+
+  function useAutoCaptionSegments() {
+    const generated = captionSegmentsForScene({ ...scene, captionSegments: undefined });
+    setCaptionDraft(JSON.stringify(generated, null, 2));
+    setCaptionError("");
+    onChange((current) => ({ ...current, captionSegments: undefined }));
+  }
+
+  function changeNarration(value: string) {
+    const next = { ...scene, narrationText: value, captionSegments: undefined };
+    const generated = captionSegmentsForScene(next);
+    setCaptionDraft(JSON.stringify(generated, null, 2));
+    setCaptionError("");
+    onChange(() => next);
+  }
+
+  function changeOnScreenText(value: string) {
+    const next = { ...scene, onScreenText: value };
+    if (!scene.captionSegments) setCaptionDraft(JSON.stringify(captionSegmentsForScene(next), null, 2));
+    onChange(() => next);
+  }
+
   function toggleCue(cue: typeof motionCues[number], checked: boolean) {
     if (checked && scene.motionCues.length >= 8) { setMotionError("Maksimal 8 motion cues per scene."); return; }
     const next = checked ? [...scene.motionCues, cue] : scene.motionCues.filter((item) => item !== cue);
@@ -768,11 +802,12 @@ function SceneEditor({ scene, onChange }: { scene: Scene; onChange: (change: (sc
 
   return <div className="scene-editor">
     <div className="scene-editor-title"><div><span className="eyebrow">EDIT SCENE</span><strong>{scene.id}</strong></div><span className="template-badge">{scene.templateId}</span></div>
-    <label>On-screen text<input maxLength={120} value={scene.onScreenText} onChange={(event) => onChange((current) => ({ ...current, onScreenText: event.target.value }))} /></label>
-    <label>Narration / caption<textarea rows={3} maxLength={2000} value={scene.narrationText} onChange={(event) => onChange((current) => ({ ...current, narrationText: event.target.value }))} /></label>
+    <label>On-screen text<input maxLength={120} value={scene.onScreenText} onChange={(event) => changeOnScreenText(event.target.value)} /></label>
+    <label>Narration / caption<textarea rows={3} maxLength={2000} value={scene.narrationText} onChange={(event) => changeNarration(event.target.value)} /></label>
     <label>Visual direction · editorial only<textarea rows={2} maxLength={500} value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>
     <div className="timing-fields"><label>Mulai (detik)<input type="number" min="0" max="120" step="0.5" value={scene.startSec} onChange={(event) => onChange((current) => ({ ...current, startSec: Number(event.target.value) }))} /></label><span>→</span><label>Akhir (detik)<input type="number" min="0.5" max="120" step="0.5" value={scene.endSec} onChange={(event) => onChange((current) => ({ ...current, endSec: Number(event.target.value) }))} /></label></div>
     <fieldset className="motion-cue-grid"><legend>Motion cues</legend>{motionCues.map((cue) => <label key={cue}><input type="checkbox" checked={scene.motionCues.includes(cue)} onChange={(event) => toggleCue(cue, event.target.checked)} />{cue}</label>)}</fieldset>
+    <details className="visual-json-editor"><summary>Caption phrases · {scene.captionSegments ? "manual timing" : "deterministic estimate"}</summary><textarea rows={7} spellCheck={false} value={captionDraft} onChange={(event) => editCaptionSegments(event.target.value)} aria-label="JSON caption phrases" /><div className="caption-editor-note">startProgress/endProgress 0–1 dalam scene; tidak menjanjikan word-level sync. <button type="button" className="text-button" onClick={useAutoCaptionSegments}>Pakai segmentasi otomatis</button></div>{captionError && <span role="alert">{captionError}</span>}</details>
     <details className="visual-json-editor"><summary>Visual composition terstruktur · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details>
     <details className="visual-json-editor"><summary>Motion plan · target, delay, durasi, easing</summary><textarea rows={8} spellCheck={false} value={motionDraft} onChange={(event) => editMotionPlan(event.target.value)} aria-label="JSON motion plan" />{motionError && <span role="alert">{motionError}</span>}</details>
     <div className="cue-line">SFX metadata · belum diputar <span>{scene.sfxCues.join(" · ") || "none"}</span></div>

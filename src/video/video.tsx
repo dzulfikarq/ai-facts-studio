@@ -1,5 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Audio, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { captionSegmentsForScene } from "../domain/captions";
 import { timelineDuration, sceneTimes } from "../domain/timeline";
 import type { ResearchPackage, Scene } from "../domain/research";
 import type { VideoProps } from "./types";
@@ -25,6 +26,14 @@ function wrapText(text: string, width: number, maxLines: number) {
     lines[maxLines - 1] = `${lines[maxLines - 1]!.replace(/[.…]*$/, "")}…`;
   }
   return lines;
+}
+
+function captionLine(line: string, emphasis: string[], accent: string) {
+  const tokens = new Set(emphasis.map((word) => word.toLocaleLowerCase()));
+  return line.split(/(\s+)/).map((word, index) => {
+    const normalized = word.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    return <tspan key={index} fill={tokens.has(normalized) ? accent : undefined} fontWeight={tokens.has(normalized) ? "800" : undefined}>{word}</tspan>;
+  });
 }
 
 function SceneVisual({ scene, preset, progress, frame, opacity }: { scene: Scene; preset: ResearchPackage["visualPreset"]; progress: number; frame: number; opacity: number }) {
@@ -77,7 +86,15 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
   const transitionPlan = scene.motionPlan.find((plan) => plan.cue === "dissolve");
   const transition = sceneTransitionOpacity(scene.motionPlan, localFrame);
   const titleLines = wrapText(scene.onScreenText, 42, 3);
-  const captionLines = wrapText(scene.narrationText, 42, 4);
+  const captionSegments = captionSegmentsForScene(scene);
+  const activeCaption = captionSegments.find((segment) => progress >= segment.startProgress && progress < segment.endProgress) ?? captionSegments.at(-1);
+  const captionLines = activeCaption ? wrapText(activeCaption.text, 36, 2) : [];
+  const captionSpan = activeCaption ? activeCaption.endProgress - activeCaption.startProgress : 1;
+  const captionFade = activeCaption ? Math.min(0.08, captionSpan / 3) : 1;
+  const captionOpacity = activeCaption ? Math.min(
+    Math.max(0, Math.min(1, (progress - activeCaption.startProgress) / captionFade)),
+    Math.max(0, Math.min(1, (activeCaption.endProgress - progress) / captionFade)),
+  ) : 0;
   const titleY = style.safeArea.top + style.spacing.titleTopOffset;
   const titleFontSize = titleLines.length > 2 ? 32 : titleLines.length > 1 ? 38 : style.titleFontSize;
   const headerY = style.safeArea.top + style.spacing.headerTopOffset;
@@ -108,7 +125,9 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
         {titleLines.map((line,index)=><text key={index} x={style.safeArea.left} y={titleY+index*(titleFontSize+style.spacing.titleLineGap)} fill={style.palette.text} fontFamily={style.headingFont} fontSize={titleFontSize} fontWeight="800" stroke={style.palette.canvas} strokeOpacity=".28" strokeWidth="2" paintOrder="stroke">{line}</text>)}
       </g>
       <text x={style.safeArea.left} y={sceneLabelY} fill={style.palette.primary} fontSize="20" fontWeight="700" letterSpacing="3">{`SCENE ${String(activeIndex+1).padStart(2,"0")} / ${String(research.scenes.length).padStart(2,"0")}`}</text>
-      {captionLines.map((line,index)=><text key={index} x={style.safeArea.left} y={captionY+index*style.spacing.captionLineGap} fill={style.palette.text} fontSize={captionLines.length>3?25:style.captionFontSize} fontWeight="600" stroke={style.palette.canvas} strokeWidth="4" paintOrder="stroke">{line}</text>)}
+      <g opacity={captionOpacity} transform={`translate(0 ${interpolate(captionOpacity,[0,1],[8,0])})`}>
+        {captionLines.map((line,index)=><text key={index} x={style.safeArea.left} y={captionY+index*style.spacing.captionLineGap} fill={style.palette.text} fontSize={style.captionFontSize+8} fontWeight="600" stroke={style.palette.canvas} strokeWidth="4" paintOrder="stroke">{captionLine(line, activeCaption?.emphasis ?? [], style.palette.accent)}</text>)}
+      </g>
       <rect x={style.safeArea.left} y={progressY} width={1080-style.safeArea.left-style.safeArea.right} height="3" rx="2" fill={style.palette.muted} opacity=".35"/>
       <rect x={style.safeArea.left} y={progressY-2} width={(1080-style.safeArea.left-style.safeArea.right)*Math.max(0,Math.min(1,time/durationSec))} height="6" rx="3" fill={style.palette.accent}/>
       <text x={1080-style.safeArea.right} y={footerY} textAnchor="end" fill={style.palette.muted} fontSize="17">{research.title}</text>

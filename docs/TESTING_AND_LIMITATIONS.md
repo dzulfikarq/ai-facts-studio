@@ -1,37 +1,27 @@
-# Testing and limitations — V1.0.2
+# Testing and limitations — V1.0.3
 
-Verified 24 Oct 2026 on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`.
+Verified 24 Oct 2026 on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`. Baseline HEAD `b622550`; V1.0.3 edits are uncommitted worktree changes.
 
-## Current worktree results
+## Results
 
 | Command | Result |
 |---|---|
-| `npm test` | PASS — migration, schema safety/bounds, template registry, cue math, TTS guard, quota. |
-| `npm run smoke:api` | PASS — v1.0 project + old SQLite job migration, audio upload/delete, cleanup queue, shared cache retention, daily quota persists after delete. |
-| `npm run smoke:tts` | PASS — mock Test Voice/full narration preview/approval/stale rejection; MP4 H.264 + audible AAC. Mock output is synthetic tone, **not speech**. |
-| `npm run smoke:render` | PASS — V2 and legacy V1 renderer, H.264 + AAC, 360×640. |
-| `npm run test:visual` | PASS — 35 PNG goldens at 270×480; templates/presets/staggered entrance/cues/lightning/transitions. |
-| `npm run smoke:samples` | PASS — Mountain 56.04 sec, 1080×1920 H.264, SHA-256 `187fdd9e98c5464aa6e2d4f74e16719066d91b86e6962a65a5ce1261e60ddfcc`; Lightning 24.04 sec, 1080×1920 H.264, SHA-256 `7c62c0cc209c7696a51433126a598aeb57e1d81a43f672f4d79c1095e2f3a3a9`. |
+| `npm test` | PASS — migration, validation, caption schema/generation edge cases, registry, cues, Gemini guard, quota. |
 | `npm run typecheck` | PASS. |
-| `npm run build` | PASS; two Zod annotation warnings and 585.50 KB JS chunk warning. |
+| `npm run smoke:api` | PASS — import, upload/delete, cleanup, shared cache, quota persistence. Gemini configured=false. |
+| `npm run smoke:tts` | PASS — mocked Test Voice/full narration preview/approval; 3.05 sec H.264 + audible AAC. Mock audio is tone, not speech. |
+| `npm run smoke:render` | PASS — V2 and legacy V1, H.264 + AAC at 360×640. |
+| `npm run test:visual` | PASS — 35 golden frames at 270×480; templates, presets, cues, captions, lightning, transitions. Reviewed PNGs in ignored `renders/visual-regression/v1.0.3/`. |
+| `npm run smoke:samples` | PASS — Mountain 56.04 sec / 9,140,730 bytes / SHA-256 `76c5b942135ed22d03691608371069de4827562c6226a69b67b154ebf019ae64`; Lightning 24.04 sec / 3,653,478 bytes / SHA-256 `54f2dcaabd206fcac8e4d22d06ca710dc7786176ecf11d4016036c9da4e68953`; both 1080×1920 H.264. |
+| `npm run build` | PASS; Zod annotation and 589.77 KB chunk warnings. |
 | `npm audit` | PASS — 0 vulnerabilities. |
 
-Sample smoke runs `scripts/render.ts` in separate processes with temporary output, preserving existing files under `renders/`. Standalone render refuses to overwrite MP4/manifest unless a different `RENDER_OUTPUT_DIR` is chosen. Mountain output: 56.04 sec / 7,740,096 bytes; lightning output: 24.04 sec / 3,088,933 bytes. Both outputs ffprobe-verified.
+Sample MP4s/manifests and 10 extracted PNGs saved at `renders/v1.0.3-review/`; frames cover every Mountain/Lightning scene. Both MP4s contain silent AAC (`-91.0 dB` mean/max), no narration. Compared with V1.0.2, duration/resolution stayed fixed while captions changed from a static scene block to larger phrase-by-phrase display; file sizes rose 18.1%/18.3%. `SAMPLE_RENDER_OUTPUT_DIR` lets `npm run smoke:samples` retain outputs; existing MP4/manifest paths are protected from overwrite.
 
-## Visual regression
+## Audio and remaining limits
 
-Golden hashes are tracked in `scripts/visual-goldens.json`; rendered PNG review frames are written to ignored `renders/visual-regression/v1.0.2/`. Cases include all eight default templates, three presets at start/middle/end, lightning composition scenes, each visual motion cue, and dissolve transition before/start/mid/end. Baselines are local Windows/Chrome renders, not cross-platform pixel equality. Review PNGs before updating hashes.
-
-## Gemini and audio
-
-- `npm run smoke:tts` uses mock provider and tests mechanics only. It does not test speech quality.
-- A live Gemini Test Voice request was verified in preceding V1.0.1 audit; provider code is unchanged and no live request was repeated for V1.0.2. No live full narration/approval/render or human listening review.
-- API cannot detect linked billing. `GEMINI_TTS_FREE_TIER_ONLY=true` is operator assertion, not billing proof; no zero-charge claim.
-- TTS alignment is per-scene estimated, not word-level. Free-tier data handling follows Google policy.
-
-## Partial / deferred
-
-- Cleanup queue normal drain passed; locked-file/permission failure and automatic retry were not fault-injected.
-- GitHub Actions workflow was reviewed but not dispatched because `gh` is unavailable. No cloud artifact evidence; workflow unchanged.
-- `visualDescription` remains editorial. `sfxCues` has no licensed sound library/playback/mixing/ducking. Some assets remain stylized primitives; long captions can ellipsize.
-- No browser/screen-reader/accessibility review. API defaults loopback; keep `HOST=127.0.0.1`. Gemini API key stays backend-only.
+- Live Gemini was not run: local smoke reported `Gemini configured=false`. No live speech-quality or full-narration listening review.
+- Mock TTS validates approval, timing, codec, and muxing only; it does not establish speech quality or Gemini billing status.
+- Caption timing is deterministic per phrase/scene, not word-aligned. Long display text can be ellipsized.
+- `visualDescription` remains editorial; graphics are authored SVG compositions. SFX metadata has no playback/mixing/ducking.
+- Golden hashes target local Windows/Chrome/font rasterization. Cleanup failure/retry fault injection and GitHub Actions dispatch were not tested.

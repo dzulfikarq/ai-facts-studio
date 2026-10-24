@@ -60,6 +60,11 @@
       "onScreenText": "MUATAN TERPISAH",
       "templateId": "infographic",
       "visualDescription": "Tanda plus dan minus menunjukkan pola muatan yang umum, bukan berlaku identik pada semua badai.",
+      "captionSegments": [
+        { "text": "Dalam banyak badai,", "startProgress": 0, "endProgress": 0.22, "emphasis": [] },
+        { "text": "tumbukan kristal es dan graupel membantu memisahkan muatan.", "startProgress": 0.22, "endProgress": 0.68, "emphasis": ["graupel", "muatan"] },
+        { "text": "Kristal kecil sering terbawa ke bagian atas awan.", "startProgress": 0.68, "endProgress": 1, "emphasis": ["Kristal"] }
+      ],
       "motionCues": ["reveal", "pulse", "pan"],
       "motionPlan": [
         { "cue": "reveal", "targetLayer": "diagram", "delayFrames": 0, "durationFrames": 30, "easing": "easeOut" },

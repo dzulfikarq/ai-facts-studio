@@ -1,4 +1,4 @@
-# Dynamic Motion Graphics Engine V1.0.2
+# Dynamic Motion Graphics Engine V1.0.3
 
 ## Goal
 
@@ -53,10 +53,12 @@ Color tokens (`canvas`, `surface`, `primary`, `accent`, `text`, `muted`, `snow`,
 
 The scene editor exposes checkboxes for cue selection and JSON editors for composition/cue timing. `visualDescription` is shown separately as editorial text.
 
+V2 captions show one phrase at a time, wrap to at most two lines, use preset contrast/stroke, and gently fade/translate at phrase boundaries. Auto phrases split on punctuation, 6-word/48-character bounds, then merge up to 72 characters; common connectors move off phrase endings. Duration uses word/punctuation weights inside scene progress. Matching `onScreenText` terms receive accent emphasis. Authors can manually edit v1.1 `captionSegments` text, emphasis, and contiguous 0–1 progress ranges per scene. No word timestamps are inferred.
+
 ## Versioning and tests
 
 New V2 jobs store `rendererVersion: 2` in immutable snapshot, SQLite job row, and manifest. Old snapshots without version default to V1 and still render via the preserved legacy component. V2 preview and render share `VersionedVideo`. Audio path/hash stays immutable; daily quota policy is unchanged.
 
-Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run test:visual`. Visual test renders 35 PNG frames under ignored `renders/visual-regression/v1.0.2/` and compares hashes to `scripts/visual-goldens.json`. It includes all templates, presets, cue behavior, staggered entrance, lightning scenes, and transition frames. Do not refresh goldens automatically; inspect frames first. Hash baseline is local Windows/Chrome-specific and may differ on another platform/font rasterizer.
+Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run test:visual`. Visual test renders 35 PNG frames under ignored `renders/visual-regression/v1.0.3/` and compares hashes to `scripts/visual-goldens.json`. It includes all templates, presets, cue behavior, staggered entrance, lightning scenes, captions, and transition frames. Do not refresh goldens automatically; inspect frames first. Hash baseline is local Windows/Chrome-specific and may differ on another platform/font rasterizer.
 
 SFX remains partial: `sfxCues` is metadata only, with no local licensed library, cue timeline, mixing, ducking, or playback.

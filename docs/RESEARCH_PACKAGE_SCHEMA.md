@@ -1,6 +1,6 @@
 # Research Package JSON v1.0 / v1.1
 
-Importer remains strict. Existing v1.0 files are validated using their original field set, then auto-upgraded in memory to v1.1. Unknown v1.0 keys still fail; old sample/project data is not discarded. New v1.1 scenes require structured `visualComposition` and one `motionPlan` entry per `motionCue`.
+Importer remains strict. Existing v1.0 files are validated using their original field set, then auto-upgraded in memory to v1.1. Unknown v1.0 keys still fail; old sample/project data is not discarded. New v1.1 scenes require structured `visualComposition` and one `motionPlan` entry per `motionCue`; `captionSegments` is optional.
 
 ## Root fields (both versions)
 
@@ -27,6 +27,8 @@ Scene: unique `id`, increasing positive `order`, non-overlapping `startSec`/`end
 Frames include x/y/width/height, optional rotation/opacity/z-index. Schema bounds rotated node frames to 1080×1920 and validates path, color, layer ID, node count, and asset IDs. Group children use canonical canvas coordinates scaled into the group frame. Renderer clips to canvas; no `eval`, JS, imported JSX, arbitrary SVG markup, remote image fetch, or user-selected file path.
 
 `motionPlan` stores `{cue,targetLayer,delayFrames,durationFrames,easing}`. It must align one-to-one and in order with `motionCues`. Target is `all`, `scene`, or an existing layer ID; easing allowlist: `linear`, `easeIn`, `easeOut`, `easeInOut`, `spring`.
+
+Optional `captionSegments` stores `{text,startProgress,endProgress,emphasis?}` (up to 30 entries). Progress is fraction 0–1 within scene; segments must be contiguous from 0 to 1. Without custom entries, renderer derives bounded deterministic phrases from `narrationText` and can highlight words repeated in `onScreenText`. This is phrase timing estimate, not word-level audio alignment.
 
 ## Limits and migration
 

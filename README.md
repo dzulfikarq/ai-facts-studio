@@ -1,6 +1,6 @@
-# AI Facts Studio V1.0.2
+# AI Facts Studio V1.0.3
 
-Local-first studio for turning checked Indonesian research into reusable, animated 2D vertical videos. V1.0.2 adds structured composition, typed template registry, three visual presets, deterministic motion cues, and visual regression while keeping V1.0.1 cleanup/quota safeguards. Rendering uses no AI calls. Optional AI Voice sends a sample or script to configured Gemini TTS only after explicit user action. The app defaults to `127.0.0.1`; drafts, audio, jobs, and local MP4s stay on the device except text explicitly sent to Gemini.
+Local-first studio for turning checked Indonesian research into reusable, animated 2D vertical videos. V1.0.3 adds readable phrase-by-phrase captions, manual timing/emphasis, and visual regression coverage while keeping V1.0.2 structured compositions, presets, motion cues, and cleanup/quota safeguards. Rendering uses no AI calls. Optional AI Voice sends a sample or script to configured Gemini TTS only after explicit user action. The app defaults to `127.0.0.1`; drafts, audio, jobs, and local MP4s stay on the device except text explicitly sent to Gemini.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ npm run render -- samples/lightning-charge.json
 npm audit
 ```
 
-Standalone render writes `renders/<title>.mp4` and a `.manifest.json`; existing output is never overwritten. Set `RENDER_OUTPUT_DIR` to render into a separate folder. The app's database is `data/ai-facts-studio.sqlite`; uploaded audio is in `public/audio/`. These generated files are git-ignored.
+Standalone render writes `renders/<title>.mp4` and a `.manifest.json`; existing output is never overwritten. Set `RENDER_OUTPUT_DIR` to render into a separate folder. `npm run smoke:samples` normally cleans temporary outputs; set `SAMPLE_RENDER_OUTPUT_DIR=renders/v1.0.3-review` to retain Mountain and Lightning MP4s/manifests for manual review. The app's database is `data/ai-facts-studio.sqlite`; uploaded audio is in `public/audio/`. These generated files are git-ignored.
 
 Legacy Research Package v1.0 still imports and upgrades to v1.1. New jobs use renderer V2; old immutable snapshots use frozen renderer V1. Manifests record renderer version.
 

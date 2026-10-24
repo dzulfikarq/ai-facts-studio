@@ -1,4 +1,4 @@
-# Video pipeline — Dynamic Motion Graphics Engine V1.0.2
+# Video pipeline — Dynamic Motion Graphics Engine V1.0.3
 
 ## V2 composition and render path
 
@@ -21,7 +21,7 @@ Research Package v1.0 is accepted and upgraded on parse to v1.1. Migration prese
 
 `visualComposition` is typed JSON: background, ordered depth layers, and allowlisted nodes (`shape`, `path`, `text`, `icon`, trusted local `image`, `diagram`, `group`). Node frames, colors, SVG path data, IDs, assets, dimensions, and animation plans are validated. Rendering uses React/SVG; imported text/path data is never evaluated as JS or markup. `visualDescription` remains human editorial direction and is **not** interpreted as a generated composition.
 
-| Research field | V1.0.2 behavior |
+| Research field | V1.0.3 behavior |
 |---|---|
 | `visualPreset` | Real palette, backdrop, typography scale, and composition treatment. |
 | `visualComposition` | Actual renderer input; editor can change validated JSON per scene. |
@@ -29,7 +29,8 @@ Research Package v1.0 is accepted and upgraded on parse to v1.1. Migration prese
 | `templateId` | Explicit registry renderer and distinct template defaults. |
 | `visualDescription` | Editorial-only text; does not create objects. |
 | `sfxCues` | Metadata only; no SFX playback in this version. |
-| `title`, `category`, `onScreenText`, `narrationText` | Video title/category/scene title/caption and TTS script fields. Top-level `narration` remains unused by TTS. |
+| `title`, `category`, `onScreenText`, `narrationText` | Video title/category/scene title/caption and TTS script fields. V2 captions split into short phrases; top-level `narration` remains unused by TTS. |
+| `captionSegments` | Optional manual phrase text/highlights and contiguous 0–1 scene timing; absent field gets bounded deterministic phrase estimates. |
 | `startSec`, `endSec`, `targetDurationSec` | Scene sequence/timing. Attached audio duration overrides total; estimated TTS timings remain editable. |
 | `language` | Package metadata; TTS locale remains separately selected in Voice UI. |
 | `references` | Validation/review metadata; not drawn into video. |
@@ -48,12 +49,12 @@ Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `sca
 
 ## Renderer version and old jobs
 
-New snapshots store `rendererVersion: 2`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2 to motion registry. A V1 snapshot without version metadata defaults to renderer 1 and remains renderable; when content is unchanged, project UI can render that V1 snapshot or explicitly create a V2 snapshot. Changed content marks it stale. Immutable audio file references remain unchanged. V1.0.2 does not silently reinterpret old snapshots as V2.
+New snapshots store `rendererVersion: 2`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2 to motion registry. A V1 snapshot without version metadata defaults to renderer 1 and remains renderable; when content is unchanged, project UI can render that V1 snapshot or explicitly create a V2 snapshot. Changed content marks it stale. Immutable audio file references remain unchanged. V1.0.3 does not silently reinterpret old snapshots as V2.
 
 ## Validation and visual regression
 
-`npm test` checks v1.0 migration, strict composition/asset rejection, renderer registration, and cue functions. `npm run test:visual` renders 35 PNG frames at 270×480: eight template middles, three presets at start/middle/end, staggered infographic entrance, all three lightning sample scenes, cue/no-cue frames, and transition before/start/mid/end. SHA-256 baselines live in `scripts/visual-goldens.json`; PNG review artifacts go to ignored `renders/visual-regression/v1.0.2/`. Baseline updates require manual image review; browser/OS/font changes can alter hashes. `npm run smoke:render` additionally renders V2 and versionless V1 MP4s.
+`npm test` checks v1.0 migration, strict composition/asset/caption validation, renderer registration, and cue functions. `npm run test:visual` renders 35 PNG frames at 270×480: eight template middles, three presets at start/middle/end, staggered infographic entrance, all three lightning sample scenes, cue/no-cue frames, and transition before/start/mid/end. SHA-256 baselines live in `scripts/visual-goldens.json`; PNG review artifacts go to ignored `renders/visual-regression/v1.0.3/`. Baseline updates require manual image review; browser/OS/font changes can alter hashes. `npm run smoke:render` additionally renders V2 and versionless V1 MP4s.
 
 ## Limits / next
 
-SFX cues are not played or mixed; no licensed SFX library/timing/ducking engine yet. V1.0.2 visual descriptions stay editorial; author visual objects via structured JSON or template defaults. Long text is wrapped into bounded caption/title areas and may be ellipsized; no word-level TTS alignment is claimed. Next engine phase can add richer per-layer controls and licensed SFX without adding runtime AI calls.
+SFX cues are not played or mixed; no licensed SFX library/timing/ducking engine yet. V1.0.3 visual descriptions stay editorial; author visual objects via structured JSON or template defaults. Caption timing is deterministic phrase-level estimate, not word-level TTS alignment; very long display text may be ellipsized.

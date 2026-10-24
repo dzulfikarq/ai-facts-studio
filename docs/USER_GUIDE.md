@@ -4,7 +4,7 @@
 
 1. Start `npm run dev`; open `http://127.0.0.1:5173`.
 2. Choose **Create video**, import JSON or choose `mountain-formation` / `lightning-charge` sample. Research Package v1.0 auto-upgrades to v1.1.
-3. Edit title, scene on-screen text, narration/caption, editorial visual description, timing, category, and visual preset. In a scene editor, change motion cue checkboxes and edit validated Visual Composition / Motion Plan JSON. Click **Simpan perubahan**.
+3. Edit title, scene on-screen text, narration/caption phrases, editorial visual description, timing, category, and visual preset. In a scene editor, change motion cue checkboxes, manually correct phrase text/timing, and edit validated Visual Composition / Motion Plan JSON. Click **Simpan perubahan**.
 4. Inspect source count and warnings; verify claims/URLs yourself.
 5. Choose audio source. **Upload audio sendiri** accepts MP3/WAV/M4A (≤100 MB, ≤120 sec); ffprobe measures duration. For **Generate dengan AI Voice**, configure Gemini Free Tier, choose language/voice/style/pace, then click **Test Voice** to hear short sample. Test sends sample text only; storyboard narration is not sent yet.
 6. Click **Preview Narasi Lengkap**, listen to generated narration, then explicitly choose **Gunakan Audio Ini**. Until approval, existing selected audio stays active and unchanged. A matching cached preview is reused; **Regenerate preview** makes a new provider request. Test Voice and full narration share TTS quota, separate from video-job allowance. Approval adjusts estimated scene timing to actual audio duration; edit timings if needed.

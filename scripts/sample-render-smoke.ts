@@ -8,7 +8,10 @@ import { promisify } from "node:util";
 import { parseResearchPackage } from "../src/domain/research";
 
 const execFileAsync = promisify(execFile);
-const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-sample-renders-"));
+const outputDir = process.env.SAMPLE_RENDER_OUTPUT_DIR
+  ? path.resolve(process.cwd(), process.env.SAMPLE_RENDER_OUTPUT_DIR)
+  : await mkdtemp(path.join(os.tmpdir(), "ai-facts-sample-renders-"));
+const cleanupOutput = !process.env.SAMPLE_RENDER_OUTPUT_DIR;
 const samples = ["mountain-formation", "lightning-charge"];
 
 try {
@@ -19,11 +22,11 @@ try {
     const titleSlug = parsed.data.title.normalize("NFKD").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 64) || "facts-video";
     await execFileAsync(process.execPath, ["--import", "tsx", "scripts/render.ts", `samples/${name}.json`], {
       cwd: process.cwd(),
-      env: { ...process.env, RENDER_OUTPUT_DIR: tempDir },
+      env: { ...process.env, RENDER_OUTPUT_DIR: outputDir },
       timeout: 600_000,
       maxBuffer: 4 * 1024 * 1024,
     });
-    const manifest = JSON.parse(await readFile(path.join(tempDir, `${titleSlug}.manifest.json`), "utf8")) as {
+    const manifest = JSON.parse(await readFile(path.join(outputDir, `${titleSlug}.manifest.json`), "utf8")) as {
       rendererVersion: number; videoCodec: string; width: number; height: number; durationSec: number; bytes: number; sha256: string;
     };
     assert.equal(manifest.rendererVersion, 2);
@@ -34,5 +37,5 @@ try {
     console.log(`${name}: renderer V${manifest.rendererVersion}, ${manifest.durationSec.toFixed(2)} sec, ${manifest.width}x${manifest.height}, H.264, ${manifest.bytes} bytes, SHA-256 ${manifest.sha256}`);
   }
 } finally {
-  await rm(tempDir, { recursive: true, force: true });
+  if (cleanupOutput) await rm(outputDir, { recursive: true, force: true });
 }

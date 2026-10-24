@@ -23,6 +23,9 @@ const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"
 });
 let projectId: string | undefined;
 let jobAudioPath: string | undefined;
+let jobSnapshotPath: string | undefined;
+let projectUploadPath: string | undefined;
+let jobId: string | undefined;
 
 try {
   let ready = false;
@@ -59,12 +62,15 @@ try {
   const uploaded = await uploadedResponse.json();
   assert.equal(uploadedResponse.status, 201, uploaded.error);
   assert.ok(Math.abs(uploaded.audio.durationSec - 2) < 0.2, "ffprobe duration should persist");
+  projectUploadPath = path.resolve("public", uploaded.audio.file);
 
   const generate = () => fetch(`${baseUrl}/api/projects/${projectId}/generate`, { method: "POST" });
   const first = await generate().then((response) => response.json());
   const second = await generate().then((response) => response.json());
   assert.equal(first.job.id, second.job.id, "unchanged snapshot should reuse idempotent job");
-  const snapshot = JSON.parse(await readFile(path.join(tempDir, "data", "jobs", first.job.id, "snapshot.json"), "utf8"));
+  jobId = first.job.id;
+  jobSnapshotPath = path.join(tempDir, "data", "jobs", first.job.id, "snapshot.json");
+  const snapshot = JSON.parse(await readFile(jobSnapshotPath, "utf8"));
   assert.ok(snapshot.audio.file.startsWith("audio/jobs/"), "job snapshot should reference immutable audio copy");
   jobAudioPath = path.resolve("public", snapshot.audio.file);
   await readFile(jobAudioPath);
@@ -73,9 +79,22 @@ try {
   assert.equal(removed.status, 200);
   await readFile(jobAudioPath);
   assert.equal((await generate()).status, 429, "changed snapshot should respect daily cap");
-  console.log(`PASS: production UI/API, import, idempotency, upload, daily cap, id-ID default/voice fallback. Gemini configured=${ttsStatus.configured}.`);
+
+  const secondForm = new FormData();
+  secondForm.append("audio", new Blob([await readFile(audioPath)], { type: "audio/wav" }), "again.wav");
+  const secondUpload = await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "POST", body: secondForm }).then((response) => response.json());
+  projectUploadPath = path.resolve("public", secondUpload.audio.file);
+  const deleted = await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" });
+  assert.equal(deleted.status, 204);
+  assert.equal((await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.status)), 404, "deleted project should disappear");
+  assert.equal((await fetch(`${baseUrl}/api/jobs/${jobId}`).then((response) => response.status)), 404, "project jobs should be deleted");
+  await assert.rejects(readFile(projectUploadPath), "project upload should be deleted");
+  await assert.rejects(readFile(jobSnapshotPath), "job snapshot should be deleted");
+  await assert.rejects(readFile(jobAudioPath), "unreferenced immutable job audio should be deleted");
+  projectId = undefined;
+  console.log(`PASS: production UI/API, import/idempotency, upload, daily cap, project/job/file deletion, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
 } finally {
-  if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "DELETE" }).catch(() => {});
+  if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" }).catch(() => {});
   if (jobAudioPath) await rm(jobAudioPath, { force: true });
   server.kill();
   await new Promise<void>((resolve) => {

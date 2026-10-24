@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -45,6 +45,8 @@ type TtsVoice = { id: string; name: string; locale: string; localeName: string; 
 type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
 type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null };
+type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "danger" };
+type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -94,6 +96,8 @@ function App() {
   const [ttsBusy, setTtsBusy] = useState(false);
   const [ttsMessage, setTtsMessage] = useState("");
   const [testVoicePreview, setTestVoicePreview] = useState<TtsPreview | null>(null);
+  const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
+  const confirmationRef = useRef<PendingConfirmation | null>(null);
 
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
 
@@ -104,6 +108,22 @@ function App() {
     ]);
     setProjects(list);
     setStatus(serverStatus);
+  }
+
+  function askConfirmation(options: ConfirmationOptions) {
+    return new Promise<boolean>((resolve) => {
+      confirmationRef.current?.resolve(false);
+      const next = { ...options, resolve };
+      confirmationRef.current = next;
+      setConfirmation(next);
+    });
+  }
+
+  function resolveConfirmation(confirmed: boolean) {
+    const pending = confirmationRef.current;
+    confirmationRef.current = null;
+    setConfirmation(null);
+    pending?.resolve(confirmed);
   }
 
   useEffect(() => { void refresh().catch((error) => setMessage(friendlyError(error))); }, []);
@@ -327,7 +347,7 @@ function App() {
       setMessage("Storyboard atau audio berubah. Generate preview untuk membuat snapshot baru sebelum render.");
       return;
     }
-    if (!project.audio && !window.confirm("Belum ada voice-over. Render MP4 tanpa narasi audio?")) return;
+    if (!project.audio && !await askConfirmation({ title: "Render tanpa narasi?", message: "Project ini belum memiliki voice-over. Tetap render MP4 dengan audio senyap?", confirmLabel: "Tetap render", tone: "primary" })) return;
     setBusy(true);
     try {
       await api<Job>(`/api/jobs/${job.id}/render`, { method: "POST" });
@@ -356,6 +376,28 @@ function App() {
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
+  async function deleteProject(id: string) {
+    const target = projects.find((item) => item.id === id);
+    if (!target || busy) return;
+    if (!await askConfirmation({ title: "Hapus video project?", message: `“${target.researchPackage.title}” beserta storyboard, job, dan hasil render akan dihapus permanen.`, confirmLabel: "Hapus video", tone: "danger" })) return;
+    setBusy(true);
+    try {
+      await api<void>(`/api/projects/${id}`, { method: "DELETE" });
+      if (project?.id === id) {
+        setProject(null);
+        setResearch(null);
+        setSelectedSceneId(null);
+        setTestVoicePreview(null);
+        setTtsVoices(null);
+        setView("dashboard");
+        setAudioMode("upload");
+      }
+      await refresh();
+      setMessage(`Project “${target.researchPackage.title}” dihapus.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
   return <div className="app-shell">
     <aside className="sidebar">
       <button className="brand" onClick={() => setView("dashboard")} aria-label="Kembali ke dashboard">
@@ -366,9 +408,12 @@ function App() {
       <button className={`nav-item ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()}><span className="nav-glyph">＋</span> Create video</button>
       <div className="side-label library-label">VIDEO LIBRARY <span>{projects.length}</span></div>
       <div className="project-nav">
-        {projects.slice(0, 8).map((item) => <button key={item.id} className={`project-link ${project?.id === item.id ? "selected" : ""}`} onClick={() => void openProject(item.id)}>
-          <span className="project-dot" /> <span>{item.researchPackage.title}</span>
-        </button>)}
+        {projects.map((item) => <div className="project-nav-row" key={item.id}>
+          <button className={`project-link ${project?.id === item.id ? "selected" : ""}`} onClick={() => void openProject(item.id)} disabled={busy}>
+            <span className="project-dot" /> <span>{item.researchPackage.title}</span>
+          </button>
+          <button className="project-delete" onClick={() => void deleteProject(item.id)} disabled={busy} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project">×</button>
+        </div>)}
         {!projects.length && <p className="empty-nav">Video yang dibuat muncul di sini.</p>}
       </div>
       <div className="sidebar-bottom">
@@ -385,7 +430,7 @@ function App() {
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
-      {view === "dashboard" && <Dashboard status={status} projects={projects} busy={busy} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} />}
+      {view === "dashboard" && <Dashboard status={status} projects={projects} busy={busy} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page create-page">
         <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Impor Research Package JSON v1.0. Validasi sebelum storyboard dibuka.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung</button>
@@ -504,10 +549,56 @@ function App() {
         </div>
       </section>}
     </main>
+    {confirmation && <ConfirmationDialog key="confirmation" options={confirmation} onResolve={resolveConfirmation} />}
   </div>;
 }
 
-function Dashboard({ status, projects, busy, onCreate, onSample, onOpen }: { status: Status | null; projects: Project[]; busy: boolean; onCreate: () => void; onSample: () => void; onOpen: (id: string) => void }) {
+function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmation; onResolve: (confirmed: boolean) => void }) {
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cancelButton.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onResolve(false);
+      } else if (event.key === "Tab") {
+        const active = document.activeElement;
+        if (!dialog.current?.contains(active)) {
+          event.preventDefault();
+          cancelButton.current?.focus();
+        } else if (event.shiftKey && active === cancelButton.current) {
+          event.preventDefault();
+          confirmButton.current?.focus();
+        } else if (!event.shiftKey && active === confirmButton.current) {
+          event.preventDefault();
+          cancelButton.current?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, []);
+
+  return <div className="confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onResolve(false); }}>
+    <section ref={dialog} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <div className={`confirm-symbol ${options.tone === "danger" ? "danger" : ""}`} aria-hidden="true">{options.tone === "danger" ? "!" : "?"}</div>
+      <div className="confirm-copy"><span className="confirm-eyebrow">KONFIRMASI</span><h2 id="confirm-title">{options.title}</h2><p id="confirm-message">{options.message}</p></div>
+      <div className="confirm-actions">
+        <button ref={cancelButton} className="confirm-cancel" onClick={() => onResolve(false)}>{options.cancelLabel ?? "Batal"}</button>
+        <button ref={confirmButton} className={`confirm-submit ${options.tone === "danger" ? "danger" : ""}`} onClick={() => onResolve(true)}>{options.confirmLabel}</button>
+      </div>
+    </section>
+  </div>;
+}
+
+function Dashboard({ status, projects, busy, onCreate, onSample, onOpen, onDelete }: { status: Status | null; projects: Project[]; busy: boolean; onCreate: () => void; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
   const latest = projects[0];
   return <section className="page dashboard-page">
     <div className="dashboard-heading"><div><div className="eyebrow">LOCAL CREATOR WORKSPACE</div><h1>Selamat datang di<br /><em>AI Facts Studio.</em></h1><p>Ubah riset terverifikasi menjadi animasi edukasi 2D, satu cerita dalam satu waktu.</p></div><button className="button button-primary create-cta" onClick={onCreate}>＋ Create video</button></div>
@@ -524,7 +615,10 @@ function Dashboard({ status, projects, busy, onCreate, onSample, onOpen }: { sta
     </div>
 
     <div className="section-title recent-title"><div><h2>Recent projects</h2><p>Storyboard dan hasil render terbaru.</p></div><span className="recent-count">{projects.length} TOTAL</span></div>
-    {projects.length ? <div className="recent-list">{projects.slice(0, 5).map((item, index) => <button key={item.id} className="recent-item" onClick={() => onOpen(item.id)}><span className={`recent-thumb thumb-${index % 3}`}><i>✦</i></span><span className="recent-copy"><strong>{item.researchPackage.title}</strong><small>{item.researchPackage.category} <i /> {item.researchPackage.scenes.length} scenes <i /> {new Date(item.updatedAt).toLocaleDateString("id-ID")}</small></span><span className={`status-chip ${item.latestJob?.state ?? "idle"}`}>{jobLabel(item.latestJob?.state)}</span><span className="recent-arrow">→</span></button>)}</div> : <button className="empty-projects" onClick={onSample}><span className="empty-plus">＋</span><strong>Belum ada project</strong><small>Mulai dengan sample animasi gunung 7 scene.</small></button>}
+    {projects.length ? <div className="recent-list">{projects.slice(0, 5).map((item, index) => <div className="recent-row" key={item.id}>
+      <button className="recent-item" onClick={() => onOpen(item.id)} disabled={busy}><span className={`recent-thumb thumb-${index % 3}`}><i>✦</i></span><span className="recent-copy"><strong>{item.researchPackage.title}</strong><small>{item.researchPackage.category} <i /> {item.researchPackage.scenes.length} scenes <i /> {new Date(item.updatedAt).toLocaleDateString("id-ID")}</small></span><span className={`status-chip ${item.latestJob?.state ?? "idle"}`}>{jobLabel(item.latestJob?.state)}</span><span className="recent-arrow">→</span></button>
+      <button className="recent-delete" onClick={() => onDelete(item.id)} disabled={busy} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project">×</button>
+    </div>)}</div> : <button className="empty-projects" onClick={onSample}><span className="empty-plus">＋</span><strong>Belum ada project</strong><small>Mulai dengan sample animasi gunung 7 scene.</small></button>}
     <div className="setup-strip"><div className="setup-mark">GH</div><div><strong>GitHub Actions render</strong><small>{status?.githubWorkflowAvailable ? "Workflow tersedia · setup manual dibutuhkan untuk cloud render." : "Workflow belum ditemukan."}</small></div><a href="/api/docs/github-actions" target="_blank" rel="noreferrer">Setup guide ↗</a></div>
     {latest && <span className="sr-only">Latest project: {latest.researchPackage.title}</span>}
   </section>;

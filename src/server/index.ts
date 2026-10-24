@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, rmSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -237,6 +237,63 @@ app.delete("/api/projects/:id/audio", async (request, response) => {
   invalidateBundleCache();
   saveProject(row.id, project);
   response.json(getProject(row.id));
+});
+
+function jobAudioFromSnapshot(snapshotPath: string): string | null | undefined {
+  const resolvedSnapshot = path.resolve(snapshotPath);
+  if (!resolvedSnapshot.startsWith(`${jobDir}${path.sep}`)) return undefined;
+  try {
+    const snapshot = JSON.parse(readFileSync(resolvedSnapshot, "utf8")) as RenderSnapshot;
+    if (!snapshot.audio) return null;
+    const file = snapshot.audio.file;
+    if (!file.startsWith("audio/jobs/")) return undefined;
+    const resolvedAudio = path.resolve(root, "public", file);
+    const jobAudioDir = path.resolve(root, "public/audio/jobs");
+    return resolvedAudio.startsWith(`${jobAudioDir}${path.sep}`) ? resolvedAudio : undefined;
+  } catch { return undefined; }
+}
+
+app.delete("/api/projects/:id", async (request, response) => {
+  const id = String(request.params.id);
+  const row = projectRow(id);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  const jobs = db.prepare("SELECT id, snapshot_path FROM jobs WHERE project_id = ?").all(id) as Array<{ id: string; snapshot_path: string }>;
+  if (activeRenderJob && jobs.some((job) => job.id === activeRenderJob)) return apiError(response, 409, "Project tidak dapat dihapus saat render berjalan.");
+
+  const project = projectFromRow(row);
+  const uploadPath = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
+  const safeUploadPath = uploadPath && path.dirname(uploadPath) === audioDir ? uploadPath : null;
+  const jobAudioPaths = new Set(jobs.map((job) => jobAudioFromSnapshot(job.snapshot_path)).filter((file): file is string => Boolean(file)));
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM render_attempts WHERE job_id IN (SELECT id FROM jobs WHERE project_id = ?)").run(id);
+    db.prepare("DELETE FROM jobs WHERE project_id = ?").run(id);
+    db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  // Content-addressed job audio may be shared; retain it if any surviving job references it.
+  const remainingSnapshots = db.prepare("SELECT snapshot_path FROM jobs").all() as Array<{ snapshot_path: string }>;
+  const referencedAudio = new Set<string>();
+  let canPruneJobAudio = true;
+  for (const item of remainingSnapshots) {
+    const file = jobAudioFromSnapshot(item.snapshot_path);
+    if (file === undefined) { canPruneJobAudio = false; break; }
+    if (file) referencedAudio.add(file);
+  }
+  if (canPruneJobAudio) for (const file of jobAudioPaths) if (!referencedAudio.has(file)) rmSync(file, { force: true });
+  if (safeUploadPath) rmSync(safeUploadPath, { force: true });
+  invalidateBundleCache();
+  await Promise.all(jobs.map(async (job) => {
+    await Promise.all([
+      rm(path.join(jobDir, job.id), { recursive: true, force: true }),
+      rm(path.join(renderDir, job.id), { recursive: true, force: true }),
+    ]);
+  }));
+  response.status(204).end();
 });
 
 const ttsSettingsSchema = z.object({

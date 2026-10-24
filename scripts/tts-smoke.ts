@@ -124,6 +124,7 @@ try {
 
   const renderResponse = await fetch(`${baseUrl}/api/jobs/${generatedJob.job.id}/render`, { method: "POST" });
   assert.equal(renderResponse.status, 202);
+  assert.equal((await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" })).status, 409, "active render must protect its project from deletion");
   let completed: any;
   for (let attempt = 0; attempt < 180; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 1000));

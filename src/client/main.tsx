@@ -2,11 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { categories, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
+import { categories, motionCues, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
+import { defaultMotionPlan } from "../domain/visual-defaults";
+import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
 import { durationInFrames } from "../domain/timeline";
 import { narrationScript } from "../domain/voice-timing";
-import { MountainVideo, previewInputProps } from "../video/video";
-import type { VideoProps } from "../video/root";
+import { previewInputProps } from "../video/video";
+import { VersionedVideo, type VideoProps } from "../video/root";
+import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import "./styles.css";
 import "./tts.css";
 
@@ -18,7 +21,8 @@ type Job = {
   error: string | null;
   progress: number;
   attemptCount: number;
-  manifest: { width: number; height: number; durationSec: number; videoCodec: string; audioCodec: string | null; bytes: number; sha256: string } | null;
+  rendererVersion: number;
+  manifest: { width: number; height: number; durationSec: number; videoCodec: string; audioCodec: string | null; bytes: number; sha256: string; rendererVersion?: number } | null;
   downloadUrl: string | null;
 } | null;
 
@@ -35,6 +39,7 @@ type Project = {
   audioMatchesNarration: boolean;
   researchReviewStatus: "needs-review" | "verified-by-author";
   latestJobCurrent: boolean;
+  latestJobContentCurrent: boolean;
   createdAt: string;
   updatedAt: string;
   latestJob: Job;
@@ -331,7 +336,7 @@ function App() {
         setSaved(true);
       }
       const result = await api<{ job: NonNullable<Job>; warnings: string[] }>(`/api/projects/${project.id}/generate`, { method: "POST" });
-      const updated = { ...latest, latestJob: result.job, latestJobCurrent: true };
+      const updated = { ...latest, latestJob: result.job, latestJobCurrent: result.job.rendererVersion === RENDERER_VERSION, latestJobContentCurrent: true };
       setProject(updated);
       await refresh();
       await api<Status>("/api/status").then(setStatus);
@@ -343,7 +348,7 @@ function App() {
   async function renderFinal() {
     const job = project?.latestJob;
     if (!job || !project) return;
-    if (!project.latestJobCurrent) {
+    if (!saved || !project.latestJobContentCurrent) {
       setMessage("Storyboard atau audio berubah. Generate preview untuk membuat snapshot baru sebelum render.");
       return;
     }
@@ -436,7 +441,7 @@ function App() {
 
       {view === "dashboard" && <Dashboard status={status} projects={projects} busy={busy} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page create-page">
-        <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Impor Research Package JSON v1.0. Validasi sebelum storyboard dibuka.</p></div>
+        <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Impor Research Package v1.0 atau v1.1. Versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung</button>
         </div>
         <div className="import-card">
@@ -444,7 +449,7 @@ function App() {
             <label className="button button-light file-button">Pilih file JSON<input type="file" accept=".json,application/json" onChange={(event) => void importFile(event.target.files?.[0])} /></label>
           </div>
           <textarea className="json-editor" value={jsonDraft} onChange={(event) => setJsonDraft(event.target.value)} spellCheck={false} aria-label="Editor Research Package JSON" />
-          <div className="import-footer"><span>Schema v1.0 <i /> Maks 1 MB <i /> Sumber tidak diverifikasi otomatis</span><button className="button button-primary" disabled={busy || !jsonDraft.trim()} onClick={() => void createFromJson()}>Buat storyboard <b>→</b></button></div>
+          <div className="import-footer"><span>Schema v1.0 (auto-upgrade) / v1.1 <i /> Maks 1 MB <i /> Sumber tidak diverifikasi otomatis</span><button className="button button-primary" disabled={busy || !jsonDraft.trim()} onClick={() => void createFromJson()}>Buat storyboard <b>→</b></button></div>
         </div>
         <div className="notice-line"><span className="notice-icon">ⓘ</span><span>Import bukan verifikasi fakta. Tinjau klaim, URL, dan timing sebelum render atau publikasi.</span></div>
       </section>}
@@ -466,7 +471,7 @@ function App() {
                 <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron">›</span>
               </button>)}
             </div>
-            {selectedScene && <SceneEditor scene={selectedScene} onChange={(change) => updateScene(selectedScene.id, change)} />}
+            {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} onChange={(change) => updateScene(selectedScene.id, change)} />}
             <div className="project-details-card">
               <div className="section-title compact"><div><h2>Video details</h2><p>Metadata Research Package</p></div></div>
               <div className="details-fields">
@@ -482,8 +487,8 @@ function App() {
     <div className="preview-top"><div><h2>Preview</h2><p>Animasi template · audio pilihan Anda</p></div><span className="preview-live"><i /> LIVE</span></div>
             <div className="player-wrap">
               <Player<AnyZodObject, VideoProps>
-                component={MountainVideo}
-                inputProps={previewInputProps(research, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode)}
+                component={VersionedVideo}
+                inputProps={previewInputProps(research, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, saved && project.latestJobContentCurrent ? project.latestJob?.rendererVersion : undefined)}
                 durationInFrames={durationInFrames(research, project.audio?.durationSec)}
                 compositionWidth={1080}
                 compositionHeight={1920}
@@ -538,10 +543,11 @@ function App() {
             {!project.audio && <div className="audio-warning">Belum ada audio. Preview tetap bisa diputar; render senyap butuh konfirmasi.</div>}
 
             <div className="render-card">
-              <div className="render-card-head"><div><span className="render-icon">↗</span><div><strong>Render final</strong><small>{project.latestJob ? `Job ${project.latestJob.id.slice(0, 8)} · percobaan ${project.latestJob.attemptCount}/3` : "Buat snapshot dahulu"}</small></div></div><span className={`status-chip ${project.latestJob && !project.latestJobCurrent ? "failed" : project.latestJob?.state ?? "idle"}`}>{project.latestJob && !project.latestJobCurrent ? "SNAPSHOT LAMA" : jobLabel(project.latestJob?.state)}</span></div>
+              <div className="render-card-head"><div><span className="render-icon">↗</span><div><strong>Render final</strong><small>{project.latestJob ? `Job ${project.latestJob.id.slice(0, 8)} · renderer v${project.latestJob.rendererVersion} · percobaan ${project.latestJob.attemptCount}/3` : "Buat snapshot dahulu"}</small></div></div><span className={`status-chip ${project.latestJob && !project.latestJobContentCurrent ? "failed" : project.latestJob?.state ?? "idle"}`}>{project.latestJob && !project.latestJobContentCurrent ? "SNAPSHOT LAMA" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION ? "RENDERER V1" : jobLabel(project.latestJob?.state)}</span></div>
               {project.latestJob?.state === "rendering" && <div className="progress-track"><i style={{ width: `${project.latestJob.progress}%` }} /></div>}
-              {project.latestJob?.manifest && <div className="manifest-line">{project.latestJob.manifest.width}×{project.latestJob.manifest.height} · H.264{project.audio ? ` + ${project.latestJob.manifest.audioCodec?.toUpperCase() ?? "audio"}` : " · track senyap"} · {(project.latestJob.manifest.durationSec).toFixed(1)} dtk</div>}
-              <div className="render-actions"><button className="button button-primary full-button" onClick={() => project.latestJob && !project.latestJobCurrent ? void generatePreview() : void renderFinal()} disabled={busy || !project.latestJob || project.latestJob.state === "rendering"}>{project.latestJob && !project.latestJobCurrent ? "Generate preview untuk perubahan" : project.latestJob?.state === "rendered" ? "Render ulang MP4" : project.latestJob?.state === "rendering" ? `Rendering ${project.latestJob.progress}%` : "Render MP4 lokal"}<b>→</b></button>
+              {project.latestJob?.manifest && <div className="manifest-line">{project.latestJob.manifest.width}×{project.latestJob.manifest.height} · H.264{project.audio ? ` + ${project.latestJob.manifest.audioCodec?.toUpperCase() ?? "audio"}` : " · track senyap"} · {(project.latestJob.manifest.durationSec).toFixed(1)} dtk · renderer v{project.latestJob.manifest.rendererVersion ?? project.latestJob.rendererVersion}</div>}
+              <div className="render-actions"><button className="button button-primary full-button" onClick={() => project.latestJob && !project.latestJobContentCurrent ? void generatePreview() : void renderFinal()} disabled={busy || !project.latestJob || project.latestJob.state === "rendering"}>{project.latestJob && !project.latestJobContentCurrent ? "Generate preview untuk perubahan" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION ? "Render snapshot V1" : project.latestJob?.state === "rendered" ? "Render ulang MP4" : project.latestJob?.state === "rendering" ? `Rendering ${project.latestJob.progress}%` : "Render MP4 lokal"}<b>→</b></button>
+                {project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION && project.latestJobContentCurrent && <button className="button button-light download-button" onClick={() => void generatePreview()} disabled={busy}>Buat preview renderer V2</button>}
                 {project.latestJob?.downloadUrl && <a className="button button-light download-button" href={project.latestJob.downloadUrl}>Unduh MP4 ↓</a>}
               </div>
               {project.latestJob?.error && <p className="render-error">{project.latestJob.error}</p>}
@@ -712,13 +718,64 @@ function UploadPanel({ project, busy, onUpload, onRemove }: { project: Project; 
 }
 
 function SceneEditor({ scene, onChange }: { scene: Scene; onChange: (change: (scene: Scene) => Scene) => void }) {
+  const [compositionDraft, setCompositionDraft] = useState(JSON.stringify(scene.visualComposition, null, 2));
+  const [compositionError, setCompositionError] = useState("");
+  const [motionDraft, setMotionDraft] = useState(JSON.stringify(scene.motionPlan, null, 2));
+  const [motionError, setMotionError] = useState("");
+
+  function editComposition(value: string) {
+    setCompositionDraft(value);
+    try {
+      const parsed = visualCompositionSchema.safeParse(JSON.parse(value));
+      if (!parsed.success) { setCompositionError(parsed.error.issues[0]?.message ?? "Komposisi visual tidak valid."); return; }
+      const layerIds = new Set(parsed.data.layers.map((layer) => layer.id));
+      if (scene.motionPlan.some((plan) => !["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer))) {
+        setCompositionError("Layer ini dipakai motionPlan. Ubah target motionPlan sebelum menghapus layer.");
+        return;
+      }
+      setCompositionError("");
+      onChange((current) => ({ ...current, visualComposition: parsed.data }));
+    } catch { setCompositionError("JSON komposisi belum lengkap/valid."); }
+  }
+
+  function editMotionPlan(value: string) {
+    setMotionDraft(value);
+    try {
+      const parsed = motionCuePlanSchema.array().max(8).safeParse(JSON.parse(value));
+      if (!parsed.success) { setMotionError(parsed.error.issues[0]?.message ?? "Motion plan tidak valid."); return; }
+      if (parsed.data.length !== scene.motionCues.length || parsed.data.some((plan, index) => plan.cue !== scene.motionCues[index])) {
+        setMotionError("Motion plan harus memuat satu entry per cue, urutan harus sama.");
+        return;
+      }
+      const layerIds = new Set(scene.visualComposition.layers.map((layer) => layer.id));
+      if (parsed.data.some((plan) => !["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer))) {
+        setMotionError("Target motion harus all, scene, atau ID layer yang ada.");
+        return;
+      }
+      setMotionError("");
+      onChange((current) => ({ ...current, motionPlan: parsed.data }));
+    } catch { setMotionError("JSON motion plan belum lengkap/valid."); }
+  }
+
+  function toggleCue(cue: typeof motionCues[number], checked: boolean) {
+    if (checked && scene.motionCues.length >= 8) { setMotionError("Maksimal 8 motion cues per scene."); return; }
+    const next = checked ? [...scene.motionCues, cue] : scene.motionCues.filter((item) => item !== cue);
+    const motionPlan = defaultMotionPlan(next);
+    setMotionDraft(JSON.stringify(motionPlan, null, 2));
+    setMotionError("");
+    onChange((current) => ({ ...current, motionCues: next, motionPlan }));
+  }
+
   return <div className="scene-editor">
     <div className="scene-editor-title"><div><span className="eyebrow">EDIT SCENE</span><strong>{scene.id}</strong></div><span className="template-badge">{scene.templateId}</span></div>
     <label>On-screen text<input maxLength={120} value={scene.onScreenText} onChange={(event) => onChange((current) => ({ ...current, onScreenText: event.target.value }))} /></label>
     <label>Narration / caption<textarea rows={3} maxLength={2000} value={scene.narrationText} onChange={(event) => onChange((current) => ({ ...current, narrationText: event.target.value }))} /></label>
-    <label>Visual direction<textarea rows={2} maxLength={500} value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>
+    <label>Visual direction · editorial only<textarea rows={2} maxLength={500} value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>
     <div className="timing-fields"><label>Mulai (detik)<input type="number" min="0" max="120" step="0.5" value={scene.startSec} onChange={(event) => onChange((current) => ({ ...current, startSec: Number(event.target.value) }))} /></label><span>→</span><label>Akhir (detik)<input type="number" min="0.5" max="120" step="0.5" value={scene.endSec} onChange={(event) => onChange((current) => ({ ...current, endSec: Number(event.target.value) }))} /></label></div>
-    <div className="cue-line">CUES <span>{scene.motionCues.join(" · ") || "none"}</span></div>
+    <fieldset className="motion-cue-grid"><legend>Motion cues</legend>{motionCues.map((cue) => <label key={cue}><input type="checkbox" checked={scene.motionCues.includes(cue)} onChange={(event) => toggleCue(cue, event.target.checked)} />{cue}</label>)}</fieldset>
+    <details className="visual-json-editor"><summary>Visual composition terstruktur · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details>
+    <details className="visual-json-editor"><summary>Motion plan · target, delay, durasi, easing</summary><textarea rows={8} spellCheck={false} value={motionDraft} onChange={(event) => editMotionPlan(event.target.value)} aria-label="JSON motion plan" />{motionError && <span role="alert">{motionError}</span>}</details>
+    <div className="cue-line">SFX metadata · belum diputar <span>{scene.sfxCues.join(" · ") || "none"}</span></div>
   </div>;
 }
 

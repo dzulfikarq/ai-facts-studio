@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { parseResearchPackage } from "../domain/research";
 
 export const dataDir = path.resolve(process.env.DATA_DIR ?? "data");
 mkdirSync(dataDir, { recursive: true });
@@ -28,6 +29,7 @@ db.exec(`
     attempt_count INTEGER NOT NULL DEFAULT 0,
     output_path TEXT,
     manifest_json TEXT,
+    renderer_version INTEGER NOT NULL DEFAULT 1,
     UNIQUE(project_id, source_sha256)
   );
   CREATE INDEX IF NOT EXISTS jobs_created_at_idx ON jobs(created_at);
@@ -85,6 +87,9 @@ db.exec(`
 
 db.exec("INSERT OR IGNORE INTO video_job_requests (id, created_at) SELECT id, created_at FROM jobs");
 
+const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+if (!jobColumns.some((column) => column.name === "renderer_version")) db.exec("ALTER TABLE jobs ADD COLUMN renderer_version INTEGER NOT NULL DEFAULT 1");
+
 const ttsColumns = db.prepare("PRAGMA table_info(tts_assets)").all() as Array<{ name: string }>;
 if (!ttsColumns.some((column) => column.name === "model")) db.exec("ALTER TABLE tts_assets ADD COLUMN model TEXT NOT NULL DEFAULT 'legacy'");
 if (!ttsColumns.some((column) => column.name === "style")) db.exec("ALTER TABLE tts_assets ADD COLUMN style TEXT NOT NULL DEFAULT 'neutral'");
@@ -137,10 +142,13 @@ export type JobRow = {
   attempt_count: number;
   output_path: string | null;
   manifest_json: string | null;
+  renderer_version: number;
 };
 
 export function projectFromRow(row: { id: string; data_json: string; created_at: string; updated_at: string }) {
   const project = JSON.parse(row.data_json) as StoredProject;
+  const normalizedResearch = parseResearchPackage(project.researchPackage);
+  if (normalizedResearch.success) project.researchPackage = normalizedResearch.data;
   project.pendingTts ??= null;
   if (project.audio) {
     project.audio.source ??= "upload";
@@ -166,6 +174,7 @@ export function jobForClient(row: JobRow | undefined) {
     progress: row.progress,
     attemptCount: row.attempt_count,
     manifest: row.manifest_json ? JSON.parse(row.manifest_json) : null,
+    rendererVersion: row.renderer_version,
     downloadUrl: row.output_path ? `/api/jobs/${row.id}/download` : null,
   };
 }

@@ -9,6 +9,7 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
 import type { ResearchPackage } from "../src/domain/research";
 import { durationInFrames } from "../src/domain/timeline";
+import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
@@ -21,6 +22,7 @@ export function invalidateBundleCache() {
 export type RenderSnapshot = {
   research: ResearchPackage;
   audio?: { file: string; durationSec: number; timingMode?: "scaled" | "estimated" } | null;
+  rendererVersion?: number;
 };
 
 export async function inspectMedia(filePath: string) {
@@ -55,6 +57,8 @@ export async function renderSnapshot(
   onProgress: (progress: number) => void = () => {},
   scale = 1,
 ) {
+  const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
+  if (![LEGACY_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
   await mkdir(path.dirname(outputLocation), { recursive: true });
   bundlePromise ??= bundle({
     entryPoint: path.resolve(root, "src/video/entry.tsx"),
@@ -69,6 +73,7 @@ export async function renderSnapshot(
     audioFile: snapshot.audio?.file,
     audioDurationSec: snapshot.audio?.durationSec,
     audioTimingMode: snapshot.audio?.timingMode ?? "scaled",
+    rendererVersion: snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION,
   };
   const composition = await selectComposition({ serveUrl, id: "FactsVideo", inputProps });
   await renderMedia({
@@ -91,5 +96,5 @@ export async function renderSnapshot(
     throw new Error(`Resolusi hasil render salah: ${manifest.width}x${manifest.height}.`);
   }
   if (snapshot.audio && manifest.audioCodec !== "aac") throw new Error("Audio hasil render bukan AAC.");
-  return manifest;
+  return { ...manifest, rendererVersion };
 }

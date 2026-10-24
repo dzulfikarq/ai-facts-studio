@@ -1,37 +1,25 @@
-import "dotenv/config";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { parseResearchPackage } from "../src/domain/research";
-import { renderSnapshot } from "./render-core";
 
 const execFileAsync = promisify(execFile);
-const sample = parseResearchPackage(JSON.parse(await readFile("samples/mountain-formation.json", "utf8")));
-assert.equal(sample.success, true);
-if (!sample.success) throw new Error("Mountain sample invalid.");
-const shortResearch = {
-  ...sample.data,
-  targetDurationSec: 2,
-  scenes: [{ ...sample.data.scenes[0]!, endSec: 2 }],
-};
-
-const audioPath = path.resolve("public/audio/render-smoke.wav");
-const outputPath = path.resolve("renders/render-smoke.mp4");
-await mkdir(path.dirname(audioPath), { recursive: true });
+const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-render-smoke-"));
 try {
-  await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", audioPath]);
-  const manifest = await renderSnapshot({
-    research: shortResearch,
-    audio: { file: "audio/render-smoke.wav", durationSec: 2 },
-  }, outputPath, () => {}, 1 / 3);
-  assert.equal(manifest.videoCodec, "h264");
-  assert.equal(manifest.audioCodec, "aac");
-  assert.equal(manifest.width, 360);
-  assert.equal(manifest.height, 640);
-  assert.ok(manifest.durationSec > 1.8 && manifest.durationSec < 2.2);
-  console.log(`PASS: animated ${manifest.durationSec.toFixed(1)}s MP4 ${manifest.width}x${manifest.height}, H.264 + AAC, SHA-256 ${manifest.sha256}`);
+  for (const version of [2, 1]) {
+    const outputPath = path.join(tempDir, `renderer-v${version}.mp4`);
+    const audioName = `render-smoke-${randomUUID()}.wav`;
+    const { stdout, stderr } = await execFileAsync(process.execPath, ["--import", "tsx", "scripts/render-smoke-case.ts", String(version), outputPath, audioName], {
+      cwd: process.cwd(), timeout: 300_000, maxBuffer: 2 * 1024 * 1024,
+    });
+    assert.doesNotMatch(stderr, /ProtocolError/, "each isolated Remotion render should shut down cleanly");
+    process.stdout.write(stdout);
+    if (stderr) process.stderr.write(stderr);
+  }
+  console.log("PASS: isolated V2 and legacy V1 render processes avoid cross-render browser state.");
 } finally {
-  await rm(audioPath, { force: true });
+  await rm(tempDir, { recursive: true, force: true });
 }

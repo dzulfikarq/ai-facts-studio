@@ -1,45 +1,44 @@
-# AI Facts Studio V1.0.1 — implementation status
+# AI Facts Studio V1.0.2 — implementation status
 
-Audit baseline: repository HEAD `8e0bbdc`; stabilization worktree. Verification executed 24 Oct 2026 on Windows x64.
-Environment: Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`.
+Baseline: HEAD `0f5a1be`; V1.0.2 worktree. Verification on 24 Oct 2026, Windows x64: Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`.
 
 ## Implemented
 
-- Local-first React/Vite + Express + SQLite application; API defaults to `127.0.0.1`. Gemini key stays server-side.
-- Research Package v1.0 validation, manual audio upload, deterministic Remotion templates, immutable job snapshots, local H.264/AAC render.
-- Gemini Free-Tier model guard, prebuilt voice catalog/fallback, cached Test Voice, full-narration preview and explicit audio approval.
-- Project deletion uses one SQLite transaction for project/jobs/render attempts and a durable cleanup queue for uploads, snapshots, and MP4 directories. Cleanup retries on startup and every 60 seconds. Shared content-addressed `audio/jobs` and `audio/tts` caches are retained on project deletion.
-- Rolling video-job usage is stored separately from projects/jobs, so deleting a project cannot restore quota. Migration backfills still-present legacy jobs; usage from projects deleted before V1.0.1 is unrecoverable.
+- Research Package v1.0 auto-upgrades to v1.1 structured composition and motion plans. Existing projects normalize on read; legacy source files stay unchanged until saved.
+- Typed registry explicitly maps all eight template IDs. V2 supports safe Shapes, SVG paths, Text, Icons, trusted local Images, Diagrams, and Groups/layers; three presets, safe-area design tokens, cue-driven transitions, and frame-based motion.
+- V1 renderer retained. Snapshots/jobs/manifests store renderer version; old versionless snapshots route to V1, new jobs use V2. Daily quota and immutable audio are unchanged.
+- Lightning sample is separate Research Package v1.1 with cloud/charge-separation/bolt composition; render does not call AI.
+- Gemini TTS approval, SQLite, cleanup queue, loopback defaults, and project storage maintained.
 
-## Tested in V1.0.1 audit
+## Tested in this worktree
 
 | Check | Result / evidence |
 |---|---|
-| `npm test` | PASS — schema, timing, Gemini SDK request/guard, cache key, rolling limit. |
-| `npm run smoke:api` | PASS — production UI/API, import/idempotency, upload/probe, project/job/snapshot/MP4 cleanup, shared audio retention, usage quota remains after deletion. |
-| `npm run smoke:tts` | PASS — mock Test Voice/cache, full preview, stale-preview rejection, explicit approval, active-render deletion guard, estimated timing, H.264 + audible AAC MP4 (3.05 sec). Mock audio is a sine tone, not speech. |
-| `npm run smoke:render` | PASS — 2 sec, 360×640, H.264 + AAC; SHA-256 `54c8c3e1901a18cddfd80555af4f32984e77d52679f23235fd0ba60d5d710d87`. |
+| `npm test` | PASS — 4 packages, v1.0→1.1 migration, composition validation, registry, cue math, existing TTS/quota checks. |
+| `npm run smoke:api` | PASS — v1.0 project import + legacy SQLite/job renderer-version migration, upload/delete cleanup, shared audio, quota persistence, V2 snapshot. |
+| `npm run smoke:tts` | PASS — mock Test Voice/approval/stale rejection/render; H.264 + audible AAC. Mock is a tone, not speech. |
+| `npm run smoke:render` | PASS — renderer V2 and legacy V1 path, H.264 + AAC, 360×640. |
+| `npm run test:visual` | PASS — 35 PNG golden frames: 8 templates, 3 presets, staggered entrance, all lightning scenes, 9 cues, dissolve before/start/mid/end. |
+| `npm run smoke:samples` | PASS — mountain V2: 56.04 sec, 1080×1920 H.264, 7,740,096 bytes, SHA-256 `187fdd9e98c5464aa6e2d4f74e16719066d91b86e6962a65a5ce1261e60ddfcc`; lightning V2: 24.04 sec, 1080×1920 H.264, 3,088,933 bytes, SHA-256 `7c62c0cc209c7696a51433126a598aeb57e1d81a43f672f4d79c1095e2f3a3a9`. |
 | `npm run typecheck` | PASS. |
-| `npm run build` | PASS. Vite emits existing Zod annotation warnings and JS chunk warning (>500 KB; 552.81 KB). |
+| `npm run build` | PASS; Zod annotation warnings and 585.50 KB JS chunk warning remain. |
 | `npm audit` | PASS — 0 vulnerabilities. |
-| Live Gemini Test Voice | PASS — one uncached live synthesis; details in [`TTS_SETUP.md`](TTS_SETUP.md). Did not create project or attach audio. |
-
-Cleanup queue drain after normal deletion was tested. OS-level locked-file/permission-failure injection and timer retry were not performed; retry-on-failure path is implemented but not fault-injection tested.
 
 ## Partially tested
 
-- Gemini live evidence covers catalog lookup, one short Indonesian Test Voice request, WAV→MP3 normalization, playback URL, and ffprobe only. Full-narration live synthesis, user approval, and live-Gemini-backed render were **not** tested; those complete-path checks use mock provider.
-- `GEMINI_TTS_FREE_TIER_ONLY=true` is an operator guard, not a Google billing detector. API cannot verify whether project billing is linked; no claim of zero billing is made.
-- GitHub workflow was reviewed but not manually dispatched. `gh` CLI unavailable; no Actions run/artifact evidence from this audit.
-- UI code builds; no browser-driven visual/accessibility test was performed.
+- Live Gemini Test Voice evidence from prior V1.0.1 audit remains relevant because TTS provider was unchanged; it was not repeated for V1.0.2. No live full narration/approval/render or human listening review.
+- Golden hashes reviewed on local Windows/Chrome; other OS/browser/font output may differ.
+- Cleanup queue success path passed. Locked-file/permission fault and timed retry were not fault-injected.
+- GitHub Actions not dispatched (`gh` unavailable); no workflow/artifact evidence.
+- Gemini billing link cannot be verified by API. Backend remains loopback-default; API key stays server-side.
 
-## Deferred / known limits
+## Partial / deferred
 
-- `visualPreset`, `visualDescription`, and `motionCues` are accepted/editor-visible but do not change renderer output. `sfxCues` is schema-only; no SFX asset/playback path.
-- Several template IDs share one artwork branch; see [`VIDEO_PIPELINE.md`](VIDEO_PIPELINE.md).
-- No GitHub dispatch/status/download path, forced word alignment, cleanup/cache retention policy, or live full-narration proof.
-- Full 56-second mountain render was verified in earlier V1.0 work (56.042667 sec, 1080×1920, H.264 + silent AAC, 6,513,583 bytes, SHA-256 `13ae92c00376c080a021c04df7f8fce5c82307ba4f34099a9d7665a03f970426`); not rerun in this audit.
+- `visualDescription` remains editorial text, not generated artwork. `sfxCues` has no playback path, licensed library, timing, mixing, or ducking.
+- Current visuals are authored SVG compositions; no external stock-image library. Long captions/title may ellipsize; TTS timing remains per-scene estimate.
+- No cloud dispatch/download, cleanup retention UI, or cross-platform visual golden baselines.
+- Legacy job usage deleted before V1.0.1 cannot be reconstructed; still-present jobs backfill quota history.
 
-## V1.1 technical direction
+## V1.1 recommendation
 
-Make preset/template/motion behavior deterministic and explicit: renderer registry per template ID, typed visual preset configs, allowlisted cue-to-keyframe mapping, then licensed/timed SFX. Keep imported descriptions declarative, never evaluate markup/code. Add frame-level golden tests before expanding templates. Details in [`VIDEO_PIPELINE.md`](VIDEO_PIPELINE.md).
+Build reviewed template-specific diagrams and more library primitives, add cue presets/layer controls, then licensed SFX with timing/mix tests. Keep compositions declarative and deterministic; keep AI out of render path. See [`DYNAMIC_MOTION_GRAPHICS_ENGINE.md`](DYNAMIC_MOTION_GRAPHICS_ENGINE.md).

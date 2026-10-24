@@ -2,12 +2,39 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-api-smoke-"));
+const dataPath = path.join(tempDir, "data");
+const legacyProjectId = "legacy-project-v1";
+const legacyJobId = "legacy-job-v1";
+await mkdir(path.join(dataPath, "jobs", legacyJobId), { recursive: true });
+const legacyPackage = JSON.parse(await readFile("samples/mountain-formation.json", "utf8"));
+const legacyNow = new Date().toISOString();
+const legacySnapshotPath = path.join(dataPath, "jobs", legacyJobId, "snapshot.json");
+await writeFile(legacySnapshotPath, JSON.stringify({ research: legacyPackage, audio: null }));
+const oldDb = new DatabaseSync(path.join(dataPath, "ai-facts-studio.sqlite"));
+oldDb.exec(`
+  PRAGMA foreign_keys = ON;
+  CREATE TABLE projects (id TEXT PRIMARY KEY, title TEXT NOT NULL, data_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE jobs (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), source_sha256 TEXT NOT NULL, snapshot_path TEXT NOT NULL,
+    state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, error TEXT, progress INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0, output_path TEXT, manifest_json TEXT, UNIQUE(project_id, source_sha256)
+  );
+  CREATE TABLE render_attempts (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), attempt INTEGER NOT NULL, state TEXT NOT NULL, requested_at TEXT NOT NULL, finished_at TEXT, error TEXT, manifest_json TEXT);
+`);
+const legacyProject = { researchPackage: legacyPackage, audio: null, researchReviewStatus: "needs-review" };
+oldDb.prepare("INSERT INTO projects (id,title,data_json,created_at,updated_at) VALUES (?,?,?,?,?)")
+  .run(legacyProjectId, legacyPackage.title, JSON.stringify(legacyProject), legacyNow, legacyNow);
+oldDb.prepare("INSERT INTO jobs (id,project_id,source_sha256,snapshot_path,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+  .run(legacyJobId, legacyProjectId, "legacy-source", legacySnapshotPath, "preview-ready", legacyNow, legacyNow);
+oldDb.close();
+
 const probe = createServer();
 await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
 const address = probe.address();
@@ -18,7 +45,7 @@ await new Promise<void>((resolve, reject) => probe.close((error) => error ? reje
 const baseUrl = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: path.join(tempDir, "data") },
+  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", DAILY_JOB_LIMIT: "2", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
   stdio: "ignore",
 });
 let projectId: string | undefined;
@@ -39,6 +66,11 @@ try {
   }
   assert.equal(ready, true, "local API should start");
   assert.equal((await fetch(baseUrl)).status, 200, "production UI should be served");
+  const migratedProject = await fetch(`${baseUrl}/api/projects/${legacyProjectId}`).then((response) => response.json());
+  assert.equal(migratedProject.researchPackage.schemaVersion, "1.1", "legacy v1.0 project should migrate on read");
+  assert.equal(migratedProject.latestJob.rendererVersion, 1, "legacy jobs should retain V1 renderer metadata");
+  assert.equal(migratedProject.latestJobContentCurrent, true, "legacy snapshot should remain current after compatible migration");
+  assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 1, "legacy jobs should backfill rolling quota history");
   const [ttsStatus, ttsCatalog] = await Promise.all([
     fetch(`${baseUrl}/api/tts/status`).then((response) => response.json()),
     fetch(`${baseUrl}/api/tts/voices?locale=id-ID`).then((response) => response.json()),
@@ -53,6 +85,7 @@ try {
   });
   const project = await createdResponse.json();
   assert.equal(createdResponse.status, 201);
+  assert.equal(project.researchPackage.schemaVersion, "1.1", "v1.0 package should upgrade compatibly on import");
   projectId = project.id;
 
   const audioPath = path.join(tempDir, "voice.wav");
@@ -69,9 +102,12 @@ try {
   const first = await generate().then((response) => response.json());
   const second = await generate().then((response) => response.json());
   assert.equal(first.job.id, second.job.id, "unchanged snapshot should reuse idempotent job");
+  assert.equal(first.job.rendererVersion, 2, "new snapshot should record renderer V2");
   jobId = first.job.id;
   jobSnapshotPath = path.join(tempDir, "data", "jobs", first.job.id, "snapshot.json");
   const snapshot = JSON.parse(await readFile(jobSnapshotPath, "utf8"));
+  assert.equal(snapshot.rendererVersion, 2, "new job snapshot records renderer version");
+  assert.equal(first.job.rendererVersion, 2);
   assert.ok(snapshot.audio.file.startsWith("audio/jobs/"), "job snapshot should reference immutable audio copy");
   jobAudioPath = path.resolve("public", snapshot.audio.file);
   await readFile(jobAudioPath);
@@ -99,7 +135,7 @@ try {
   await assert.rejects(readFile(jobSnapshotPath), "job snapshot should be deleted");
   await assert.rejects(readFile(renderOutputPath), "job MP4 should be deleted");
   await readFile(jobAudioPath); // content-addressed audio remains a shared immutable cache
-  assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 1, "deleting a project must not reset rolling job quota");
+  assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 2, "deleting a project must not reset rolling job quota");
   projectId = undefined;
   console.log(`PASS: production UI/API, import/idempotency, upload, deletion cleanup, shared audio retention, quota after deletion, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
 } finally {

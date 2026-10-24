@@ -1,36 +1,59 @@
-# Video pipeline
+# Video pipeline — Dynamic Motion Graphics Engine V1.0.2
 
-## Preview and render
+## V2 composition and render path
 
-`src/video/video.tsx` draws SVG at fixed 1080×1920, 30 fps. `src/video/artwork.tsx` provides deterministic branches for plate collision, folding uplift, volcano, orbit/infographic, animal habitat, and default mountain artwork. Progress is driven by Remotion frame number. Player previews same composition at browser display size; no MP4 frames rendered for preview.
+`Research Package import → strict v1.0→v1.1 migration → visualComposition + motionPlan validation → typed template registry → preset tokens + Remotion frame motion → shared VersionedVideo → Player / MP4 → H.264 + AAC → ffprobe manifest`.
 
-Scene timing defines visual/caption segments. Manual upload uses ffprobe duration to scale target timeline. Gemini TTS reads scene `narrationText` only after explicit full-preview request; approved audio uses word/punctuation weights normalized to ffprobe's actual duration. Approval changes selected project audio; preview generation alone does not. Scene timings become absolute estimates editable in storyboard; no word-level forced alignment is claimed. Gemini's default WAV is normalized by FFmpeg to MP3; manual uploads must be MP3/WAV/M4A, readable by ffprobe, ≤ configured size (default 100 MB), and ≤120 sec. At snapshot creation, approved audio is copied to content-addressed path under `public/audio/jobs/`; later replace/regenerate cannot change prior job audio.
+- `src/video/renderer-registry.tsx`: exhaustive `templateId` registry; missing template renderer throws rather than selecting generic art.
+- `src/video/visual-primitives.tsx`: safe SVG primitives, icons, local trusted images, groups/layers, diagrams.
+- `src/video/style-config.ts`: distinct palette, typography, safe area, and backdrop configs for three presets.
+- `src/video/motion.ts`: deterministic per-frame cue calculation.
+- `src/video/video.tsx`: scene timeline, transitions, title/caption layout, preset backdrop, narration audio.
+- `src/video/legacy-video.tsx` + `legacy-artwork.tsx`: frozen V1 renderer path.
 
-## Research Package field wiring
+Canvas fixed at 1080×1920 / 30 fps. Browser Player and V2 MP4 use same `VersionedVideo` component. Local render writes H.264 and optional AAC, then verifies codec, dimensions, duration, bytes, SHA-256, and renderer version.
 
-| Field(s) | V1.0.1 behavior |
+`renderSnapshot()` bundles trusted Remotion code, selects the versioned composition and renders the immutable snapshot. Standalone `scripts/render.ts` refuses to overwrite an existing MP4/manifest; set `RENDER_OUTPUT_DIR` for a separate destination. Project jobs use unique attempt paths.
+
+## Research Package and composition
+
+Research Package v1.0 is accepted and upgraded on parse to v1.1. Migration preserves existing fields, adds template-derived `visualComposition` defaults and a default `motionPlan`; source files need not be rewritten. Existing DB projects are normalized on read and persist v1.1 on next save.
+
+`visualComposition` is typed JSON: background, ordered depth layers, and allowlisted nodes (`shape`, `path`, `text`, `icon`, trusted local `image`, `diagram`, `group`). Node frames, colors, SVG path data, IDs, assets, dimensions, and animation plans are validated. Rendering uses React/SVG; imported text/path data is never evaluated as JS or markup. `visualDescription` remains human editorial direction and is **not** interpreted as a generated composition.
+
+| Research field | V1.0.2 behavior |
 |---|---|
-| `title`, `category`, `onScreenText` | Rendered as footer, category label, and scene heading. |
-| Scene array order, `startSec`, `endSec` | Array order drives sequence; start/end drive timing. `order` is validated but renderer does not sort by it. |
-| `narrationText` | Rendered as caption and sole input to full TTS script; top-level `narration` is not used for TTS. |
-| `targetDurationSec` | Default timeline and scale reference; attached audio duration overrides total. |
-| `templateId` | Selects artwork branch for some IDs. `mountain-reveal`/`himalaya` currently share default mountain art; `space-orbit`/`infographic` share one branch. |
-| `visualPreset` | Schema/editor field only; no renderer effect. All choices use same SVG composition/style. |
-| `visualDescription` | Editor field only; not read by renderer. |
-| `motionCues` | Validated and shown in editor; renderer does not map cue values to animation. Existing motion is hard-coded per artwork branch. |
-| `sfxCues` | Validated schema metadata; no UI editor, sound asset, or rendered audio effect. |
-| `language` | Package metadata only; does not set TTS locale. Voice locale is selected separately in AI Voice UI. |
-| `references` | Validated and shown as source count/review metadata; not drawn into video. |
-| `id`, `schemaVersion`, `aspectRatio` | Contract/validation metadata. Output stays fixed at 9:16 regardless of input metadata. |
+| `visualPreset` | Real palette, backdrop, typography scale, and composition treatment. |
+| `visualComposition` | Actual renderer input; editor can change validated JSON per scene. |
+| `motionCues` + `motionPlan` | Frame-based, composable cues. Plan defines target layer, delay, duration, easing. |
+| `templateId` | Explicit registry renderer and distinct template defaults. |
+| `visualDescription` | Editorial-only text; does not create objects. |
+| `sfxCues` | Metadata only; no SFX playback in this version. |
+| `title`, `category`, `onScreenText`, `narrationText` | Video title/category/scene title/caption and TTS script fields. Top-level `narration` remains unused by TTS. |
+| `startSec`, `endSec`, `targetDurationSec` | Scene sequence/timing. Attached audio duration overrides total; estimated TTS timings remain editable. |
+| `language` | Package metadata; TTS locale remains separately selected in Voice UI. |
+| `references` | Validation/review metadata; not drawn into video. |
 
-V1.1 direction: model visual presets as explicit palette/type/layout configs; dispatch each template ID to a renderer; convert allowlisted motion cues to deterministic frame-based keyframes. Keep `visualDescription` declarative and validated—never evaluate imported markup/code. Add SFX only after adding licensed assets, cue timing, mix/ducking rules, and render tests.
+### Template registry
 
-`renderSnapshot()` bundles trusted Remotion code, calls `selectComposition()` and `renderMedia()`, writes H.264 MP4 with AAC narration when audio exists, then checks ffprobe codec, dimensions, media duration, bytes and SHA-256. Output path is generated by app. Render runs locally, so final 1080×1920 encoding uses device CPU; GitHub workflow can instead render a committed sample/package.
+All IDs have explicit defaults and registry entries: `mountain-reveal`, `plate-collision`, `folding-uplift`, `himalaya`, `volcano`, `infographic`, `space-orbit`, `animal-habitat`. Templates share renderer primitives, not one fallback illustration. `infographic` supplies diagram-focused default composition; users may replace/extend scene composition without changing renderer code.
 
-## Extend artwork
+### Motion cue contract
 
-Add a reusable SVG branch in `SceneArtwork`, add its stable ID to `templateIds` Zod allowlist, then reference it in package JSON. Never evaluate JSX, SVG markup, arbitrary paths, or JS from imported package. Unknown IDs/cues fail validation.
+Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `scale` 24f/spring, `pan` 24f/linear, `zoom` 24f/ease-in-out, `parallax` 24f/ease-in-out, `reveal` 24f/spring, `pulse` 36f/linear, `cut` immediate, `dissolve` 18f/ease-in-out. V1.1 `motionPlan` can target `all`, `scene`, or a named layer. Plans run in array order: translations sum, scales multiply/clamp, opacity multiplies, reveal takes the most restrictive clip. If both transition cues exist, `cut` wins; `dissolve` cross-fades previous artwork. Same package + renderer version + frame yields deterministic motion.
 
-## Current limits
+### Trusted visual assets
 
-Artwork is a template library, not a general animation editor. SFX cue names are metadata only; no bundled sound effects/music. Gemini TTS needs a Free Tier API key and network; actual alignment remains estimated per scene. Preview uses live browser Player; no low-resolution MP4 proxy. Local render may take several minutes and requires working FFmpeg plus Remotion Chromium.
+`public/assets/{cloud,lightning,sun}.svg` are original local SVGs authored for this repository. Image nodes accept asset IDs only; renderer maps IDs to those files. Icons and diagrams are inline SVG primitives. No network fetch or external asset download occurs during render. See [`DYNAMIC_MOTION_GRAPHICS_ENGINE.md`](DYNAMIC_MOTION_GRAPHICS_ENGINE.md) and [`TEMPLATE_AND_ASSET_GUIDE.md`](TEMPLATE_AND_ASSET_GUIDE.md).
+
+## Renderer version and old jobs
+
+New snapshots store `rendererVersion: 2`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2 to motion registry. A V1 snapshot without version metadata defaults to renderer 1 and remains renderable; when content is unchanged, project UI can render that V1 snapshot or explicitly create a V2 snapshot. Changed content marks it stale. Immutable audio file references remain unchanged. V1.0.2 does not silently reinterpret old snapshots as V2.
+
+## Validation and visual regression
+
+`npm test` checks v1.0 migration, strict composition/asset rejection, renderer registration, and cue functions. `npm run test:visual` renders 35 PNG frames at 270×480: eight template middles, three presets at start/middle/end, staggered infographic entrance, all three lightning sample scenes, cue/no-cue frames, and transition before/start/mid/end. SHA-256 baselines live in `scripts/visual-goldens.json`; PNG review artifacts go to ignored `renders/visual-regression/v1.0.2/`. Baseline updates require manual image review; browser/OS/font changes can alter hashes. `npm run smoke:render` additionally renders V2 and versionless V1 MP4s.
+
+## Limits / next
+
+SFX cues are not played or mixed; no licensed SFX library/timing/ducking engine yet. V1.0.2 visual descriptions stay editorial; author visual objects via structured JSON or template defaults. Long text is wrapped into bounded caption/title areas and may be ellipsized; no word-level TTS alignment is claimed. Next engine phase can add richer per-layer controls and licensed SFX without adding runtime AI calls.

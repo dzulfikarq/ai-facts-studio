@@ -6,14 +6,21 @@ import { parseResearchPackage } from "../src/domain/research";
 import { ApiError } from "@google/genai";
 import { GeminiSpeechProvider, type GeminiSdkClient } from "../src/server/tts/gemini-provider";
 import { DEFAULT_TTS_MODEL, FREE_TIER_TTS_MODELS, GEMINI_TTS_LOCALES, ttsCacheKey } from "../src/server/tts/provider";
+import { cueProgress, layerMotion, sceneTransitionOpacity } from "../src/video/motion";
+import { registeredTemplateIds } from "../src/video/renderer-registry";
+import { visualStyles } from "../src/video/style-config";
 
-const samples = ["mountain-formation", "space-orbit", "animal-habitat"];
+const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge"];
 const parsedSamples = [];
 for (const name of samples) {
   const raw = JSON.parse(await readFile(`samples/${name}.json`, "utf8")) as unknown;
   const parsed = parseResearchPackage(raw);
   assert.equal(parsed.success, true, `${name} should pass schema`);
-  if (parsed.success) parsedSamples.push(parsed.data);
+  if (parsed.success) {
+    assert.equal(parsed.data.schemaVersion, "1.1", `${name} should migrate/validate to v1.1 renderer data`);
+    assert.ok(parsed.data.scenes.every((scene) => scene.visualComposition.layers.length > 0 && scene.motionPlan.length === scene.motionCues.length));
+    parsedSamples.push(parsed.data);
+  }
 }
 
 const mountain = parsedSamples[0]!;
@@ -37,6 +44,23 @@ const noReference = structuredClone(mountain);
 noReference.scenes[0]!.referenceIds = ["missing-source"];
 assert.equal(parseResearchPackage(noReference).success, false, "unknown reference ID must fail");
 
+const unsafeVisual = structuredClone(parsedSamples.at(-1)!);
+unsafeVisual.scenes[0]!.visualComposition.layers[0]!.nodes[0] = {
+  type: "image", asset: "../../outside.svg", x: 0, y: 0, width: 50, height: 50,
+} as unknown as typeof unsafeVisual.scenes[number]["visualComposition"]["layers"][number]["nodes"][number];
+assert.equal(parseResearchPackage(unsafeVisual).success, false, "untrusted image paths must fail allowlist validation");
+const unsafePath = structuredClone(parsedSamples.at(-1)!);
+unsafePath.scenes[0]!.visualComposition.layers[0]!.nodes[0] = {
+  type: "path", d: 'M0 0" onload="alert(1)', x: 0, y: 0, width: 50, height: 50,
+} as typeof unsafePath.scenes[number]["visualComposition"]["layers"][number]["nodes"][number];
+assert.equal(parseResearchPackage(unsafePath).success, false, "SVG path data must reject markup/code payloads");
+const offCanvas = structuredClone(parsedSamples.at(-1)!);
+offCanvas.scenes[0]!.visualComposition.layers[0]!.nodes[0]!.x = 1070;
+assert.equal(parseResearchPackage(offCanvas).success, false, "visual nodes outside 9:16 canvas must fail validation");
+const invalidMotionTarget = structuredClone(parsedSamples.at(-1)!);
+invalidMotionTarget.scenes[0]!.motionPlan[0]!.targetLayer = "missing-layer";
+assert.equal(parseResearchPackage(invalidMotionTarget).success, false, "motion plan targets must reference existing layer IDs");
+
 const now = Date.parse("2026-10-24T12:00:00.000Z");
 const atLimit = canStartNewJob([new Date(now - 1000).toISOString()], now, 1);
 assert.equal(atLimit.allowed, false, "one recent job should consume default slot");
@@ -59,6 +83,17 @@ assert.equal(sceneTimes(synced, synced.scenes[2]!, 43.27, "estimated").startSec,
 
 assert.equal(DEFAULT_TTS_MODEL, "gemini-3.8-flash-lite-tts");
 assert.equal(GEMINI_TTS_LOCALES[0]!.locale, "id-ID", "default voice catalog locale should be Bahasa Indonesia");
+assert.equal(registeredTemplateIds().length, 8, "every allowlisted template has an explicit renderer");
+assert.equal(new Set(Object.values(visualStyles).map((style) => style.palette.canvas)).size, 3, "presets must have distinct palettes");
+const motionPlan = (cue: import("../src/domain/visual-composition").MotionCuePlan["cue"]) => ({ cue, targetLayer: "all" as const, delayFrames: 0, durationFrames: 24, easing: "linear" as const });
+const still = { opacity: 1, translateX: 0, translateY: 0, scale: 1, reveal: 1 };
+const cueState = (cue: import("../src/domain/visual-composition").MotionCuePlan["cue"]) => layerMotion([motionPlan(cue)], "front", 1, 6, .25);
+for (const cue of ["fadeIn", "slide", "scale", "pan", "zoom", "parallax", "reveal", "pulse"] as const) {
+  assert.notDeepEqual(cueState(cue), still, `${cue} must alter frame state`);
+}
+assert.equal(sceneTransitionOpacity([motionPlan("cut")], 0), 1, "cut stays immediate");
+assert.ok(sceneTransitionOpacity([motionPlan("dissolve")], 12) > 0 && sceneTransitionOpacity([motionPlan("dissolve")], 12) < 1, "dissolve spans its configured frames");
+assert.deepEqual(layerMotion([motionPlan("zoom")], "front", 12, 12, .5), layerMotion([motionPlan("zoom")], "front", 12, 12, .5), "motion state must be deterministic");
 const cacheBase = { provider: "gemini-developer-api", model: FREE_TIER_TTS_MODELS[0], scriptSha256: "abc", locale: "id-ID", voiceId: "Kore", style: "documentary", speakingRate: 1 };
 assert.equal(ttsCacheKey(cacheBase), ttsCacheKey({ ...cacheBase }));
 assert.notEqual(ttsCacheKey(cacheBase), ttsCacheKey({ ...cacheBase, speakingRate: 1.1 }));
@@ -113,4 +148,4 @@ try { await unavailableGemini.synthesize({ text: "test", locale: "id-ID", voiceI
 catch (error) { unavailableCode = (error as { code?: string }).code ?? ""; }
 assert.equal(unavailableCode, "model-unavailable", "unavailable model stops without paid fallback");
 
-console.log(`PASS: ${samples.length} packages; schema safety, Gemini Free Tier guard, SDK config, cache, estimated timing, and rolling limit checks.`);
+console.log(`PASS: ${samples.length} packages; v1.0→v1.1 migration, visual schema safety, registry/cue determinism, Gemini Free Tier guard, cache, timing, and rolling limit checks.`);

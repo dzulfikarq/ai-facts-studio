@@ -9,10 +9,10 @@
 3. Open **Actions → Render trusted research package → Run workflow**. Use default sample or path to another committed `.json`.
 4. Download artifact on completed run; inspect video and manifest. The workflow package has no voice-over unless you intentionally commit audio and add a trusted audio path to renderer yourself.
 
-## V1.0.1 verification status
+## V1.0.2 verification status
 
 Workflow was statically reviewed but not dispatched during this audit: GitHub CLI (`gh`) is unavailable in the environment, so no workflow run/artifact evidence could be collected. Keep this path classified as **not live-tested**; do not describe cloud rendering or round-trip as verified.
 
-Local app does not call GitHub API, configure owner/repo, create run IDs, poll status, download artifacts, or transport local project/audio. Workflow only renders committed JSON; generated MP4 is an Actions artifact, not returned to app. It does not run `npm run build`, API/TTS/render smoke tests, or `npm audit`; those checks ran locally instead. Workflow was not promoted or changed during V1.0.1 stabilization.
+Local app does not call GitHub API, configure owner/repo, create run IDs, poll status, download artifacts, or transport local project/audio. Workflow only renders committed JSON; generated MP4 is an Actions artifact, not returned to app. It does not run `npm run build`, API/TTS/render smoke tests, visual regression, or `npm audit`; those checks ran locally instead. Workflow was not promoted or changed during V1.0.2 stabilization. New V2 snapshots use the same Remotion entry point and local assets, but workflow execution has not verified V2 compatibility yet.
 
 Artifacts are access-controlled according to repository visibility/access and retained seven days; they are not encrypted by this app. Avoid public repos for private research/voice-over. Actions use quotas and retention limits; no unlimited/free claim. If adding automated dispatch later, use a server-side fine-grained token with minimum workflow permissions, trusted refs, authenticated snapshot transfer, bounded polling, and explicit artifact access controls. Never put token in browser/localStorage or workflow inputs.

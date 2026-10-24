@@ -1,0 +1,121 @@
+{
+  "schemaVersion": "1.1",
+  "id": "lightning-charge-id",
+  "title": "Mengapa Petir Bisa Terjadi?",
+  "category": "Sains & Antariksa",
+  "visualPreset": "animated-infographic",
+  "language": "id-ID",
+  "targetDurationSec": 24,
+  "aspectRatio": "9:16",
+  "narration": "Di dalam awan badai, tumbukan partikel dapat memisahkan muatan listrik. Medan listrik yang kuat dapat membentuk kanal petir di udara.",
+  "references": [
+    {
+      "id": "noaa-nssl-lightning",
+      "title": "Lightning: A Few Facts",
+      "publisher": "NOAA National Severe Storms Laboratory",
+      "url": "https://www.nssl.noaa.gov/education/svrwx101/lightning/",
+      "checkedAt": "2026-10-24"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "lightning-01-cloud",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 8,
+      "narrationText": "Di dalam awan badai, air dan partikel es bergerak karena arus udara yang kuat.",
+      "onScreenText": "AWAN BADAI BERGERAK",
+      "templateId": "infographic",
+      "visualDescription": "Awan badai dengan panah arus udara naik; arahan editorial, bukan kode visual.",
+      "motionCues": ["fadeIn", "parallax", "dissolve"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "clouds", "delayFrames": 0, "durationFrames": 24, "easing": "easeOut" },
+        { "cue": "parallax", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" },
+        { "cue": "dissolve", "targetLayer": "scene", "delayFrames": 0, "durationFrames": 18, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "clouds", "depth": 0.2, "nodes": [
+            { "type": "image", "asset": "cloud", "x": 95, "y": 500, "width": 890, "height": 420 }
+          ]},
+          { "id": "airflow", "depth": 0.55, "nodes": [
+            { "type": "path", "x": 230, "y": 890, "width": 620, "height": 330, "d": "M10 90 C20 20 45 20 50 5 C55 35 80 35 90 10", "fill": "none", "stroke": "primary", "strokeWidth": 8 },
+            { "type": "icon", "icon": "arrow", "x": 725, "y": 870, "width": 120, "height": 100, "color": "accent" }
+          ]},
+          { "id": "labels", "depth": 0.9, "nodes": [
+            { "type": "text", "x": 150, "y": 1240, "width": 780, "height": 92, "text": "ARUS UDARA NAIK", "color": "text", "fontSize": 42, "font": "heading", "weight": "800", "align": "middle" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-nssl-lightning"]
+    },
+    {
+      "id": "lightning-02-charge",
+      "order": 2,
+      "startSec": 8,
+      "endSec": 16,
+      "narrationText": "Dalam banyak badai, tumbukan kristal es dan graupel membantu memisahkan muatan. Kristal kecil sering terbawa ke bagian atas awan.",
+      "onScreenText": "MUATAN TERPISAH",
+      "templateId": "infographic",
+      "visualDescription": "Tanda plus dan minus menunjukkan pola muatan yang umum, bukan berlaku identik pada semua badai.",
+      "motionCues": ["reveal", "pulse", "pan"],
+      "motionPlan": [
+        { "cue": "reveal", "targetLayer": "diagram", "delayFrames": 0, "durationFrames": 30, "easing": "easeOut" },
+        { "cue": "pulse", "targetLayer": "charges", "delayFrames": 8, "durationFrames": 36, "easing": "linear" },
+        { "cue": "pan", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "linear" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "clouds", "depth": 0.15, "nodes": [
+            { "type": "image", "asset": "cloud", "x": 130, "y": 530, "width": 820, "height": 380 }
+          ]},
+          { "id": "charges", "depth": 0.55, "nodes": [
+            { "type": "text", "x": 280, "y": 690, "width": 520, "height": 90, "text": "+   +   +   +", "color": "accent", "fontSize": 54, "font": "heading", "weight": "800", "align": "middle" },
+            { "type": "text", "x": 320, "y": 1140, "width": 440, "height": 90, "text": "−   −   −", "color": "primary", "fontSize": 50, "font": "heading", "weight": "800", "align": "middle" }
+          ]},
+          { "id": "diagram", "depth": 0.8, "nodes": [
+            { "type": "diagram", "x": 330, "y": 880, "width": 420, "height": 260, "kind": "charge-separation", "labels": ["ES KECIL", "GRAUPEL"], "color": "text", "accent": "danger" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-nssl-lightning"]
+    },
+    {
+      "id": "lightning-03-discharge",
+      "order": 3,
+      "startSec": 16,
+      "endSec": 24,
+      "narrationText": "Saat medan listrik cukup kuat, terbentuk kanal konduktif di udara. Pelepasan muatan melalui kanal itu tampak sebagai kilat.",
+      "onScreenText": "KANAL LISTRIK MENJADI KILAT",
+      "templateId": "infographic",
+      "visualDescription": "Kilat menghubungkan daerah bermuatan; ilustrasi ini menyederhanakan proses atmosfer.",
+      "motionCues": ["fadeIn", "zoom", "dissolve"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "all", "delayFrames": 0, "durationFrames": 20, "easing": "easeOut" },
+        { "cue": "zoom", "targetLayer": "bolt", "delayFrames": 0, "durationFrames": 60, "easing": "easeInOut" },
+        { "cue": "dissolve", "targetLayer": "scene", "delayFrames": 0, "durationFrames": 18, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "storm-cloud", "depth": 0.18, "nodes": [
+            { "type": "image", "asset": "cloud", "x": 150, "y": 500, "width": 780, "height": 360 }
+          ]},
+          { "id": "bolt", "depth": 0.74, "nodes": [
+            { "type": "image", "asset": "lightning", "x": 448, "y": 780, "width": 185, "height": 470 },
+            { "type": "path", "x": 400, "y": 1160, "width": 280, "height": 210, "d": "M8 5 L47 40 L35 58 L66 75 L94 48", "fill": "none", "stroke": "danger", "strokeWidth": 5 }
+          ]},
+          { "id": "callout", "depth": 0.92, "nodes": [
+            { "type": "text", "x": 150, "y": 1350, "width": 780, "height": 90, "text": "PELEPASAN MUATAN", "color": "text", "fontSize": 42, "font": "heading", "weight": "800", "align": "middle" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-nssl-lightning"]
+    }
+  ]
+}

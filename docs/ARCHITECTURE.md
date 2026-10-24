@@ -10,7 +10,7 @@
 
 ## Data flow
 
-`JSON import → Zod validation → SQLite project → optional Test Voice/full Gemini TTS preview → explicit audio approval → FFmpeg WAV normalization + ffprobe → estimated scene timing → immutable audio snapshot → Remotion Player preview → Remotion renderer → H.264/AAC MP4`.
+`JSON v1.0/v1.1 import → strict validation + v1.0 migration → SQLite project/structured scene composition → optional Test Voice/full Gemini TTS preview → explicit audio approval → FFmpeg WAV normalization + ffprobe → immutable renderer-versioned snapshot → same VersionedVideo in Player/render → H.264/AAC MP4 + manifest`.
 
 API defaults to `127.0.0.1` (port 3001); Vite dev UI binds to `127.0.0.1:5173`. Production UI and API share port 3001. Projects, jobs, rolling job-usage events, TTS cache metadata/attempts, and retryable file-cleanup entries persist in SQLite; snapshots under `data/jobs/`; uploaded/TTS assets under `public/audio/tts/` and `public/audio/`; immutable content-addressed job audio under `public/audio/jobs/`; outputs under `renders/`.
 
@@ -19,6 +19,8 @@ API defaults to `127.0.0.1` (port 3001); Vite dev UI binds to `127.0.0.1:5173`. 
 - Research package is untrusted data. Strict allowlists cover categories, scene templates, motion/SFX cues, URL schemes, lengths, IDs, sequence, and timing. No imported field is evaluated as code or passed to a shell.
 - Manual audio upload accepts MP3/WAV/M4A, caps size, assigns random filename, and probes media via argument-array `ffprobe`. Each immutable job snapshot references content-addressed audio copy, so replacing project audio cannot break prior job retries. API defaults to loopback; do not set `HOST` to a public interface.
 - Project deletion removes project/job/attempt rows in one SQLite transaction and queues unique upload/snapshot/render paths in that same transaction. Cleanup retries at startup and every 60 seconds; failed cleanup remains visible to the caller. Content-addressed `audio/jobs` and `audio/tts` are shared caches and are retained on project deletion. Job-usage events survive project/job deletion so deleting a project cannot reset rolling job quota.
+- V2 rendering is a pure local Remotion path over validated composition data. Job snapshots and manifests include renderer version; missing version maps to frozen V1 renderer for old jobs. Daily job quota amount/logic stays unchanged.
+- Local visual images are allowlisted in-repository SVG assets. Composition JSON cannot name arbitrary paths or URLs; `visualDescription` is not interpreted as layout/code.
 - AI Voice uses the official Gemini Developer API SDK and Free-Tier-only model allowlist only after explicit user click. `GEMINI_API_KEY` stays in server environment, never browser/SQLite/logs. No Vertex/paid-model fallback or billing API. Gemini project billing status is not queryable through this API key; operator must keep billing unlinked.
 - TTS cache key hashes sample/full text + provider + locale + voice + style + rate. Test Voice and full narration share TTS request quota, separate from video-job quota. Full narration stays pending until explicit approval; cache assets and voice metadata persist locally.
 - Render command gets server-created snapshot and fixed output path. No GitHub credential is stored.

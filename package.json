@@ -1,6 +1,6 @@
 {
   "name": "ai-facts-studio",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,7 +16,9 @@
     "smoke:tts": "tsx scripts/tts-smoke.ts",
     "smoke:gemini-live": "tsx scripts/gemini-live-smoke.ts",
     "render": "tsx scripts/render.ts",
-    "smoke:render": "tsx scripts/render-smoke.ts"
+    "smoke:render": "tsx scripts/render-smoke.ts",
+    "smoke:samples": "tsx scripts/sample-render-smoke.ts",
+    "test:visual": "tsx scripts/visual-regression.ts"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.466",

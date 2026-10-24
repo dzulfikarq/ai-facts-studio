@@ -36,11 +36,11 @@ Not integrated. Community Edge TTS implementation relies on an undocumented endp
 - `npm run smoke:tts`: test-only mock, Test Voice/cache, unapproved full preview, explicit approval, regenerate/retry cap, FFmpeg WAV→MP3 normalization, ffprobe, immutable snapshot, Remotion MP4 and non-silent AAC. Mock output is a sine tone, **not generated speech**.
 - `GEMINI_TTS_LIVE_TEST=1 npm run smoke:gemini-live` (PowerShell: `$env:GEMINI_TTS_LIVE_TEST="1"; npm run smoke:gemini-live`) is opt-in and refuses to run without an API key and `GEMINI_TTS_FREE_TIER_ONLY=true`. It sends built-in sample text only; no project/narration is attached.
 
-### Live provider evidence — 24 Oct 2026
+### Historical live provider evidence — V1.0.1 audit, 24 Oct 2026
 
 One live Test Voice synthesis passed: `gemini-developer-api`, model `gemini-3.8-flash-lite-tts`, live catalog source `api`, voice `achernar`, requested locale `id-ID`, 9.68 sec, 155,948 bytes, normalized MP3, cache miss. ffprobe verified MP3/duration and the audio URL returned successfully; no human listening or voice-quality assessment was performed. Endpoint did not create a project or attach audio. This live sample consumed one local TTS synthesis attempt and is cached in configured `DATA_DIR`.
 
-This does **not** prove full-narration/approval/render against Gemini; those paths were exercised with the mock provider. Google project billing linkage is not queryable through the SDK/API key. The live test ran with the local Free Tier guard enabled; no claim is made about billing state or charges. Check AI Studio project billing before rerunning.
+This was not rerun during V1.0.2 renderer work; Gemini provider code is unchanged. It does **not** prove full-narration/approval/render against Gemini; those paths were exercised with the mock provider. Google project billing linkage is not queryable through the SDK/API key. The live test ran with the local Free Tier guard enabled; no claim is made about billing state or charges. Check AI Studio project billing before rerunning.
 
 ### Troubleshooting
 

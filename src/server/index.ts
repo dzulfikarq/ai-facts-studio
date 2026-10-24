@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -13,6 +13,7 @@ import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
 import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
+import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import { dataDir, db, jobForClient, projectFromRow, type JobRow, type StoredAudio, type StoredProject } from "./database";
 import { createSpeechProvider, SpeechProviderError, ttsCacheKey, type SpeechAudio, type SpeechVoice, type SpeechVoiceCatalog } from "./tts/provider";
 
@@ -63,12 +64,27 @@ function snapshotForProject(project: StoredProject): RenderSnapshot {
   const extension = project.audio ? path.extname(project.audio.file) : "";
   return {
     research: project.researchPackage,
+    rendererVersion: RENDERER_VERSION,
     audio: project.audio ? {
       file: `audio/jobs/${project.audio.sha256}${extension}`,
       durationSec: project.audio.durationSec,
       timingMode: project.audio.timingMode,
     } : null,
   };
+}
+
+function snapshotContentMatchesProject(snapshotPath: string, project: StoredProject) {
+  const resolved = path.resolve(snapshotPath);
+  if (!resolved.startsWith(`${jobDir}${path.sep}`)) return false;
+  try {
+    const snapshot = JSON.parse(readFileSync(resolved, "utf8")) as RenderSnapshot;
+    const oldResearch = parseResearchPackage(snapshot.research);
+    const currentResearch = parseResearchPackage(project.researchPackage);
+    if (!oldResearch.success || !currentResearch.success) return false;
+    const oldContent = { research: oldResearch.data, audio: snapshot.audio ?? null };
+    const currentContent = { research: currentResearch.data, audio: snapshotForProject(project).audio ?? null };
+    return JSON.stringify(oldContent) === JSON.stringify(currentContent);
+  } catch { return false; }
 }
 
 function getProject(id: string) {
@@ -83,11 +99,15 @@ function getProject(id: string) {
   const audioMatchesNarration = project.audio?.source === "tts"
     ? project.audio.tts?.scriptSha256 === currentScriptSha
     : true;
-  const latestJobCurrent = Boolean(latest && latest.source_sha256 === createHash("sha256").update(JSON.stringify(snapshotForProject(project))).digest("hex"));
+  const latestJobContentCurrent = Boolean(latest && (
+    latest.source_sha256 === createHash("sha256").update(JSON.stringify(snapshotForProject(project))).digest("hex")
+    || latest.renderer_version === LEGACY_RENDERER_VERSION && snapshotContentMatchesProject(latest.snapshot_path, project)
+  ));
+  const latestJobCurrent = Boolean(latest && latestJobContentCurrent && latest.renderer_version === RENDERER_VERSION);
   const pendingTts = pendingAsset && existsSync(path.resolve(root, "public", pendingAsset.file))
     ? { ...project.pendingTts!, audioUrl: `/${pendingAsset.file}`, durationSec: pendingAsset.duration_sec, bytes: pendingAsset.bytes, voiceName: pendingAsset.voice_name, locale: pendingAsset.locale, style: pendingAsset.style, speakingRate: pendingAsset.speaking_rate, generatedAt: pendingAsset.created_at }
     : null;
-  return { ...project, pendingTts, pendingTtsMatchesNarration: project.pendingTts?.scriptSha256 === currentScriptSha, audioMatchesNarration, latestJobCurrent, latestJob: jobForClient(latest) };
+  return { ...project, pendingTts, pendingTtsMatchesNarration: project.pendingTts?.scriptSha256 === currentScriptSha, audioMatchesNarration, latestJobCurrent, latestJobContentCurrent, latestJob: jobForClient(latest) };
 }
 
 function saveProject(id: string, project: StoredProject) {
@@ -697,8 +717,8 @@ app.post("/api/projects/:id/generate", async (request, response) => {
       return apiError(response, 409, "Project berubah saat preview dibuat. Simpan perubahan lalu ulangi Generate preview.", { code: "project-changed" });
     }
     withTransaction(() => {
-      db.prepare("INSERT INTO jobs (id, project_id, source_sha256, snapshot_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(id, row.id, sourceSha, snapshotPath, "preview-ready", createdAt, createdAt);
+      db.prepare("INSERT INTO jobs (id, project_id, source_sha256, snapshot_path, state, created_at, updated_at, renderer_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, row.id, sourceSha, snapshotPath, "preview-ready", createdAt, createdAt, RENDERER_VERSION);
       db.prepare("INSERT INTO video_job_requests (id, created_at) VALUES (?, ?)").run(id, createdAt);
     });
   } catch (error) {

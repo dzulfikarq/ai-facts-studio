@@ -6,6 +6,12 @@ data/*.sqlite-shm
 data/*.sqlite-wal
 data/jobs/
 data/bundle/
-renders/
+renders/*
+!renders/ui-refinement/
+renders/ui-refinement/*
+!renders/ui-refinement/before-desktop.png
+!renders/ui-refinement/after-desktop.png
+!renders/ui-refinement/after-mobile.png
+!renders/ui-refinement/after-advanced.png
 public/audio/*
 !public/audio/.gitkeep

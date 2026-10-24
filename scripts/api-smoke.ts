@@ -45,7 +45,7 @@ await new Promise<void>((resolve, reject) => probe.close((error) => error ? reje
 const baseUrl = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", DAILY_JOB_LIMIT: "2", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
+  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
   stdio: "ignore",
 });
 let projectId: string | undefined;
@@ -75,11 +75,22 @@ try {
     fetch(`${baseUrl}/api/tts/status`).then((response) => response.json()),
     fetch(`${baseUrl}/api/tts/voices?locale=id-ID`).then((response) => response.json()),
   ]);
+  assert.equal(ttsStatus.requestsRemaining, ttsStatus.dailyLimit, "TTS status reports rolling synthesis quota without secrets");
   assert.equal(ttsCatalog.locales[0].locale, "id-ID", "Indonesian should be first/default locale");
   assert.ok(ttsCatalog.voices.length > 0, "official prebuilt fallback catalog should keep voice selector populated");
   assert.equal(ttsCatalog.catalogSource, "fallback");
 
   const research = await fetch(`${baseUrl}/api/sample`).then((response) => response.json());
+  const silentProject = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
+  }).then((response) => response.json());
+  const silentJob = await fetch(`${baseUrl}/api/projects/${silentProject.id}/generate`, { method: "POST" }).then((response) => response.json());
+  assert.equal(silentJob.job.state, "preview-ready");
+  const silentRenderResponse = await fetch(`${baseUrl}/api/jobs/${silentJob.job.id}/render`, { method: "POST" });
+  const silentRender = await silentRenderResponse.json();
+  assert.equal(silentRenderResponse.status, 409);
+  assert.equal(silentRender.code, "silent-render-confirmation-required", "API also requires explicit confirmation for a silent snapshot");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${silentProject.id}`, { method: "DELETE" })).status, 200);
   const createdResponse = await fetch(`${baseUrl}/api/projects`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
   });
@@ -87,6 +98,15 @@ try {
   assert.equal(createdResponse.status, 201);
   assert.equal(project.researchPackage.schemaVersion, "1.1", "v1.0 package should upgrade compatibly on import");
   projectId = project.id;
+  const verifiedProject = await fetch(`${baseUrl}/api/projects/${projectId}/review`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "verified-by-author" }),
+  }).then((response) => response.json());
+  assert.equal(verifiedProject.researchReviewStatus, "verified-by-author");
+  const editedResearch = { ...research, title: `${research.title} (edited)` };
+  const editedProject = await fetch(`${baseUrl}/api/projects/${projectId}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: editedResearch }),
+  }).then((response) => response.json());
+  assert.equal(editedProject.researchReviewStatus, "needs-review", "editing research invalidates author verification");
 
   const audioPath = path.join(tempDir, "voice.wav");
   await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", audioPath]);
@@ -109,6 +129,8 @@ try {
   assert.equal(snapshot.rendererVersion, 2, "new job snapshot records renderer version");
   assert.equal(first.job.rendererVersion, 2);
   assert.ok(snapshot.audio.file.startsWith("audio/jobs/"), "job snapshot should reference immutable audio copy");
+  assert.equal(snapshot.audio.source, "upload");
+  assert.equal(snapshot.audio.sha256, uploaded.audio.sha256, "snapshot preserves approved audio identity");
   jobAudioPath = path.resolve("public", snapshot.audio.file);
   await readFile(jobAudioPath);
   renderOutputPath = path.join("renders", first.job.id, "attempt-1.mp4");
@@ -135,9 +157,9 @@ try {
   await assert.rejects(readFile(jobSnapshotPath), "job snapshot should be deleted");
   await assert.rejects(readFile(renderOutputPath), "job MP4 should be deleted");
   await readFile(jobAudioPath); // content-addressed audio remains a shared immutable cache
-  assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 2, "deleting a project must not reset rolling job quota");
+  assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 3, "deleting a project must not reset rolling job quota");
   projectId = undefined;
-  console.log(`PASS: production UI/API, import/idempotency, upload, deletion cleanup, shared audio retention, quota after deletion, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
+  console.log(`PASS: production UI/API, import/idempotency, research-review invalidation, upload/cleanup, shared audio, quota persistence, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
 } finally {
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" }).catch(() => {});
   if (jobAudioPath) await rm(jobAudioPath, { force: true });

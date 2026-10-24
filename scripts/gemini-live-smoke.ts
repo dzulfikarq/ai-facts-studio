@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 if (process.env.GEMINI_TTS_LIVE_TEST !== "1") throw new Error("Set GEMINI_TTS_LIVE_TEST=1 to make one live Gemini Test Voice request.");
 if (!process.env.GEMINI_API_KEY?.trim()) throw new Error("GEMINI_API_KEY is not configured.");
 if (process.env.GEMINI_TTS_FREE_TIER_ONLY !== "true") throw new Error("Live test blocked: GEMINI_TTS_FREE_TIER_ONLY must be true.");
+if (process.env.GEMINI_TTS_LIVE_NO_BILLING_CONFIRMED !== "I_HAVE_VERIFIED_NO_BILLING") throw new Error("Live test blocked: first verify the Google AI Studio project has no linked billing, then set GEMINI_TTS_LIVE_NO_BILLING_CONFIRMED=I_HAVE_VERIFIED_NO_BILLING.");
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-gemini-live-"));
 const portProbe = createServer();
@@ -46,20 +47,14 @@ try {
     ?? catalog.voices.find((item: { availability: string }) => item.availability === "api");
   assert.ok(voice, "Gemini must return at least one prebuilt voice from live API");
 
-  let generated: any;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const speakingRate = Number((0.71 + attempt * 0.02).toFixed(2));
-    const response = await fetch(`${baseUrl}/api/tts/test-voice`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ locale: "id-ID", voiceId: voice.id, style: "calm", speakingRate }),
-    });
-    const result = await response.json();
-    assert.equal(response.ok, true, result.error ?? `Test Voice failed (${response.status}).`);
-    if (!result.cacheHit) { generated = result; break; }
-  }
-  assert.ok(generated, "No uncached live Test Voice setting found; no provider request was made.");
-  assert.ok(generated.preview.durationSec > 0 && generated.preview.durationSec <= 120);
+   const response = await fetch(`${baseUrl}/api/tts/test-voice`, {
+     method: "POST",
+     headers: { "content-type": "application/json" },
+     body: JSON.stringify({ locale: "id-ID", voiceId: voice.id, style: "calm", speakingRate: 1 }),
+   });
+   const generated = await response.json();
+   assert.equal(response.ok, true, generated.error ?? `Test Voice failed (${response.status}).`);
+   assert.ok(generated.preview.durationSec > 0 && generated.preview.durationSec <= 120);
 
   const audioResponse = await fetch(`${baseUrl}${generated.preview.audioUrl}`);
   assert.equal(audioResponse.ok, true, "generated live sample should be served for playback");
@@ -81,7 +76,7 @@ try {
     bytes: generated.preview.bytes,
     outputCodec: audio?.codec_name,
     cacheHit: generated.cacheHit,
-    result: "PASS — one live Test Voice synthesis; no project audio was attached",
+     result: generated.cacheHit ? "CACHE HIT — no new live synthesis request" : "PASS — one live Test Voice synthesis; no project audio was attached",
   }, null, 2));
 } finally {
   server.kill();

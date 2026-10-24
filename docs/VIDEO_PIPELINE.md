@@ -1,4 +1,4 @@
-# Video pipeline — Dynamic Motion Graphics Engine V1.0.3
+# Video pipeline — Dynamic Motion Graphics Engine V1.0.4
 
 ## V2 composition and render path
 
@@ -11,9 +11,9 @@
 - `src/video/video.tsx`: scene timeline, transitions, title/caption layout, preset backdrop, narration audio.
 - `src/video/legacy-video.tsx` + `legacy-artwork.tsx`: frozen V1 renderer path.
 
-Canvas fixed at 1080×1920 / 30 fps. Browser Player and V2 MP4 use same `VersionedVideo` component. Local render writes H.264 and optional AAC, then verifies codec, dimensions, duration, bytes, SHA-256, and renderer version.
+Canvas fixed at 1080×1920 / 30 fps. Browser Player and V2 MP4 use same `VersionedVideo` component. Local render writes H.264 and AAC track, then verifies codec, dimensions, audio/video duration, audio source/SHA, non-silence/clipping when narration is expected, bytes, video SHA-256, and renderer version. Silent output is tagged `silent-expected` and requires explicit confirmation in UI/API.
 
-`renderSnapshot()` bundles trusted Remotion code, selects the versioned composition and renders the immutable snapshot. Standalone `scripts/render.ts` refuses to overwrite an existing MP4/manifest; set `RENDER_OUTPUT_DIR` for a separate destination. Project jobs use unique attempt paths.
+`renderSnapshot()` verifies approved audio SHA, bundles trusted Remotion code, selects the versioned composition and renders the immutable snapshot. Manifest records `audioSource`, input audio hash/provider/model/script hash/voice/approval time without storing narration or API key. Standalone `scripts/render.ts` refuses to overwrite an existing MP4/manifest and removes failed output; set `RENDER_OUTPUT_DIR` for a separate destination. Project jobs use unique attempt paths.
 
 ## Research Package and composition
 
@@ -21,7 +21,7 @@ Research Package v1.0 is accepted and upgraded on parse to v1.1. Migration prese
 
 `visualComposition` is typed JSON: background, ordered depth layers, and allowlisted nodes (`shape`, `path`, `text`, reusable `icon`, trusted local `image`, `diagram`, `group`). Node frames, colors, SVG path data, IDs, assets, dimensions, and animation plans are validated. Foreground art is auto-framed independently from low-depth backdrops; per-layer shadows and camera drift improve depth. Rendering uses React/SVG; imported text/path data is never evaluated as JS or markup. `visualDescription` remains human editorial direction and is **not** interpreted as a generated composition.
 
-| Research field | V1.0.3 behavior |
+| Research field | V1.0.4 behavior |
 |---|---|
 | `visualPreset` | Real palette, backdrop, typography scale, and composition treatment. |
 | `visualComposition` | Actual renderer input; editor can change validated JSON per scene. Foreground art is framed separately from backdrops. |
@@ -50,14 +50,14 @@ Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `sca
 
 ## Renderer version and old jobs
 
-New snapshots store `rendererVersion: 2`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2 to motion registry. A V1 snapshot without version metadata defaults to renderer 1 and remains renderable; when content is unchanged, project UI can render that V1 snapshot or explicitly create a V2 snapshot. Changed content marks it stale. Immutable audio file references remain unchanged. V1.0.3 does not silently reinterpret old snapshots as V2.
+New snapshots store `rendererVersion: 2`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2 to motion registry. A V1 snapshot without version metadata defaults to renderer 1 and remains renderable; when content is unchanged, project UI can render that V1 snapshot or explicitly create a V2 snapshot. Changed content marks it stale. Immutable audio file references remain unchanged. V1.0.4 does not silently reinterpret old snapshots as V2.
 
 ## Validation and visual regression
 
-`npm test` checks v1.0 migration, strict composition/asset/caption validation, renderer registration, process-flow constraints, and cue functions. `npm run test:visual` renders 39 PNG frames at 270×480: eight template middles, three presets at start/middle/end, staggered entrance, lightning and sea-salt scenes, cue/no-cue frames, and transition before/start/mid/end. SHA-256 baselines live in `scripts/visual-goldens.json`; PNG review artifacts go to ignored `renders/visual-regression/v1.0.3-quality/`. Before/after illustration area was inspected before golden refresh; other OS/browser/font output may differ. `npm run smoke:render` additionally renders V2 and versionless V1 MP4s.
+`npm test` checks v1.0 migration, strict composition/asset/caption validation, renderer registration, process-flow constraints, and cue functions. `npm run smoke:tts` exercises pending→approval→timeline→snapshot→AAC using a mock tone, including restarts and preservation of prior upload; it is not speech-quality evidence. `npm run smoke:samples-audio` renders all three topic packages with explicit `mock-fixture` sine audio. `npm run test:visual` renders 39 PNG frames at 270×480. Live Gemini full narration is separate opt-in and requires human approval before snapshot/render. SHA-256 baselines live in `scripts/visual-goldens.json`; before/after illustration frames were inspected before refresh. Other OS/browser/font output may differ.
 
 ## Limits / next
 
-SFX cues are not played or mixed; no licensed SFX library/timing/ducking engine yet. V1.0.3 visual descriptions stay editorial; author visual objects via structured JSON or template defaults. Caption timing is deterministic phrase-level estimate, not word-level TTS alignment; very long display text may be ellipsized.
+SFX cues are not played or mixed; no licensed SFX library/timing/ducking engine yet. V1.0.4 visual descriptions stay editorial; author visual objects via structured JSON or template defaults. Caption timing is deterministic phrase-level estimate, not word-level TTS alignment; very long display text may be ellipsized.
 
 Free-title limitation: app renders provided scenes/compositions; it does not research facts, author storyboards, or generate topic-specific illustrations automatically. The sea-salt acceptance sample is manually authored using reusable visual nodes/diagrams.

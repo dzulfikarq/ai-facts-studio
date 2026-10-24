@@ -16,11 +16,12 @@ export class MockSpeechProvider implements SpeechProvider {
   readonly voices: SpeechVoice[] = [
     { id: "Kore", name: "Kore (mock)", locale: "id-ID", localeName: "Bahasa Indonesia", gender: "Female", description: "Bright mock voice", wordsPerMinute: 150, availability: "api" },
     { id: "Puck", name: "Puck (mock)", locale: "id-ID", localeName: "Bahasa Indonesia", gender: "Male", description: "Upbeat mock voice", wordsPerMinute: 145, availability: "api" },
+    { id: "Puck", name: "Puck (mock)", locale: "en-US", localeName: "English (United States)", gender: "Male", description: "Upbeat mock voice", wordsPerMinute: 145, availability: "api" },
   ];
 
   async listVoices(locale?: string) {
     const voices = locale ? this.voices.filter((voice) => voice.locale === locale) : this.voices;
-    return { voices, locales: [{ locale: "id-ID", localeName: "Bahasa Indonesia" }], source: "api" as const };
+    return { voices, locales: [{ locale: "id-ID", localeName: "Bahasa Indonesia" }, { locale: "en-US", localeName: "English (United States)" }], source: "api" as const };
   }
 
   async synthesize(_request: SpeechRequest) {

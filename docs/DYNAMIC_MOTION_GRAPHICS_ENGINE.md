@@ -1,4 +1,4 @@
-# Dynamic Motion Graphics Engine V1.0.3
+# Dynamic Motion Graphics Engine V1.0.4
 
 ## Goal
 

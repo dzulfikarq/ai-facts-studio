@@ -1,6 +1,6 @@
-# AI Facts Studio V1.0.3
+# AI Facts Studio V1.0.4
 
-Local-first studio for turning checked Indonesian research into reusable, animated 2D vertical videos. V1.0.3 improves reusable illustrations with auto-framing, depth shadows, stronger camera/layer motion, richer water-cycle/process diagrams, and adds phrase captions plus `Kenapa Air Laut Asin?` acceptance package. Rendering uses no AI calls. Optional AI Voice sends a sample or script to configured Gemini TTS only after explicit user action. The app defaults to `127.0.0.1`; drafts, audio, jobs, and local MP4s stay on the device except text explicitly sent to Gemini.
+Local-first studio for turning checked Indonesian research into reusable, animated 2D vertical videos. V1.0.4 validates approved Gemini narration through AAC MP4 render, records audio provenance/integrity, and rejects silent/clipped expected narration. Prior reusable illustration, caption, quota, and cleanup safeguards remain. Rendering uses no AI calls; Gemini TTS only runs after explicit action. The app defaults to `127.0.0.1`; drafts, audio, jobs, and MP4s stay local except text sent to Gemini.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ copy .env.example .env   # Windows; optional
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>. Import `samples/mountain-formation.json`, `samples/lightning-charge.json`, or `samples/kenapa-air-laut-asin.json`, edit storyboard/composition, choose visual preset, then preview/render. AI path: **Test Voice** → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini** → **Generate preview** → **Render MP4 lokal**. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, custom confirmation asks before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
+Open <http://127.0.0.1:5173> and follow five steps: **Materi & Storyboard** → **Narasi** → **Review & Subtitle** → **Preview Video** → **Render & Download**. Preview Video is interactive and uses no production render job/quota. AI path: explicitly load voices → **Test Voice** (optional) → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini** → review draft Player → explicit final render. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, confirmation is required before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
 
 Engine renders supplied Research Package scenes/compositions; it does **not** turn arbitrary titles into researched storyboards or topic-specific illustrations. Compose new topics from reusable nodes/diagrams or author their composition manually.
 
@@ -32,6 +32,7 @@ npm run smoke:api
 npm run smoke:tts
 npm run smoke:render
 npm run smoke:samples
+npm run smoke:samples-audio
 npm run test:visual
 npm run typecheck
 npm run build
@@ -41,19 +42,38 @@ npm run render -- samples/kenapa-air-laut-asin.json
 npm audit
 ```
 
-Standalone render writes `renders/<title>.mp4` and a `.manifest.json`; existing output is never overwritten. Set `RENDER_OUTPUT_DIR` to render into a separate folder. `npm run smoke:samples` normally cleans temporary outputs; set `SAMPLE_RENDER_OUTPUT_DIR=renders/v1.0.3-final` to retain all three MP4s/manifests for manual review. The app's database is `data/ai-facts-studio.sqlite`; uploaded audio is in `public/audio/`. These generated files are git-ignored.
+Standalone render writes `renders/<title>.mp4` and a `.manifest.json`; existing output is never overwritten. Set `RENDER_OUTPUT_DIR` to render into a separate folder. Final V1.0.4 review artifacts: silent MP4s in `renders/v1.0.4-review/final-silent/`, mock-tone MP4s/reports in `renders/v1.0.4-review/final-mock-audio-clean/`, and Gemini preview in `renders/v1.0.4-review/gemini-live/`. The app's database is `data/ai-facts-studio.sqlite`; uploaded audio is in `public/audio/`. These generated files are git-ignored.
 
 Legacy Research Package v1.0 still imports and upgrades to v1.1. New jobs use renderer V2; old immutable snapshots use frozen renderer V1. Manifests record renderer version.
 
-Optional live Gemini check sends one short built-in Indonesian sample and consumes one synthesis request on a cache miss. Run only after confirming project billing state yourself; app cannot detect billing links:
+### Opt-in live Gemini tests
+
+Confirm Google AI Studio project has no billing link first; API cannot verify that. `.env` must contain `GEMINI_API_KEY` and `GEMINI_TTS_FREE_TIER_ONLY=true`. Test Voice live check sends one short example, only on cache miss:
 
 ```powershell
 $env:GEMINI_TTS_LIVE_TEST = "1"
+$env:GEMINI_TTS_LIVE_NO_BILLING_CONFIRMED = "I_HAVE_VERIFIED_NO_BILLING"
 npm run smoke:gemini-live
 Remove-Item Env:GEMINI_TTS_LIVE_TEST
+Remove-Item Env:GEMINI_TTS_LIVE_NO_BILLING_CONFIRMED
 ```
 
-Live Gemini check is separate from mock E2E. It does not create a project, attach audio, or test full-narration approval/render.
+Full-narration acceptance is separate. It sends at most one preview synthesis, creates one local project, then pauses for human listening and **Gunakan Audio Ini** approval in UI. `continue` creates/reuses a snapshot for Player review but does not render. Only after user inspects video preview:
+
+```powershell
+$env:GEMINI_TTS_LIVE_E2E = "1"
+$env:GEMINI_TTS_LIVE_NO_BILLING_CONFIRMED = "I_HAVE_VERIFIED_NO_BILLING"
+npm run smoke:gemini-e2e -- preview mountain-formation
+# Listen to renders/v1.0.4-review/gemini-live/narration-preview.mp3 in local UI, approve audio, then inspect Player preview.
+npm run smoke:gemini-e2e -- continue
+$env:GEMINI_TTS_LIVE_E2E_VIDEO_REVIEWED = "I_REVIEWED_VIDEO_PREVIEW"
+npm run smoke:gemini-e2e -- render
+Remove-Item Env:GEMINI_TTS_LIVE_E2E
+Remove-Item Env:GEMINI_TTS_LIVE_NO_BILLING_CONFIRMED
+Remove-Item Env:GEMINI_TTS_LIVE_E2E_VIDEO_REVIEWED
+```
+
+Choose one of `mountain-formation`, `lightning-charge`, or `kenapa-air-laut-asin`. Live test uses production local DB/TTS/video quotas and does not reset them. `render` needs user-approved audio, current V2 snapshot, and explicit Player-review confirmation. Key, billing linkage, and narration text are never included in manifests; non-silent checks do not prove spoken words, so listening remains required.
 
 ## Workflow
 

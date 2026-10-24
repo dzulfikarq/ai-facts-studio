@@ -108,6 +108,7 @@ export type TtsAudioMetadata = {
   speakingRate: number;
   style: string;
   generatedAt: string;
+  approvedAt?: string;
   alignment: "estimated";
 };
 

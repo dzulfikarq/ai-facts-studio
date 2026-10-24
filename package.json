@@ -1,6 +1,6 @@
 {
   "name": "ai-facts-studio",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,6 +18,8 @@
     "render": "tsx scripts/render.ts",
     "smoke:render": "tsx scripts/render-smoke.ts",
     "smoke:samples": "tsx scripts/sample-render-smoke.ts",
+    "smoke:samples-audio": "tsx scripts/sample-audio-smoke.ts",
+    "smoke:gemini-e2e": "tsx scripts/gemini-live-e2e.ts",
     "test:visual": "tsx scripts/visual-regression.ts"
   },
   "dependencies": {

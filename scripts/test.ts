@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
+import { validateAudioQuality } from "../src/domain/media-validation";
 import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
@@ -11,6 +12,7 @@ import { cueProgress, layerMotion, sceneTransitionOpacity } from "../src/video/m
 import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
 import { visualCompositionFrame } from "../src/video/visual-primitives";
+import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, type WorkflowSignals } from "../src/client/workflow";
 
 const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin"];
 const parsedSamples = [];
@@ -35,6 +37,13 @@ assert.ok(seaSaltNodes.some((node) => node.type === "icon" && node.icon === "cry
 assert.ok(seaSaltNodes.some((node) => node.type === "diagram" && node.kind === "process-flow"), "salt sample uses generic process-flow diagram");
 assert.ok(seaSaltNodes.some((node) => node.type === "diagram" && node.kind === "water-cycle"), "salt sample visualizes water cycle");
 assert.ok(visualCompositionFrame(seaSalt.scenes[3]!.visualComposition).scale > 1, "small diagrams should be framed larger inside 9:16 canvas");
+const clearAudio = { expected: true, codec: "aac", videoDurationSec: 12, audioDurationSec: 12, expectedAudioDurationSec: 12, meanVolumeDb: -20, maxVolumeDb: -2 };
+assert.equal(validateAudioQuality(clearAudio).audioValidation, "pass");
+assert.throws(() => validateAudioQuality({ ...clearAudio, meanVolumeDb: -91, maxVolumeDb: -91 }), /senyap/i);
+assert.throws(() => validateAudioQuality({ ...clearAudio, maxVolumeDb: 0 }), /clipping/i);
+assert.throws(() => validateAudioQuality({ ...clearAudio, audioDurationSec: 9 }), /terpotong/i);
+assert.equal(validateAudioQuality({ ...clearAudio, expected: false, meanVolumeDb: -91, maxVolumeDb: -91 }).audioValidation, "silent-expected");
+assert.throws(() => validateAudioQuality({ ...clearAudio, expected: false }), /non-senyap/i);
 const invalidFlow = structuredClone(seaSalt);
 const processFlow = invalidFlow.scenes[1]!.visualComposition.layers.flatMap((layer) => layer.nodes).find((node) => node.type === "diagram" && node.kind === "process-flow");
 assert.equal(processFlow?.type, "diagram");
@@ -43,6 +52,25 @@ assert.equal(parseResearchPackage(invalidFlow).success, false, "process-flow acc
 const badUrl = structuredClone(mountain);
 badUrl.references[0]!.url = "javascript:alert(1)";
 assert.equal(parseResearchPackage(badUrl).success, false, "unsafe URL must fail");
+
+const workflowBase: WorkflowSignals = {
+  activeStep: "materials", hasResearch: true, saved: true, hasAudio: true, audioMatchesNarration: true,
+  hasPendingAudio: false, reviewVerified: false, hasWarnings: false, previewReviewed: false,
+  latestJobContentCurrent: false,
+};
+assert.equal(workflowStatuses(workflowBase).materials, "active");
+assert.equal(reachableWorkspaceStep("render", workflowBase), "review", "resume must stop at the first incomplete verification gate");
+assert.equal(reachableWorkspaceStep("render", { ...workflowBase, reviewVerified: true }), "preview");
+assert.equal(reachableWorkspaceStep("render", { ...workflowBase, reviewVerified: true, previewReviewed: true }), "render");
+assert.equal(canAdvanceWorkspaceStep("narration", { ...workflowBase, audioMatchesNarration: false }), false, "stale AI audio blocks progression");
+assert.equal(reachableWorkspaceStep("render", { ...workflowBase, audioMatchesNarration: false }), "narration");
+assert.equal(workflowStatuses({ ...workflowBase, activeStep: "preview", reviewVerified: false }).review, "attention");
+assert.equal(workflowStatuses({ ...workflowBase, activeStep: "render", latestJobState: "rendered", latestJobContentCurrent: true }).render, "active");
+const reviewAudio = { file: "audio/test.wav", sha256: "audio-sha", durationSec: 12, timingMode: "scaled" as const, source: "upload" as const };
+const previewFingerprint = previewReviewFingerprint(mountain, reviewAudio, 2);
+assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, { ...reviewAudio, sha256: "different-audio-sha" }, 2), "audio changes must invalidate preview review");
+assert.notEqual(previewFingerprint, previewReviewFingerprint({ ...mountain, title: `${mountain.title}!` }, reviewAudio, 2), "research changes must invalidate preview review");
+assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, reviewAudio, 3), "renderer changes must invalidate preview review");
 
 const overlap = structuredClone(mountain);
 overlap.scenes[1]!.startSec = overlap.scenes[0]!.endSec - 0.5;
@@ -176,4 +204,4 @@ try { await unavailableGemini.synthesize({ text: "test", locale: "id-ID", voiceI
 catch (error) { unavailableCode = (error as { code?: string }).code ?? ""; }
 assert.equal(unavailableCode, "model-unavailable", "unavailable model stops without paid fallback");
 
-console.log(`PASS: ${samples.length} packages; v1.0→v1.1 migration, visual/caption schema safety, general-topic salt acceptance package, registry/cue determinism, Gemini Free Tier guard, cache, timing, and rolling limit checks.`);
+console.log(`PASS: ${samples.length} packages; migration/schema/audio, workflow gates and review invalidation, renderer/cue determinism, Gemini Free Tier guard, cache, timing, rolling limit.`);

@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
+import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { categories, motionCues, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
+import { categories, motionCues, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
@@ -11,8 +12,13 @@ import { narrationScript } from "../domain/voice-timing";
 import { previewInputProps } from "../video/video";
 import { VersionedVideo, type VideoProps } from "../video/root";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
+import { WorkflowStepper } from "./WorkflowStepper";
+import { ReviewStep } from "./ReviewStep";
+import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
 import "./styles.css";
 import "./tts.css";
+import "./workflow.css";
+import "./workspace-refinement.css";
 
 type Job = {
   id: string;
@@ -23,7 +29,7 @@ type Job = {
   progress: number;
   attemptCount: number;
   rendererVersion: number;
-  manifest: { width: number; height: number; durationSec: number; videoCodec: string; audioCodec: string | null; bytes: number; sha256: string; rendererVersion?: number } | null;
+  manifest: { width: number; height: number; durationSec: number; videoCodec: string; audioCodec: string | null; audioDurationSec?: number | null; audioMeanVolumeDb?: number | null; audioMaxVolumeDb?: number | null; audioValidation?: "silent-expected" | "pass" | "pass-low-level"; audioLevelWarning?: string | null; audioSource?: string | null; audioSha256?: string | null; audioProvider?: string | null; audioModel?: string | null; audioCacheKey?: string | null; audioScriptSha256?: string | null; audioVoiceId?: string | null; audioVoice?: string | null; audioLocale?: string | null; audioStyle?: string | null; audioSpeakingRate?: number | null; audioApprovedAt?: string | null; bytes: number; sha256: string; rendererVersion?: number } | null;
   downloadUrl: string | null;
 } | null;
 
@@ -33,7 +39,7 @@ type Project = {
   audio: {
     file: string; name: string; durationSec: number; bytes: number; sha256: string;
     source: "upload" | "tts"; timingMode: "scaled" | "estimated";
-    tts?: { provider: string; model: string; cacheKey: string; scriptSha256: string; locale: string; voiceId: string; voiceName: string; gender: string; voiceAvailability: "api" | "fallback"; speakingRate: number; style: string; generatedAt: string; alignment: "estimated" };
+    tts?: { provider: string; model: string; cacheKey: string; scriptSha256: string; locale: string; voiceId: string; voiceName: string; gender: string; voiceAvailability: "api" | "fallback"; speakingRate: number; style: string; generatedAt: string; approvedAt?: string; alignment: "estimated" };
   } | null;
   pendingTts: { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string } | null;
   pendingTtsMatchesNarration: boolean;
@@ -48,7 +54,7 @@ type Project = {
 
 type Status = { ffmpegAvailable: boolean; githubWorkflowAvailable: boolean; dailyLimit: number; jobsUsed: number; nextAllowedAt: string | null };
 type TtsVoice = { id: string; name: string; locale: string; localeName: string; gender: string; description?: string; wordsPerMinute: number; availability: "api" | "fallback" };
-type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
+type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; dailyLimit?: number; requestsUsed?: number; requestsRemaining?: number; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
 type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null };
 type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "danger" };
@@ -91,6 +97,9 @@ function App() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(true);
+  const [activeStep, setActiveStep] = useState<WorkspaceStep>("materials");
+  const [previewStarted, setPreviewStarted] = useState(false);
+  const [previewReviewed, setPreviewReviewed] = useState(false);
   const [audioMode, setAudioMode] = useState<"ai" | "upload">("upload");
   const [ttsLocale, setTtsLocale] = useState("id-ID");
   const [ttsGender, setTtsGender] = useState("All");
@@ -104,8 +113,25 @@ function App() {
   const [testVoicePreview, setTestVoicePreview] = useState<TtsPreview | null>(null);
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
   const confirmationRef = useRef<PendingConfirmation | null>(null);
+  const previewPlayer = useRef<PlayerRef>(null);
 
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
+  const reviewFingerprint = project && research ? previewReviewFingerprint(research, project.audio, RENDERER_VERSION) : "";
+  const draftAudioMatches = !project?.audio || project.audio.source !== "tts" || Boolean(project.audioMatchesNarration && research && narrationScript(research) === narrationScript(project.researchPackage));
+  const workflowSignals = {
+    activeStep,
+    hasResearch: Boolean(research),
+    saved,
+    hasAudio: Boolean(project?.audio),
+    audioMatchesNarration: draftAudioMatches,
+    hasPendingAudio: Boolean(project?.pendingTts),
+    reviewVerified: project?.researchReviewStatus === "verified-by-author" && saved,
+    hasWarnings: Boolean(research && researchWarnings(research).length),
+    previewReviewed,
+    latestJobState: project?.latestJob?.state,
+    latestJobContentCurrent: Boolean(project?.latestJobContentCurrent),
+  };
+  const stepStatuses = workflowStatuses(workflowSignals);
 
   async function refresh() {
     const [list, serverStatus] = await Promise.all([
@@ -135,26 +161,50 @@ function App() {
   useEffect(() => { void refresh().catch((error) => setMessage(friendlyError(error))); }, []);
 
   useEffect(() => {
-    if (view !== "workspace" || !project || audioMode !== "ai") return;
-    let cancelled = false;
-    setTtsLoading(true);
-    api<TtsVoices>(`/api/tts/voices?locale=${encodeURIComponent(ttsLocale)}`)
-      .then((result) => {
-        if (cancelled) return;
-        setTtsVoices(result);
-        const genderVoices = ttsGender === "All" ? result.voices : result.voices.filter((voice) => voice.gender === ttsGender);
-        const fallback = genderVoices[0] ?? result.voices[0];
-        setTtsVoiceId((current) => result.voices.some((voice) => voice.id === current) ? current : fallback?.id ?? "");
-        if (ttsGender !== "All" && !genderVoices.length) setTtsGender("All");
-      })
-      .catch((error) => {
-        if (!cancelled) setTtsVoices({ provider: "gemini-developer-api", providerName: "Google Gemini TTS", configured: true, locales: [], voices: [], catalogSource: "fallback", catalogWarning: friendlyError(error) });
-      })
-      .finally(() => { if (!cancelled) setTtsLoading(false); });
-    return () => { cancelled = true; };
-  }, [view, project?.id, audioMode, ttsLocale, ttsGender]);
+    if (!project?.id) return;
+    try { localStorage.setItem(`ai-facts-studio:workspace-step:${project.id}`, activeStep); } catch { /* local progress is optional */ }
+  }, [project?.id, activeStep]);
+
+  useEffect(() => {
+    if (!project?.id || !reviewFingerprint) return;
+    try {
+      const key = `ai-facts-studio:preview-reviewed:${project.id}`;
+      if (previewReviewed) localStorage.setItem(key, reviewFingerprint);
+      else localStorage.removeItem(key);
+    } catch { /* local progress is optional */ }
+  }, [project?.id, previewReviewed, reviewFingerprint]);
+
+  useEffect(() => {
+    if (activeStep !== "preview" || !previewPlayer.current) return;
+    const player = previewPlayer.current;
+    const onPlay = () => setPreviewStarted(true);
+    player.addEventListener("play", onPlay);
+    return () => player.removeEventListener("play", onPlay);
+  }, [activeStep]);
+
+  async function saveBeforeLeavingWorkspace() {
+    if (view !== "workspace" || saved) return true;
+    if (busy || ttsBusy || ttsLoading) { setMessage("Tunggu proses aktif selesai sebelum berpindah halaman."); return false; }
+    const confirmed = await askConfirmation({
+      title: "Simpan draft sebelum keluar?",
+      message: "Perubahan storyboard belum tersimpan. Simpan sekarang agar bisa dilanjutkan nanti.",
+      confirmLabel: "Simpan draft",
+      cancelLabel: "Tetap di workspace",
+    });
+    return confirmed && Boolean(await saveProject());
+  }
+
+  async function goToDashboard() {
+    if (busy || ttsBusy || ttsLoading) return;
+    if (!await saveBeforeLeavingWorkspace()) return;
+    setMessage("");
+    setView("dashboard");
+  }
 
   async function openProject(id: string) {
+    if (view === "workspace" && project?.id === id) return;
+    if (ttsBusy || ttsLoading) return;
+    if (!await saveBeforeLeavingWorkspace()) return;
     try {
       const loaded = await api<Project>(`/api/projects/${id}`);
       setProject(loaded);
@@ -166,6 +216,25 @@ function App() {
       setTtsVoiceId(loaded.audio?.tts?.voiceId ?? "");
       setTtsStyle(loaded.audio?.tts?.style ?? "documentary");
       setTtsRate(loaded.audio?.tts?.speakingRate ?? 1);
+      setTtsVoices(null);
+      setTtsLoading(false);
+      const savedPreviewReview = storedPreviewReviewed(id, previewReviewFingerprint(loaded.researchPackage, loaded.audio, RENDERER_VERSION));
+      const savedStep = storedWorkspaceStep(id);
+      setActiveStep(reachableWorkspaceStep(savedStep, {
+        activeStep: savedStep,
+        hasResearch: true,
+        saved: true,
+        hasAudio: Boolean(loaded.audio),
+        audioMatchesNarration: loaded.audio?.source !== "tts" || loaded.audioMatchesNarration,
+        hasPendingAudio: Boolean(loaded.pendingTts),
+        reviewVerified: loaded.researchReviewStatus === "verified-by-author",
+        hasWarnings: researchWarnings(loaded.researchPackage).length > 0,
+        previewReviewed: savedPreviewReview,
+        latestJobState: loaded.latestJob?.state,
+        latestJobContentCurrent: loaded.latestJobContentCurrent,
+      }));
+      setPreviewReviewed(savedPreviewReview);
+      setPreviewStarted(false);
       setTestVoicePreview(null);
       setSaved(true);
       setMessage("");
@@ -174,6 +243,8 @@ function App() {
   }
 
   async function openCreate() {
+    if (busy || ttsBusy || ttsLoading) return;
+    if (!await saveBeforeLeavingWorkspace()) return;
     setView("create");
     setMessage("");
     if (!jsonDraft) {
@@ -215,15 +286,18 @@ function App() {
 
   function updateResearch(change: (current: ResearchPackage) => ResearchPackage) {
     setResearch((current) => current ? change(current) : current);
+    setProject((current) => current ? { ...current, researchReviewStatus: "needs-review" } : current);
     setSaved(false);
+    setPreviewReviewed(false);
+    setPreviewStarted(false);
   }
 
   function updateScene(sceneId: string, change: (scene: Scene) => Scene) {
     updateResearch((current) => ({ ...current, scenes: current.scenes.map((scene) => scene.id === sceneId ? change(scene) : scene) }));
   }
 
-  async function saveProject() {
-    if (!project || !research) return;
+  async function saveProject(): Promise<Project | null> {
+    if (!project || !research) return null;
     setBusy(true);
     try {
       const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research }));
@@ -232,8 +306,55 @@ function App() {
       setSaved(true);
       await refresh();
       setMessage("Storyboard tersimpan.");
-    } catch (error) { setMessage(friendlyError(error)); }
+      return updated;
+    } catch (error) { setMessage(friendlyError(error)); return null; }
     finally { setBusy(false); }
+  }
+
+  async function goToStep(target: WorkspaceStep) {
+    if (!project || !research || busy) return;
+    const currentIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
+    const targetIndex = workspaceSteps.findIndex((step) => step.id === target);
+    if (targetIndex <= currentIndex) {
+      setActiveStep(target);
+      setMessage("");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    let currentProject = project;
+    let currentSaved = saved;
+    for (let index = 0; index < targetIndex; index++) {
+      const step = workspaceSteps[index]!.id;
+      if (step === "materials" && !currentSaved) {
+        const updated = await saveProject();
+        if (!updated) { setActiveStep("materials"); return; }
+        currentProject = updated;
+        currentSaved = true;
+      }
+      const canAdvance = canAdvanceWorkspaceStep(step, {
+        ...workflowSignals,
+        activeStep: step,
+        saved: currentSaved,
+        reviewVerified: currentProject.researchReviewStatus === "verified-by-author" && currentSaved,
+      });
+      if (!canAdvance) {
+        setActiveStep(step);
+        setMessage(step === "materials" ? "Simpan storyboard sebelum lanjut." : step === "narration" ? "Audio AI Voice tidak sesuai dengan naskah terbaru. Buat dan setujui preview narasi baru." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Video sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
+        return;
+      }
+    }
+    setActiveStep(target);
+    setMessage("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function completePreviewReview() {
+    if (!previewStarted) {
+      setMessage("Putar Preview Video terlebih dahulu, lalu tandai sudah ditinjau.");
+      return;
+    }
+    setPreviewReviewed(true);
+    setMessage("Preview ditandai sudah ditinjau.");
   }
 
   async function uploadAudio(file?: File) {
@@ -244,6 +365,8 @@ function App() {
       form.append("audio", file);
       const updated = await api<Project>(`/api/projects/${project.id}/audio`, { method: "POST", body: form });
       setProject(updated);
+      setPreviewReviewed(false);
+      setPreviewStarted(false);
       setAudioMode("upload");
       await refresh();
       setMessage(`Audio siap · ${updated.audio?.durationSec.toFixed(1)} dtk. Timing scene disesuaikan secara proporsional; caption tetap per-scene.`);
@@ -257,6 +380,8 @@ function App() {
     try {
       const updated = await api<Project>(`/api/projects/${project.id}/audio`, { method: "DELETE" });
       setProject(updated);
+      setPreviewReviewed(false);
+      setPreviewStarted(false);
       await refresh();
       setMessage("Audio dilepas.");
     } catch (error) { setMessage(friendlyError(error)); }
@@ -284,12 +409,30 @@ function App() {
       setProject(result.project);
       setResearch(result.project.researchPackage);
       setSaved(true);
+      setPreviewReviewed(false);
+      setPreviewStarted(false);
       setAudioMode("ai");
       setTestVoicePreview(null);
       await refresh();
       setTtsMessage(`${result.cacheHit ? "Preview diambil dari cache" : "Preview narasi selesai"} · ${result.preview.durationSec.toFixed(1)} dtk. Dengarkan, lalu pilih Gunakan Audio Ini.`);
     } catch (error) { setTtsMessage(friendlyError(error)); }
     finally { setTtsBusy(false); }
+  }
+
+  async function loadTtsVoices() {
+    if (ttsLoading || ttsBusy) return;
+    setTtsLoading(true);
+    setTtsMessage("");
+    try {
+      const result = await api<TtsVoices>(`/api/tts/voices?locale=${encodeURIComponent(ttsLocale)}`);
+      setTtsVoices(result);
+      const choices = ttsGender === "All" ? result.voices : result.voices.filter((voice) => voice.gender === ttsGender);
+      setTtsVoiceId((current) => choices.some((voice) => voice.id === current) ? current : choices[0]?.id ?? "");
+      if (ttsGender !== "All" && !choices.length) setTtsGender("All");
+      if (!result.configured) setTtsMessage(result.message ?? result.disabledReason ?? "Gemini TTS belum dikonfigurasi.");
+      else if (result.catalogSource === "fallback") setTtsMessage(result.catalogWarning ?? "Voice live belum terverifikasi; generate dapat gagal.");
+    } catch (error) { setTtsMessage(friendlyError(error)); }
+    finally { setTtsLoading(false); }
   }
 
   async function testVoice() {
@@ -315,6 +458,8 @@ function App() {
       setProject(result.project);
       setResearch(result.project.researchPackage);
       setSaved(true);
+      setPreviewReviewed(false);
+      setPreviewStarted(false);
       setTestVoicePreview(null);
       await refresh();
       setTtsMessage("Audio disetujui dan dipakai untuk preview video. Buat snapshot baru sebelum render.");
@@ -322,48 +467,58 @@ function App() {
     finally { setTtsBusy(false); }
   }
 
-  async function generatePreview() {
-    if (!project || !research) return;
-    if (project.audio?.source === "tts" && !project.audioMatchesNarration) {
-      setMessage("Naskah berubah setelah AI Voice dibuat. Generate ulang AI Voice atau ganti ke upload audio sebelum membuat snapshot.");
-      return;
-    }
-    setBusy(true);
-    try {
-      let latest = project;
-      if (!saved) {
-        latest = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research }));
-        setProject(latest);
-        setSaved(true);
-      }
-      const result = await api<{ job: NonNullable<Job>; warnings: string[] }>(`/api/projects/${project.id}/generate`, { method: "POST" });
-      const updated = { ...latest, latestJob: result.job, latestJobCurrent: result.job.rendererVersion === RENDERER_VERSION, latestJobContentCurrent: true };
-      setProject(updated);
-      await refresh();
-      await api<Status>("/api/status").then(setStatus);
-      setMessage(result.warnings.length ? result.warnings.join(" ") : "Snapshot job dibuat. Preview siap; tidak ada panggilan AI.");
-    } catch (error) { setMessage(friendlyError(error)); }
-    finally { setBusy(false); }
-  }
-
   async function renderFinal() {
-    const job = project?.latestJob;
-    if (!job || !project) return;
-    if (!saved || !project.latestJobContentCurrent) {
-      setMessage("Storyboard atau audio berubah. Generate preview untuk membuat snapshot baru sebelum render.");
+    if (!project || !research || busy) return;
+    if (!saved) {
+      setActiveStep("materials");
+      setMessage("Simpan perubahan storyboard sebelum review fakta dan Preview Video.");
       return;
     }
-    if (!project.audio && !await askConfirmation({ title: "Render tanpa narasi?", message: "Project ini belum memiliki voice-over. Tetap render MP4 dengan audio senyap?", confirmLabel: "Tetap render", tone: "primary" })) return;
+    if (project.audio?.source === "tts" && (!project.audioMatchesNarration || narrationScript(research) !== narrationScript(project.researchPackage))) {
+      setActiveStep("narration");
+      setMessage("Naskah berubah setelah AI Voice disetujui. Buat dan setujui preview narasi baru sebelum render.");
+      return;
+    }
+    if (project.researchReviewStatus !== "verified-by-author") {
+      setActiveStep("review");
+      setMessage("Tinjau dan verifikasi materi sebelum render final.");
+      return;
+    }
+    if (!previewReviewed) {
+      setActiveStep("preview");
+      setMessage("Putar dan tinjau Preview Video untuk draft ini sebelum render final.");
+      return;
+    }
+    let renderProject = project;
+    if (!renderProject.audio && !await askConfirmation({ title: "Render video tanpa narasi?", message: "Audio belum tersedia. MP4 akan berisi video tanpa voice-over; konfirmasi hanya jika memang diinginkan.", confirmLabel: "Render tanpa narasi", tone: "primary" })) return;
     setBusy(true);
     try {
-      await api<Job>(`/api/jobs/${job.id}/render`, { method: "POST" });
+      let job = renderProject.latestJobContentCurrent && renderProject.latestJob?.rendererVersion === RENDERER_VERSION ? renderProject.latestJob : null;
+      if (!job) {
+        const generated = await api<{ job: NonNullable<Job>; warnings: string[] }>(`/api/projects/${renderProject.id}/generate`, { method: "POST" });
+        job = generated.job;
+        renderProject = { ...renderProject, latestJob: job, latestJobCurrent: job.rendererVersion === RENDERER_VERSION, latestJobContentCurrent: true };
+        setProject(renderProject);
+        await api<Status>("/api/status").then(setStatus);
+      }
+      if (!job) throw new Error("Snapshot render tidak tersedia.");
+      if (job.state === "rendered") {
+        setProject(renderProject);
+        setMessage("Render terakhir untuk materi ini sudah siap. Unduh MP4 yang tersedia.");
+        await refresh();
+        return;
+      }
+      if (job.state !== "rendering") {
+        if (job.attemptCount >= 3) throw new Error("Batas tiga percobaan render untuk snapshot ini tercapai.");
+        await api<Job>(`/api/jobs/${job.id}/render`, jsonRequest("POST", { allowSilent: !renderProject.audio }));
+      }
       setMessage("Render berjalan lokal. Progress mengikuti Remotion; ini bisa memakan waktu.");
       for (let check = 0; check < 900; check++) {
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
         const updatedJob = await api<NonNullable<Job>>(`/api/jobs/${job.id}`);
         setProject((current) => current ? { ...current, latestJob: updatedJob } : current);
         if (updatedJob.state !== "rendering") {
-          setMessage(updatedJob.state === "rendered" ? "MP4 selesai dan metadata terverifikasi." : updatedJob.error ?? "Render gagal.");
+          setMessage(updatedJob.state !== "rendered" ? updatedJob.error ?? "Render gagal." : updatedJob.manifest?.audioValidation === "silent-expected" ? "MP4 selesai: video tanpa narasi, track senyap terverifikasi." : updatedJob.manifest?.audioValidation === "pass-low-level" ? "MP4 selesai, tetapi level narasi rendah. Dengarkan dan periksa sebelum dipakai." : updatedJob.manifest?.audioValidation === "pass" ? "MP4 selesai; AAC non-senyap terverifikasi. Dengarkan untuk verifikasi isi narasi." : "MP4 selesai, tetapi metadata validasi audio lama tidak tersedia. Dengarkan sebelum dipakai.");
           await refresh();
           return;
         }
@@ -375,16 +530,18 @@ function App() {
 
   async function setReview(statusValue: "needs-review" | "verified-by-author") {
     if (!project) return;
+    if (statusValue === "verified-by-author" && !saved) { setMessage("Simpan perubahan materi sebelum menandai fakta sudah ditinjau."); return; }
     try {
       const updated = await api<Project>(`/api/projects/${project.id}/review`, jsonRequest("POST", { status: statusValue }));
       setProject(updated);
+      if (statusValue === "needs-review") { setPreviewReviewed(false); setPreviewStarted(false); }
       await refresh();
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
   async function deleteProject(id: string) {
     const target = projects.find((item) => item.id === id);
-    if (!target || busy) return;
+    if (!target || busy || ttsBusy || ttsLoading) return;
     if (!await askConfirmation({ title: "Hapus video project?", message: `“${target.researchPackage.title}” beserta storyboard, job, dan hasil render akan dihapus permanen.`, confirmLabel: "Hapus video", tone: "danger" })) return;
     setBusy(true);
     try {
@@ -408,21 +565,25 @@ function App() {
     finally { setBusy(false); }
   }
 
+  const currentWorkspaceStep = workspaceSteps.find((step) => step.id === activeStep) ?? workspaceSteps[0];
+  const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
+  const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
+
   return <div className="app-shell">
     <aside className="sidebar">
-      <button className="brand" onClick={() => setView("dashboard")} aria-label="Kembali ke dashboard">
+      <button className="brand" onClick={() => void goToDashboard()} aria-label="Kembali ke dashboard" disabled={busy || ttsBusy || ttsLoading}>
         <span className="brand-mark">AF</span><span><strong>AI Facts</strong><small>STUDIO</small></span>
       </button>
       <div className="side-label">WORKSPACE</div>
-      <button className={`nav-item ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")}><span className="nav-glyph">⌂</span> Dashboard</button>
-      <button className={`nav-item ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()}><span className="nav-glyph">＋</span> Create video</button>
+      <button className={`nav-item ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading}><span className="nav-glyph">⌂</span> Dashboard</button>
+      <button className={`nav-item ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading}><span className="nav-glyph">＋</span> Create video</button>
       <div className="side-label library-label">VIDEO LIBRARY <span>{projects.length}</span></div>
       <div className="project-nav">
         {projects.map((item) => <div className="project-nav-row" key={item.id}>
-          <button className={`project-link ${project?.id === item.id ? "selected" : ""}`} onClick={() => void openProject(item.id)} disabled={busy}>
+           <button className={`project-link ${project?.id === item.id ? "selected" : ""}`} onClick={() => void openProject(item.id)} disabled={busy || ttsBusy || ttsLoading}>
             <span className="project-dot" /> <span>{item.researchPackage.title}</span>
           </button>
-          <button className="project-delete" onClick={() => void deleteProject(item.id)} disabled={busy} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project">×</button>
+           <button className="project-delete" onClick={() => void deleteProject(item.id)} disabled={busy || ttsBusy || ttsLoading} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project">×</button>
         </div>)}
         {!projects.length && <p className="empty-nav">Video yang dibuat muncul di sini.</p>}
       </div>
@@ -434,13 +595,13 @@ function App() {
 
     <main className="main-area">
       <header className="topbar">
-        <div className="breadcrumb"><span>AI Facts Studio</span><b>/</b><strong>{view === "workspace" ? "Storyboard" : view === "create" ? "Create video" : "Dashboard"}</strong></div>
+        <div className="breadcrumb"><span>AI Facts Studio</span><b>/</b><strong>{view === "workspace" ? currentWorkspaceStep.title : view === "create" ? "Create video" : "Dashboard"}</strong></div>
         <div className="topbar-right"><span className="local-indicator"><i /> LOCAL MODE</span><button className="avatar" aria-label="Pengguna lokal">AF</button></div>
       </header>
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
-      {view === "dashboard" && <Dashboard status={status} projects={projects} busy={busy} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
+      {view === "dashboard" && <Dashboard status={status} projects={projects} busy={busy || ttsBusy || ttsLoading} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page create-page">
         <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Impor Research Package v1.0 atau v1.1. Versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung</button>
@@ -457,53 +618,50 @@ function App() {
 
       {view === "workspace" && project && research && <section className="page workspace-page">
         <div className="workspace-heading">
-          <div><div className="eyebrow">STORYBOARD <span className="crumb-dot">/</span> DRAFT</div>
+          <div><div className="eyebrow">VIDEO WORKSPACE <span className="crumb-dot">/</span> LANGKAH {currentStepIndex + 1} DARI {workspaceSteps.length}</div>
             <input className="title-input" aria-label="Judul video" value={research.title} onChange={(event) => updateResearch((current) => ({ ...current, title: event.target.value }))} />
             <div className="meta-line"><span>{research.scenes.length} scenes</span><i />{project.audio ? <span>Audio {project.audio.durationSec.toFixed(1)} dtk</span> : <span>Audio belum ditambahkan</span>}<i /><span>9:16 · 1080 × 1920</span></div>
           </div>
-          <div className="heading-actions"><button className={`button button-light save-button ${saved ? "saved" : ""}`} onClick={() => void saveProject()} disabled={busy || saved}>{saved ? "✓ Tersimpan" : "Simpan perubahan"}</button><button className="button button-primary" onClick={() => void generatePreview()} disabled={busy || !saved && !research.title.trim()}><span>✦</span> Generate preview</button></div>
+          <div className="heading-actions"><button className={`button button-light save-button ${saved ? "saved" : ""}`} onClick={() => void saveProject()} disabled={busy || saved}>{saved ? "✓ Tersimpan" : "Simpan perubahan"}</button></div>
         </div>
 
-        <div className="workspace-grid">
-          <div className="story-column">
-            <div className="section-title"><div><h2>Storyboard</h2><p>Urutkan dan edit narasi tiap scene.</p></div><span className="count-chip">{research.scenes.length} SCENES</span></div>
-            <div className="scene-list">
-              {research.scenes.map((scene, index) => <button key={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} onClick={() => setSelectedSceneId(scene.id)}>
-                <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron">›</span>
-              </button>)}
-            </div>
-            {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} onChange={(change) => updateScene(selectedScene.id, change)} />}
-            <div className="project-details-card">
-              <div className="section-title compact"><div><h2>Video details</h2><p>Metadata Research Package</p></div></div>
-              <div className="details-fields">
-                <label>Kategori<select value={research.category} onChange={(event) => updateResearch((current) => ({ ...current, category: event.target.value as ResearchPackage["category"] }))}>{categories.map((value) => <option key={value}>{value}</option>)}</select></label>
-                <label>Visual preset<select value={research.visualPreset} onChange={(event) => updateResearch((current) => ({ ...current, visualPreset: event.target.value as ResearchPackage["visualPreset"] }))}>{visualPresets.map((value) => <option key={value} value={value}>{value.replaceAll("-", " ")}</option>)}</select></label>
-                <label>Durasi target<input type="number" min="1" max="120" value={research.targetDurationSec} onChange={(event) => updateResearch((current) => ({ ...current, targetDurationSec: Number(event.target.value) }))} /> <small>detik · maks 120</small></label>
-              </div>
-              <p className="source-warning">{research.references.length} sumber · status <b>{project.researchReviewStatus === "verified-by-author" ? "Reviewed by author" : "Needs review"}</b></p>
-            </div>
-          </div>
+        <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} onSelect={(step) => void goToStep(step)} />
+        <div className="workspace-step-panel">
+          <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>
 
-          <div className="preview-column">
-    <div className="preview-top"><div><h2>Preview</h2><p>Animasi template · audio pilihan Anda</p></div><span className="preview-live"><i /> LIVE</span></div>
-            <div className="player-wrap">
-              <Player<AnyZodObject, VideoProps>
-                component={VersionedVideo}
-                inputProps={previewInputProps(research, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, saved && project.latestJobContentCurrent ? project.latestJob?.rendererVersion : undefined)}
-                durationInFrames={durationInFrames(research, project.audio?.durationSec)}
-                compositionWidth={1080}
-                compositionHeight={1920}
-                fps={30}
-                controls
-                loop
-                style={{ width: "100%", aspectRatio: "9 / 16", maxHeight: "min(62vh, 680px)" }}
-              />
+          {activeStep === "materials" && <div className="workspace-step-content materials-content">
+            <div className="story-column">
+              <div className="section-title"><div><h2>Storyboard</h2><p>Pilih scene untuk edit teks, narasi, timing, dan sumber.</p></div><span className="count-chip">{research.scenes.length} SCENES</span></div>
+              <div className="scene-list">
+                {research.scenes.map((scene, index) => <button type="button" key={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => setSelectedSceneId(scene.id)}>
+                  <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
+                </button>)}
+              </div>
+              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} />}
             </div>
-            <div className="preview-caption"><span className="wave-icon">⌁</span><span>CAPTIONS</span><small>{project.audio?.timingMode === "estimated" ? "Estimasi scene · koreksi manual tersedia" : "Timing scene diskalakan dari durasi audio"}</small></div>
+            <aside className="materials-aside">
+              <div className="project-details-card">
+                <div className="section-title compact"><div><h2>Video details</h2><p>Metadata Research Package</p></div></div>
+                <div className="details-fields">
+                  <label>Kategori<select value={research.category} onChange={(event) => updateResearch((current) => ({ ...current, category: event.target.value as ResearchPackage["category"] }))}>{categories.map((value) => <option key={value}>{value}</option>)}</select></label>
+                  <label>Visual preset<select value={research.visualPreset} onChange={(event) => updateResearch((current) => ({ ...current, visualPreset: event.target.value as ResearchPackage["visualPreset"] }))}>{visualPresets.map((value) => <option key={value} value={value}>{value.replaceAll("-", " ")}</option>)}</select></label>
+                  <label>Durasi target<input type="number" min="1" max="120" value={research.targetDurationSec} onChange={(event) => updateResearch((current) => ({ ...current, targetDurationSec: Number(event.target.value) }))} /> <small>detik · maks 120</small></label>
+                </div>
+              </div>
+              <div className="references-card"><h3>Referensi riset · {research.references.length}</h3>
+                {research.references.length ? research.references.map((reference) => <div className="reference-item" key={reference.id}><strong>{reference.title}</strong><small>{reference.publisher} · diperiksa {reference.checkedAt}</small><a href={reference.url} target="_blank" rel="noreferrer">Buka sumber ↗</a></div>) : <p className="workflow-empty">Belum ada sumber. Tambahkan lewat Research Package JSON sebelum menandai fakta sudah ditinjau.</p>}
+                <p className="source-warning">Status fakta: <b>{project.researchReviewStatus === "verified-by-author" ? "Ditinjau pengguna" : "Belum ditinjau"}</b>. Sumber dan klaim tidak diverifikasi otomatis.</p>
+              </div>
+              {!!researchWarnings(research).length && <div className="workflow-alert attention"><span>{researchWarnings(research).join(" ")}</span></div>}
+            </aside>
+          </div>}
+
+          {activeStep === "narration" && <div className="workspace-step-content single narration-step">
+            <div className="audio-step-intro"><strong>{project.audio ? `Audio aktif · ${project.audio.source === "tts" ? project.audio.tts?.voiceName ?? "AI Voice" : project.audio.name}` : "Belum ada audio aktif"}</strong><span>Kandidat AI Voice tidak mengganti audio aktif sampai Anda menyetujuinya. Membuka langkah ini tidak menjalankan synthesis.</span></div>
             <section className="audio-source-card">
               <div className="audio-source-tabs" role="group" aria-label="Sumber voice-over">
-                <button aria-pressed={audioMode === "ai"} className={audioMode === "ai" ? "selected" : ""} onClick={() => { setAudioMode("ai"); setTtsMessage(""); }}>Generate dengan AI Voice</button>
-                <button aria-pressed={audioMode === "upload"} className={audioMode === "upload" ? "selected" : ""} onClick={() => setAudioMode("upload")}>Upload audio sendiri</button>
+                <button type="button" aria-pressed={audioMode === "ai"} className={audioMode === "ai" ? "selected" : ""} onClick={() => { setAudioMode("ai"); setTtsMessage(""); }}>Generate dengan AI Voice</button>
+                <button type="button" aria-pressed={audioMode === "upload"} className={audioMode === "upload" ? "selected" : ""} onClick={() => setAudioMode("upload")}>Upload audio sendiri</button>
               </div>
               {audioMode === "ai" ? <TtsPanel
                 project={project}
@@ -519,7 +677,7 @@ function App() {
                 style={ttsStyle}
                 message={ttsMessage}
                 testPreview={testVoicePreview}
-                onLocale={(value) => { setTestVoicePreview(null); setTtsLocale(value); setTtsGender("All"); setTtsVoiceId(""); }}
+                onLocale={(value) => { setTestVoicePreview(null); setTtsVoices(null); setTtsLocale(value); setTtsGender("All"); setTtsVoiceId(""); }}
                 onGender={(value) => {
                   setTtsGender(value);
                   const choices = ttsVoices?.voices.filter((voice) => value === "All" || voice.gender === value) ?? [];
@@ -535,27 +693,73 @@ function App() {
                 }}
                 onRate={(value) => { setTestVoicePreview(null); setTtsRate(value); }}
                 onStyle={(value) => { setTestVoicePreview(null); setTtsStyle(value); }}
+                onLoadVoices={() => void loadTtsVoices()}
                 onGenerate={(force) => void generateTts(force)}
                 onTest={() => void testVoice()}
                 onApprove={() => void approveTts()}
                 onRemove={() => void removeAudio()}
               /> : <UploadPanel project={project} busy={busy} onUpload={(file) => void uploadAudio(file)} onRemove={() => void removeAudio()} />}
             </section>
-            {!project.audio && <div className="audio-warning">Belum ada audio. Preview tetap bisa diputar; render senyap butuh konfirmasi.</div>}
+          </div>}
 
+          {activeStep === "review" && <ReviewStep
+            research={research}
+            project={project}
+            onEditScene={(id) => { setSelectedSceneId(id); void goToStep("materials"); }}
+            onEditReferences={() => void goToStep("materials")}
+            onEditNarration={() => void goToStep("narration")}
+            onReview={(value) => void setReview(value)}
+          />}
+
+          {activeStep === "preview" && <div className="interactive-preview">
+            <div className="interactive-preview-player"><div className="player-wrap">
+              <Player<AnyZodObject, VideoProps>
+                ref={previewPlayer}
+                component={VersionedVideo}
+                inputProps={previewInputProps(research, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, RENDERER_VERSION)}
+                durationInFrames={durationInFrames(research, project.audio?.durationSec)}
+                compositionWidth={1080}
+                compositionHeight={1920}
+                fps={30}
+                controls
+                loop
+                style={{ width: "100%", aspectRatio: "9 / 16", maxHeight: "min(68vh, 760px)" }}
+              />
+            </div></div>
+            <aside className="interactive-preview-note">
+              <span className="preview-live"><i /> DRAFT LIVE</span>
+              <h3>Preview interaktif</h3>
+              <p>Memutar storyboard dan audio aktif saat ini. Perubahan draft tampil langsung; belum membuat snapshot, render job, atau memakai quota produksi.</p>
+              <div className="preview-audio-state"><strong>{project.audio ? "Audio aktif" : "Tanpa narasi"}</strong><span>{project.audio ? `${project.audio.name} · ${project.audio.durationSec.toFixed(1)} dtk` : "Render final senyap tetap meminta konfirmasi."}</span></div>
+              {!saved && <div className="workflow-alert attention" role="status"><span>Draft belum disimpan. Preview memakai perubahan lokal saat ini.</span></div>}
+              {previewReviewed && <div className="workflow-alert success" role="status"><span>Preview sudah ditinjau untuk draft ini.</span></div>}
+              <button type="button" className="button button-primary full-button" onClick={completePreviewReview} disabled={!previewStarted || previewReviewed}>{previewReviewed ? "✓ Preview ditinjau" : previewStarted ? "Tandai Preview sudah ditinjau" : "Putar Preview untuk mulai review"}</button>
+              <small className="preview-caption-note">Status review otomatis kedaluwarsa saat storyboard atau audio berubah.</small>
+            </aside>
+          </div>}
+
+          {activeStep === "render" && <div className="render-step">
+            <div className="render-quota-card"><div><span className="eyebrow">PRODUCTION QUOTA</span><strong>{status ? `${status.jobsUsed} / ${status.dailyLimit} job hari ini` : "Memuat quota…"}</strong><small>{status?.nextAllowedAt ? `Slot berikutnya ${new Date(status.nextAllowedAt).toLocaleString("id-ID")}` : "Quota mengikuti server lokal."}</small></div><span className={`quota-indicator ${status?.ffmpegAvailable ? "ready" : "attention"}`}>{status?.ffmpegAvailable ? "FFMPEG SIAP" : "FFMPEG BELUM SIAP"}</span></div>
             <div className="render-card">
-              <div className="render-card-head"><div><span className="render-icon">↗</span><div><strong>Render final</strong><small>{project.latestJob ? `Job ${project.latestJob.id.slice(0, 8)} · renderer v${project.latestJob.rendererVersion} · percobaan ${project.latestJob.attemptCount}/3` : "Buat snapshot dahulu"}</small></div></div><span className={`status-chip ${project.latestJob && !project.latestJobContentCurrent ? "failed" : project.latestJob?.state ?? "idle"}`}>{project.latestJob && !project.latestJobContentCurrent ? "SNAPSHOT LAMA" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION ? "RENDERER V1" : jobLabel(project.latestJob?.state)}</span></div>
+              <div className="render-card-head"><div><span className="render-icon">↗</span><div><strong>Render final MP4</strong><small>{project.latestJob ? `Job ${project.latestJob.id.slice(0, 8)} · renderer v${project.latestJob.rendererVersion} · percobaan ${project.latestJob.attemptCount}/3` : "Snapshot dibuat hanya saat Anda memulai render final."}</small></div></div><span className={`status-chip ${project.latestJob && !project.latestJobContentCurrent ? "failed" : project.latestJob?.state ?? "idle"}`}>{project.latestJob && !project.latestJobContentCurrent ? "SNAPSHOT LAMA" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION ? "RENDERER V1" : jobLabel(project.latestJob?.state)}</span></div>
               {project.latestJob?.state === "rendering" && <div className="progress-track"><i style={{ width: `${project.latestJob.progress}%` }} /></div>}
-              {project.latestJob?.manifest && <div className="manifest-line">{project.latestJob.manifest.width}×{project.latestJob.manifest.height} · H.264{project.audio ? ` + ${project.latestJob.manifest.audioCodec?.toUpperCase() ?? "audio"}` : " · track senyap"} · {(project.latestJob.manifest.durationSec).toFixed(1)} dtk · renderer v{project.latestJob.manifest.rendererVersion ?? project.latestJob.rendererVersion}</div>}
-              <div className="render-actions"><button className="button button-primary full-button" onClick={() => project.latestJob && !project.latestJobContentCurrent ? void generatePreview() : void renderFinal()} disabled={busy || !project.latestJob || project.latestJob.state === "rendering"}>{project.latestJob && !project.latestJobContentCurrent ? "Generate preview untuk perubahan" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION ? "Render snapshot V1" : project.latestJob?.state === "rendered" ? "Render ulang MP4" : project.latestJob?.state === "rendering" ? `Rendering ${project.latestJob.progress}%` : "Render MP4 lokal"}<b>→</b></button>
-                {project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION && project.latestJobContentCurrent && <button className="button button-light download-button" onClick={() => void generatePreview()} disabled={busy}>Buat preview renderer V2</button>}
-                {project.latestJob?.downloadUrl && <a className="button button-light download-button" href={project.latestJob.downloadUrl}>Unduh MP4 ↓</a>}
-              </div>
+              {project.latestJob?.manifest && <div className="manifest-line">{project.latestJob.manifest.width}×{project.latestJob.manifest.height} · H.264 · {audioManifestLabel(project.latestJob.manifest)} · {project.latestJob.manifest.durationSec.toFixed(1)} dtk · renderer v{project.latestJob.manifest.rendererVersion ?? project.latestJob.rendererVersion}</div>}
               {project.latestJob?.error && <p className="render-error">{project.latestJob.error}</p>}
-              <p className="cloud-note">GitHub Actions workflow tersedia untuk render package yang sudah ada di repo. Upload project dari UI ke cloud belum dihubungkan.</p>
+              <div className="render-actions"><button type="button" className="button button-primary full-button" onClick={() => void renderFinal()} disabled={busy || project.latestJob?.state === "rendering" || (currentJob?.state === "rendered") || (currentJob?.state === "failed" && currentJob.attemptCount >= 3)}>{busy ? "Render sedang diproses…" : project.latestJob?.state === "rendering" ? `Rendering ${project.latestJob.progress}%` : currentJob?.state === "rendered" ? "Render selesai" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION && project.latestJobContentCurrent ? "Buat snapshot V2 & render MP4" : project.latestJob && !project.latestJobContentCurrent ? "Render versi terbaru" : "Buat snapshot & render MP4"}<b>→</b></button>
+                {project.latestJob?.downloadUrl && <a className="button button-light download-button" href={project.latestJob.downloadUrl}>{project.latestJobContentCurrent ? "Unduh MP4" : "Unduh render sebelumnya"} ↓</a>}
+              </div>
+              {!project.audio && <p className="audio-warning">Audio belum tersedia. Render senyap hanya berjalan setelah konfirmasi eksplisit.</p>}
+              {project.audio?.source === "tts" && !draftAudioMatches && <p className="tts-stale-warning">Naskah berubah setelah AI Voice disetujui. Setujui preview narasi baru sebelum render.</p>}
+              <p className="cloud-note">Render berjalan lokal. File MP4 dan manifest tersedia setelah selesai.</p>
             </div>
+          </div>}
 
-            <div className="review-row"><div><strong>Review fakta sebelum publikasi</strong><small>Tidak ada auto-publish.</small></div><button className={`review-toggle ${project.researchReviewStatus === "verified-by-author" ? "is-reviewed" : ""}`} onClick={() => void setReview(project.researchReviewStatus === "verified-by-author" ? "needs-review" : "verified-by-author")}>{project.researchReviewStatus === "verified-by-author" ? "✓ Reviewed" : "Mark reviewed"}</button></div>
+          <div className="workflow-navigation">
+            <span>{saved ? "Semua perubahan tersimpan." : "Perubahan tersimpan saat lanjut dari Materi & Storyboard."}</span>
+            <div className="workflow-navigation-actions">
+              {currentStepIndex > 0 && <button type="button" className="button button-light" onClick={() => void goToStep(workspaceSteps[currentStepIndex - 1]!.id)} disabled={busy}>← Kembali</button>}
+              {currentStepIndex < workspaceSteps.length - 1 && <button type="button" className="button button-primary" onClick={() => void goToStep(workspaceSteps[currentStepIndex + 1]!.id)} disabled={busy}>Lanjut <b>→</b></button>}
+            </div>
           </div>
         </div>
       </section>}
@@ -635,7 +839,7 @@ function Dashboard({ status, projects, busy, onCreate, onSample, onOpen, onDelet
   </section>;
 }
 
-function TtsPanel({ project, script, voices, loading, busy, saved, locale, gender, voiceId, rate, style, message, testPreview, onLocale, onGender, onVoice, onRate, onStyle, onGenerate, onTest, onApprove, onRemove }: {
+function TtsPanel({ project, script, voices, loading, busy, saved, locale, gender, voiceId, rate, style, message, testPreview, onLocale, onGender, onVoice, onRate, onStyle, onLoadVoices, onGenerate, onTest, onApprove, onRemove }: {
   project: Project;
   script: string;
   voices: TtsVoices | null;
@@ -654,6 +858,7 @@ function TtsPanel({ project, script, voices, loading, busy, saved, locale, gende
   onVoice: (voiceId: string) => void;
   onRate: (rate: number) => void;
   onStyle: (style: string) => void;
+  onLoadVoices: () => void;
   onGenerate: (regenerate: boolean) => void;
   onTest: () => void;
   onApprove: () => void;
@@ -664,7 +869,8 @@ function TtsPanel({ project, script, voices, loading, busy, saved, locale, gende
   const selectedVoice = voices?.voices.find((voice) => voice.id === voiceId);
   return <div className="tts-panel">
     <div className="tts-panel-heading"><div className="audio-icon">✦</div><div><strong>AI Voice Generator</strong><small>{voices?.providerName ?? "Google Gemini TTS"} · {voices?.model ?? "gemini-3.8-flash-lite-tts"} · narrationText tiap scene</small></div></div>
-    {!voices?.configured && !loading && <div className="tts-config-notice"><strong>Gemini Free Tier belum dibuka</strong><span>Set <code>GEMINI_API_KEY</code> dan <code>GEMINI_TTS_FREE_TIER_ONLY=true</code> setelah pastikan Google project tidak menautkan billing. Model berbayar tidak akan dipakai sebagai fallback.</span><a href="/api/docs/tts" target="_blank" rel="noreferrer">Buka panduan konfigurasi ↗</a></div>}
+    {!voices && !loading && <div className="tts-consent-note">Voice catalog belum dimuat. Audio aktif tetap bisa dipakai tanpa synthesis; pilih Muat daftar Voice hanya jika ingin membuat/mengubah narasi.</div>}
+    {voices && !voices.configured && !loading && <div className="tts-config-notice"><strong>Gemini Free Tier belum dibuka</strong><span>Set <code>GEMINI_API_KEY</code> dan <code>GEMINI_TTS_FREE_TIER_ONLY=true</code> setelah pastikan Google project tidak menautkan billing. Model berbayar tidak akan dipakai sebagai fallback.</span><a href="/api/docs/tts" target="_blank" rel="noreferrer">Buka panduan konfigurasi ↗</a></div>}
     {voices?.configured && <div className="tts-consent-note">Test Voice mengirim contoh singkat; naskah storyboard dikirim hanya setelah Preview Narasi Lengkap. Gemini Free Tier dapat memakai input/output untuk peningkatan produk. Pastikan project tetap tier Free. <a href="https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash-lite-tts" target="_blank" rel="noreferrer">Kuota & harga ↗</a></div>}
     {voices?.message && <div className="tts-error">{voices.message}</div>}
     {voices?.catalogSource === "fallback" && <div className="tts-consent-note tts-fallback-warning" role="status">{voices.catalogWarning} Gender opsional. Generate tetap memvalidasi model dan dapat gagal bila project tidak menyediakan voice.</div>}
@@ -685,24 +891,25 @@ function TtsPanel({ project, script, voices, loading, busy, saved, locale, gende
       </select></label>
       <label className="rate-control">Speaking pace · arahan prompt <strong>{rate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={rate} onChange={(event) => onRate(Number(event.target.value))} disabled={busy} /><span><small>Lebih lambat</small><small>Lebih cepat · perkiraan</small></span></label>
     </div>
-    <div className="tts-actions tts-test-actions"><button className="button button-light" onClick={onTest} disabled={busy || loading || !voices?.configured || !voiceId}>Test Voice · contoh singkat</button></div>
+    <div className="tts-actions tts-test-actions"><button className="button button-light" onClick={onLoadVoices} disabled={busy || loading}>{loading ? "Memuat daftar voice…" : voices ? "Muat ulang daftar voice" : "Muat daftar voice"}</button><button className="button button-light" onClick={onTest} disabled={busy || loading || !voices?.configured || !voiceId}>Test Voice · contoh singkat</button></div>
     {testPreview && <div className="tts-audio-preview"><span>Test Voice · {testPreview.voiceName} · {testPreview.durationSec.toFixed(1)} dtk</span><audio controls preload="metadata" src={testPreview.audioUrl} aria-label="Pratinjau Test Voice" /></div>}
     <details className="tts-script"><summary>Naskah TTS · {script.length.toLocaleString("id-ID")} / 6.000 karakter</summary><textarea readOnly rows={4} value={script} aria-label="Naskah gabungan dari scene" /></details>
     {project.audio?.source === "tts" && !project.audioMatchesNarration && <div className="tts-stale-warning">Narration storyboard berubah setelah audio dibuat. Generate ulang sebelum membuat job.</div>}
     {project.pendingTts && <div className="tts-audio-preview pending-tts-preview">
-      <strong>Preview Narasi Lengkap · {project.pendingTts.voiceName} · {project.pendingTts.durationSec.toFixed(1)} dtk</strong>
+      <strong>Audio preview menunggu approval · {project.pendingTts.durationSec.toFixed(1)} dtk</strong>
+      <span>{project.pendingTts.voiceName} · {project.pendingTts.locale} · {project.pendingTts.style} · {project.pendingTts.speakingRate.toFixed(1)}×</span>
       <audio controls preload="metadata" src={project.pendingTts.audioUrl} aria-label="Pratinjau narasi lengkap" />
       {!saved && <span className="tts-stale-warning">Simpan perubahan storyboard sebelum memakai preview ini.</span>}
       {project.pendingTtsMatchesNarration && saved && <button className="button button-primary" onClick={onApprove} disabled={busy}>Gunakan Audio Ini</button>}
       {!project.pendingTtsMatchesNarration && <span className="tts-stale-warning">Naskah berubah. Simpan storyboard, lalu buat preview baru.</span>}
     </div>}
-    {project.audio?.source === "tts" && <div className="tts-audio-preview"><span>Audio terpilih · {project.audio.tts?.voiceName ?? "AI Voice"} · {project.audio.tts?.locale} · {project.audio.tts?.style} · {project.audio.tts?.speakingRate.toFixed(1)}× · {project.audio.durationSec.toFixed(1)} dtk</span><audio controls preload="metadata" src={`/${project.audio.file}`} aria-label="Pratinjau AI Voice terpilih" /><button className="text-button danger-text" onClick={onRemove} disabled={busy}>Lepas audio</button></div>}
-    {project.audio?.source === "upload" && <div className="tts-audio-preview"><span>Audio terpilih · {project.audio.name} · {project.audio.durationSec.toFixed(1)} dtk</span><audio controls preload="metadata" src={`/${project.audio.file}`} aria-label="Pratinjau audio upload terpilih" /></div>}
+    {project.audio?.source === "tts" && <div className="tts-audio-preview"><span>Audio disetujui · {project.audio.tts?.voiceName ?? "AI Voice"} · {project.audio.tts?.locale} · {project.audio.tts?.style} · {project.audio.tts?.speakingRate.toFixed(1)}× · {project.audio.durationSec.toFixed(1)} dtk{project.audio.tts?.approvedAt ? ` · ${new Date(project.audio.tts.approvedAt).toLocaleString("id-ID")}` : ""}</span><audio controls preload="metadata" src={`/${project.audio.file}`} aria-label="Pratinjau AI Voice terpilih" /><button className="text-button danger-text" onClick={onRemove} disabled={busy}>Lepas audio</button></div>}
+    {project.audio?.source === "upload" && <div className="tts-audio-preview"><span>Audio aktif · upload manual · {project.audio.name} · {project.audio.durationSec.toFixed(1)} dtk</span><audio controls preload="metadata" src={`/${project.audio.file}`} aria-label="Pratinjau audio upload terpilih" /></div>}
     {message && <div className={message.includes("selesai") || message.includes("cache") || message.includes("disetujui") ? "tts-success" : "tts-error"} role="status">{message}</div>}
     <div className="tts-actions"><button className="button button-primary" onClick={() => onGenerate(false)} disabled={busy || loading || !voices?.configured || !voiceId || !script.trim()}>{busy ? "Menyiapkan preview…" : "Preview Narasi Lengkap"}</button>
       {(project.pendingTts || project.audio?.source === "tts") && <button className="button button-light" onClick={() => onGenerate(true)} disabled={busy || loading || !voices?.configured || !voiceId}>Regenerate preview</button>}
     </div>
-    <p className="tts-limit-note">Test Voice dan preview penuh memakai kuota yang sama: maks 3 synthesis per teks/setting dan 10 per 24 jam. Cache dipakai ulang; tidak memakai slot job video. Audio baru aktif setelah Anda pilih Gunakan Audio Ini.</p>
+    <p className="tts-limit-note">Kuota TTS rolling 24 jam: {voices?.requestsRemaining ?? "—"}/{voices?.dailyLimit ?? 10} tersisa; maks 3 synthesis per teks/setting. Cache dipakai ulang, tidak memakai slot job video. Audio aktif hanya setelah pilih Gunakan Audio Ini.</p>
     {selectedVoice && <span className="sr-only">{selectedVoice.gender}, {selectedVoice.locale}, {selectedVoice.wordsPerMinute} kata/menit</span>}
   </div>;
 }
@@ -718,7 +925,7 @@ function UploadPanel({ project, busy, onUpload, onRemove }: { project: Project; 
   </div>;
 }
 
-function SceneEditor({ scene, onChange }: { scene: Scene; onChange: (change: (scene: Scene) => Scene) => void }) {
+function SceneEditor({ scene, references, onChange }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void }) {
   const [compositionDraft, setCompositionDraft] = useState(JSON.stringify(scene.visualComposition, null, 2));
   const [compositionError, setCompositionError] = useState("");
   const [motionDraft, setMotionDraft] = useState(JSON.stringify(scene.motionPlan, null, 2));
@@ -802,21 +1009,44 @@ function SceneEditor({ scene, onChange }: { scene: Scene; onChange: (change: (sc
 
   return <div className="scene-editor">
     <div className="scene-editor-title"><div><span className="eyebrow">EDIT SCENE</span><strong>{scene.id}</strong></div><span className="template-badge">{scene.templateId}</span></div>
-    <label>On-screen text<input maxLength={120} value={scene.onScreenText} onChange={(event) => changeOnScreenText(event.target.value)} /></label>
-    <label>Narration / caption<textarea rows={3} maxLength={2000} value={scene.narrationText} onChange={(event) => changeNarration(event.target.value)} /></label>
-    <label>Visual direction · editorial only<textarea rows={2} maxLength={500} value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>
-    <div className="timing-fields"><label>Mulai (detik)<input type="number" min="0" max="120" step="0.5" value={scene.startSec} onChange={(event) => onChange((current) => ({ ...current, startSec: Number(event.target.value) }))} /></label><span>→</span><label>Akhir (detik)<input type="number" min="0.5" max="120" step="0.5" value={scene.endSec} onChange={(event) => onChange((current) => ({ ...current, endSec: Number(event.target.value) }))} /></label></div>
-    <fieldset className="motion-cue-grid"><legend>Motion cues</legend>{motionCues.map((cue) => <label key={cue}><input type="checkbox" checked={scene.motionCues.includes(cue)} onChange={(event) => toggleCue(cue, event.target.checked)} />{cue}</label>)}</fieldset>
-    <details className="visual-json-editor"><summary>Caption phrases · {scene.captionSegments ? "manual timing" : "deterministic estimate"}</summary><textarea rows={7} spellCheck={false} value={captionDraft} onChange={(event) => editCaptionSegments(event.target.value)} aria-label="JSON caption phrases" /><div className="caption-editor-note">startProgress/endProgress 0–1 dalam scene; tidak menjanjikan word-level sync. <button type="button" className="text-button" onClick={useAutoCaptionSegments}>Pakai segmentasi otomatis</button></div>{captionError && <span role="alert">{captionError}</span>}</details>
-    <details className="visual-json-editor"><summary>Visual composition terstruktur · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details>
-    <details className="visual-json-editor"><summary>Motion plan · target, delay, durasi, easing</summary><textarea rows={8} spellCheck={false} value={motionDraft} onChange={(event) => editMotionPlan(event.target.value)} aria-label="JSON motion plan" />{motionError && <span role="alert">{motionError}</span>}</details>
-    <div className="cue-line">SFX metadata · belum diputar <span>{scene.sfxCues.join(" · ") || "none"}</span></div>
+    <section className="scene-editor-section basic-content-section"><div className="editor-section-heading"><h3>Basic content</h3><p>Teks yang tampil dan dibacakan pada scene ini.</p></div>
+      <label><span>On-screen text</span><input maxLength={120} placeholder="Tulis teks utama scene" value={scene.onScreenText} onChange={(event) => changeOnScreenText(event.target.value)} /></label>
+      <label><span>Narration / caption</span><textarea rows={3} maxLength={2000} placeholder="Tulis narasi untuk scene ini" value={scene.narrationText} onChange={(event) => changeNarration(event.target.value)} /></label>
+    </section>
+    <fieldset className="scene-reference-picker"><legend>Sumber klaim</legend>{references.length ? references.map((reference) => <label key={reference.id}><input type="checkbox" checked={scene.referenceIds.includes(reference.id)} onChange={(event) => onChange((current) => ({ ...current, referenceIds: event.target.checked ? [...current.referenceIds, reference.id] : current.referenceIds.filter((id) => id !== reference.id) }))} /><span><strong>{reference.title}</strong><small>{reference.publisher}</small></span></label>) : <small>Tambahkan referensi lewat Research Package JSON.</small>}</fieldset>
+    <details className="advanced-editor"><summary><span><strong>Advanced scene controls</strong><small>Visual direction, timing, motion, dan subtitle</small></span><b aria-hidden="true">⌄</b></summary>
+      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Visual direction</h3><p>Catatan editorial; bukan prompt generasi gambar.</p></div>
+        <label><span>Deskripsi visual</span><textarea rows={3} maxLength={500} placeholder="Contoh: lapisan batuan terlihat dari samping" value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>
+      </section>
+      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Timing</h3><p>Atur rentang scene dalam video.</p></div>
+        <div className="timing-fields"><label><span>Mulai (detik)</span><input type="number" min="0" max="120" step="0.5" value={scene.startSec} onChange={(event) => onChange((current) => ({ ...current, startSec: Number(event.target.value) }))} /></label><label><span>Akhir (detik)</span><input type="number" min="0.5" max="120" step="0.5" value={scene.endSec} onChange={(event) => onChange((current) => ({ ...current, endSec: Number(event.target.value) }))} /></label></div>
+      </section>
+      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Motion cues</h3><p>Pilih animasi yang ingin dipakai.</p></div>
+        <fieldset className="motion-cue-grid"><legend className="sr-only">Motion cues</legend>{motionCues.map((cue) => <label key={cue}><input type="checkbox" checked={scene.motionCues.includes(cue)} onChange={(event) => toggleCue(cue, event.target.checked)} /><span>{cue.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase())}</span></label>)}</fieldset>
+      </section>
+      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Caption phrases</h3><p>Sesuaikan frasa dan timing subtitle.</p></div>
+        <details className="visual-json-editor"><summary>{scene.captionSegments ? "Edit caption phrases" : "Atur caption phrases"} · {scene.captionSegments ? "manual timing" : "estimasi otomatis"}</summary><textarea rows={7} spellCheck={false} value={captionDraft} onChange={(event) => editCaptionSegments(event.target.value)} aria-label="JSON caption phrases" /><div className="caption-editor-note">Timing frasa 0–1 dalam scene; bukan word-level sync. <button type="button" className="text-button" onClick={useAutoCaptionSegments}>Pakai segmentasi otomatis</button></div>{captionError && <span role="alert">{captionError}</span>}</details>
+      </section>
+      <div className="advanced-technical-controls"><details className="visual-json-editor"><summary>Structured visual · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details>
+        <details className="visual-json-editor"><summary>Motion plan · detail teknis</summary><textarea rows={8} spellCheck={false} value={motionDraft} onChange={(event) => editMotionPlan(event.target.value)} aria-label="JSON motion plan" />{motionError && <span role="alert">{motionError}</span>}</details>
+      </div>
+      <div className="cue-line">SFX metadata · belum diputar <span>{scene.sfxCues.join(" · ") || "none"}</span></div>
+    </details>
   </div>;
 }
 
 function jobLabel(state?: string) {
   const labels: Record<string, string> = { "preview-ready": "PREVIEW READY", rendering: "RENDERING", rendered: "RENDERED", failed: "FAILED", idle: "DRAFT" };
   return labels[state ?? "idle"] ?? state?.toUpperCase() ?? "DRAFT";
+}
+
+function audioManifestLabel(manifest: NonNullable<Job>["manifest"]) {
+  if (!manifest) return "audio belum divalidasi";
+  if (manifest.audioValidation === "silent-expected") return "Video tanpa narasi · track senyap";
+  const source = manifest.audioProvider === "mock-gemini" ? "Mock tone (bukan ucapan)" : manifest.audioProvider ? "Gemini TTS" : manifest.audioSource === "upload" ? "Upload manual" : "Audio snapshot";
+  const level = manifest.audioMeanVolumeDb === null || manifest.audioMeanVolumeDb === undefined ? "level tidak diukur" : `mean ${manifest.audioMeanVolumeDb.toFixed(1)} dB`;
+  const status = manifest.audioValidation === "pass" ? "non-senyap; dengarkan isi" : manifest.audioValidation === "pass-low-level" ? "non-senyap; level rendah" : "validasi belum tersedia";
+  return `${source} · ${manifest.audioCodec?.toUpperCase() ?? "audio"} · ${status} · ${level}`;
 }
 
 function formatBytes(bytes: number) {

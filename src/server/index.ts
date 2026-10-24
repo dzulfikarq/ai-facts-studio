@@ -69,6 +69,21 @@ function snapshotForProject(project: StoredProject): RenderSnapshot {
       file: `audio/jobs/${project.audio.sha256}${extension}`,
       durationSec: project.audio.durationSec,
       timingMode: project.audio.timingMode,
+      source: project.audio.source,
+      sha256: project.audio.sha256,
+      tts: project.audio.tts ? {
+        provider: project.audio.tts.provider,
+        model: project.audio.tts.model,
+        cacheKey: project.audio.tts.cacheKey,
+        scriptSha256: project.audio.tts.scriptSha256,
+        locale: project.audio.tts.locale,
+        voiceId: project.audio.tts.voiceId,
+        voiceName: project.audio.tts.voiceName,
+        style: project.audio.tts.style,
+        speakingRate: project.audio.tts.speakingRate,
+        approvedAt: project.audio.tts.approvedAt,
+        alignment: project.audio.tts.alignment,
+      } : undefined,
     } : null,
   };
 }
@@ -81,8 +96,9 @@ function snapshotContentMatchesProject(snapshotPath: string, project: StoredProj
     const oldResearch = parseResearchPackage(snapshot.research);
     const currentResearch = parseResearchPackage(project.researchPackage);
     if (!oldResearch.success || !currentResearch.success) return false;
-    const oldContent = { research: oldResearch.data, audio: snapshot.audio ?? null };
-    const currentContent = { research: currentResearch.data, audio: snapshotForProject(project).audio ?? null };
+    const audioContent = (audio: RenderSnapshot["audio"]) => audio ? { file: audio.file, durationSec: audio.durationSec, timingMode: audio.timingMode ?? "scaled" } : null;
+    const oldContent = { research: oldResearch.data, audio: audioContent(snapshot.audio) };
+    const currentContent = { research: currentResearch.data, audio: audioContent(snapshotForProject(project).audio) };
     return JSON.stringify(oldContent) === JSON.stringify(currentContent);
   } catch { return false; }
 }
@@ -101,7 +117,7 @@ function getProject(id: string) {
     : true;
   const latestJobContentCurrent = Boolean(latest && (
     latest.source_sha256 === createHash("sha256").update(JSON.stringify(snapshotForProject(project))).digest("hex")
-    || latest.renderer_version === LEGACY_RENDERER_VERSION && snapshotContentMatchesProject(latest.snapshot_path, project)
+    || snapshotContentMatchesProject(latest.snapshot_path, project)
   ));
   const latestJobCurrent = Boolean(latest && latestJobContentCurrent && latest.renderer_version === RENDERER_VERSION);
   const pendingTts = pendingAsset && existsSync(path.resolve(root, "public", pendingAsset.file))
@@ -208,8 +224,14 @@ app.get("/api/status", async (_request, response) => {
 });
 
 app.get("/api/tts/status", (_request, response) => {
-  response.json({ provider: speechProvider.id, providerName: speechProvider.displayName, model: speechProvider.model, freeTierOnly: speechProvider.freeTierOnly, configured: speechProvider.configured, disabledReason: speechProvider.disabledReason });
+  response.json({ provider: speechProvider.id, providerName: speechProvider.displayName, model: speechProvider.model, freeTierOnly: speechProvider.freeTierOnly, configured: speechProvider.configured, disabledReason: speechProvider.disabledReason, ...ttsQuotaStatus() });
 });
+
+function ttsQuotaStatus() {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const requestsUsed = (db.prepare("SELECT COUNT(*) AS count FROM tts_attempts WHERE requested_at > ?").get(since) as { count: number }).count;
+  return { dailyLimit: ttsDailyLimit, requestsUsed, requestsRemaining: Math.max(0, ttsDailyLimit - requestsUsed) };
+}
 
 app.get("/api/tts/voices", async (request, response) => {
   const localeValue = request.query.locale;
@@ -227,6 +249,7 @@ app.get("/api/tts/voices", async (request, response) => {
       voices: catalog.voices,
       catalogSource: catalog.source,
       catalogWarning: catalog.warning,
+      ...ttsQuotaStatus(),
       message: speechProvider.configured ? undefined : speechProvider.disabledReason,
     });
   } catch (error) {
@@ -276,6 +299,7 @@ app.put("/api/projects/:id", (request, response) => {
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
   const project = projectFromRow(row);
   project.researchPackage = parsed.data;
+  project.researchReviewStatus = "needs-review";
   if (project.pendingTts && project.pendingTts.scriptSha256 !== createHash("sha256").update(narrationScript(parsed.data)).digest("hex")) project.pendingTts = null;
   saveProject(row.id, project);
   response.json(getProject(row.id));
@@ -440,6 +464,13 @@ async function probeTtsAudio(buffer: Buffer) {
     if (!audioStream || audioStream.codec_name !== "mp3" || !Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 120) {
       throw new Error("Audio TTS tidak valid: butuh MP3 berdurasi 0–120 detik.");
     }
+    const { stderr } = await execFileAsync("ffmpeg", ["-hide_banner", "-nostats", "-i", temporaryPath, "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-"], { timeout: 60_000, maxBuffer: 1024 * 1024 });
+    const mean = stderr.match(/mean_volume:\s*(-?[\d.]+|-inf)\s+dB/);
+    const peak = stderr.match(/max_volume:\s*(-?[\d.]+|-inf)\s+dB/);
+    const meanVolumeDb = mean?.[1] && mean[1] !== "-inf" ? Number(mean[1]) : Number.NEGATIVE_INFINITY;
+    const maxVolumeDb = peak?.[1] && peak[1] !== "-inf" ? Number(peak[1]) : Number.NEGATIVE_INFINITY;
+    if (meanVolumeDb <= -45) throw new Error("Audio TTS senyap atau terlalu pelan (mean ≤ -45 dB).");
+    if (maxVolumeDb >= -0.1) throw new Error("Audio TTS berpotensi clipping (peak ≥ -0.1 dBFS).");
     return { durationSec, bytes: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
   } finally {
     await rm(temporaryPath, { force: true });
@@ -585,7 +616,9 @@ async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha25
   if (createHash("sha256").update(narrationScript(project.researchPackage)).digest("hex") !== scriptSha256) {
     throw new SpeechProviderError("Naskah berubah setelah preview dibuat. Buat pratinjau baru sebelum memakai audio.", "script-changed", 409);
   }
-  if (!existsSync(path.resolve(root, "public", asset.file))) throw new SpeechProviderError("Audio preview tidak ditemukan. Buat ulang pratinjau.", "audio-not-found", 410);
+  const ttsAudioPath = path.resolve(root, "public", asset.file);
+  if (!existsSync(ttsAudioPath)) throw new SpeechProviderError("Audio preview tidak ditemukan. Buat ulang pratinjau.", "audio-not-found", 410);
+  if (await sha256File(ttsAudioPath) !== asset.audio_sha256) throw new SpeechProviderError("Audio preview rusak atau berubah. Buat ulang pratinjau.", "audio-integrity-failed", 409);
   const previousUpload = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
   project.researchPackage = estimateSceneTimings(project.researchPackage, asset.duration_sec, asset.words_per_minute, asset.speaking_rate);
   const audio: StoredAudio = {
@@ -609,6 +642,7 @@ async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha25
       speakingRate: asset.speaking_rate,
       style: asset.style,
       generatedAt: asset.created_at,
+      approvedAt: new Date().toISOString(),
       alignment: "estimated",
     },
   };
@@ -681,6 +715,12 @@ app.post("/api/projects/:id/generate", async (request, response) => {
   const sourceSha = createHash("sha256").update(source).digest("hex");
   const existing = db.prepare("SELECT * FROM jobs WHERE project_id = ? AND source_sha256 = ?").get(row.id, sourceSha) as JobRow | undefined;
   if (existing) return response.json({ job: jobForClient(existing), warnings: researchWarnings(project.researchPackage) });
+  if (project.audio) {
+    const approvedAudioPath = path.resolve(root, "public", project.audio.file);
+    if (!existsSync(approvedAudioPath) || await sha256File(approvedAudioPath) !== project.audio.sha256) {
+      return apiError(response, 409, "Audio yang dipilih hilang atau SHA-256 berubah. Pilih/unggah audio lagi sebelum membuat snapshot.", { code: "audio-integrity-failed" });
+    }
+  }
 
   const recent = db.prepare("SELECT created_at FROM video_job_requests WHERE created_at > ? ORDER BY created_at ASC")
     .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
@@ -744,6 +784,10 @@ app.get("/api/jobs/:id", (request, response) => {
 app.post("/api/jobs/:id/render", async (request, response) => {
   const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(request.params.id) as JobRow | undefined;
   if (!job) return apiError(response, 404, "Job tidak ditemukan.");
+  let snapshot: RenderSnapshot;
+  try { snapshot = JSON.parse(readFileSync(job.snapshot_path, "utf8")) as RenderSnapshot; }
+  catch { return apiError(response, 500, "Snapshot render tidak dapat dibaca."); }
+  if (!snapshot.audio && request.body?.allowSilent !== true) return apiError(response, 409, "Snapshot ini tidak memiliki narasi. Konfirmasi render tanpa narasi secara eksplisit.", { code: "silent-render-confirmation-required" });
   if (activeRenderJob) return apiError(response, 409, "Render lain sedang berjalan di perangkat ini.");
   if (job.attempt_count >= 3) return apiError(response, 429, "Batas tiga percobaan render untuk job ini tercapai.");
 
@@ -770,9 +814,9 @@ app.post("/api/jobs/:id/render", async (request, response) => {
       db.prepare("UPDATE render_attempts SET state = ?, finished_at = ?, manifest_json = ? WHERE id = ?")
         .run("rendered", finish, JSON.stringify(manifest), attemptId);
     } catch (error) {
-      const message = error instanceof Error && error.message.startsWith("Render tidak menghasilkan")
+      const message = error instanceof Error && ["Render tidak menghasilkan", "Audio validation gagal:", "Audio snapshot"].some((prefix) => error.message.startsWith(prefix))
         ? error.message
-        : "Render gagal. Pastikan FFmpeg tersedia, audio valid, dan Chromium Remotion dapat dijalankan.";
+        : "Render gagal. Pastikan FFmpeg/ffprobe tersedia, audio valid, dan Chromium Remotion dapat dijalankan.";
       const finish = new Date().toISOString();
       db.prepare("UPDATE jobs SET state = ?, updated_at = ?, error = ? WHERE id = ?").run("failed", finish, message, job.id);
       db.prepare("UPDATE render_attempts SET state = ?, finished_at = ?, error = ? WHERE id = ?").run("failed", finish, message, attemptId);

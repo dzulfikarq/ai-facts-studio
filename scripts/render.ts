@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseResearchPackage } from "../src/domain/research";
 import { renderSnapshot } from "./render-core";
@@ -22,11 +22,18 @@ const output = path.resolve(outputDir, `${fileSlug}.mp4`);
 const manifestPath = output.replace(/\.mp4$/i, ".manifest.json");
 if (existsSync(output) || existsSync(manifestPath)) throw new Error(`Output already exists; preserving it: ${path.relative(root, output)}. Set RENDER_OUTPUT_DIR to a new directory to render separately.`);
 let lastProgress = -1;
-const manifest = await renderSnapshot({ research: parsed.data, rendererVersion: RENDERER_VERSION }, output, (progress) => {
-  if (progress === lastProgress) return;
-  lastProgress = progress;
-  process.stdout.write(`\rRender: ${progress}%`);
-});
-await mkdir(path.dirname(output), { recursive: true });
-await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+let manifest: Awaited<ReturnType<typeof renderSnapshot>>;
+try {
+  manifest = await renderSnapshot({ research: parsed.data, rendererVersion: RENDERER_VERSION }, output, (progress) => {
+    if (progress === lastProgress) return;
+    lastProgress = progress;
+    process.stdout.write(`\rRender: ${progress}%`);
+  });
+  await mkdir(path.dirname(output), { recursive: true });
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2), { flag: "wx" });
+} catch (error) {
+  await rm(output, { force: true });
+  await rm(manifestPath, { force: true });
+  throw error;
+}
 process.stdout.write(`\nSaved ${path.relative(root, output)}\n${JSON.stringify(manifest, null, 2)}\n`);

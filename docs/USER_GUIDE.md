@@ -1,22 +1,22 @@
 # User guide
 
-## Create and preview
+## Five-step workspace
 
 1. Start `npm run dev`; open `http://127.0.0.1:5173`.
-2. Choose **Create video**, import JSON or choose `mountain-formation`, `lightning-charge`, or `kenapa-air-laut-asin` sample. Research Package v1.0 auto-upgrades to v1.1.
-3. Edit title, scene on-screen text, narration/caption phrases, editorial visual description, timing, category, and visual preset. In a scene editor, change motion cue checkboxes, manually correct phrase text/timing, and edit validated Visual Composition / Motion Plan JSON. Click **Simpan perubahan**.
-4. Inspect source count and warnings; verify claims/URLs yourself.
-5. Choose audio source. **Upload audio sendiri** accepts MP3/WAV/M4A (≤100 MB, ≤120 sec); ffprobe measures duration. For **Generate dengan AI Voice**, configure Gemini Free Tier, choose language/voice/style/pace, then click **Test Voice** to hear short sample. Test sends sample text only; storyboard narration is not sent yet.
-6. Click **Preview Narasi Lengkap**, listen to generated narration, then explicitly choose **Gunakan Audio Ini**. Until approval, existing selected audio stays active and unchanged. A matching cached preview is reused; **Regenerate preview** makes a new provider request. Test Voice and full narration share TTS quota, separate from video-job allowance. Approval adjusts estimated scene timing to actual audio duration; edit timings if needed.
-7. Click **Generate preview**. This creates immutable snapshot including renderer version and content-addressed audio copy; Player previews same version/composition. Template path makes zero AI calls.
+2. Choose **Create video**, import JSON or choose a sample. Research Package v1.0 auto-upgrades to v1.1.
+3. **Materi & Storyboard:** edit title, scene text/narration, references, category, visual preset, and target duration. Advanced scene timing, motion, captions, composition, and motion-plan controls stay collapsed until needed. Save occurs when continuing; leaving with unsaved edits prompts to save. Research edits invalidate author verification and Preview review.
+4. **Narasi:** upload MP3/WAV/M4A (≤100 MB, ≤120 sec), or explicitly load Gemini's voice catalog and choose language/voice/style/pace. Voice catalog does not load on workspace open. **Test Voice** sends only sample text. **Preview Narasi Lengkap** sends storyboard narration; listen, then explicitly choose **Gunakan Audio Ini**. Pending audio never replaces active audio before approval. TTS quota is separate from video-job allowance.
+5. **Review & Subtitle:** inspect source links, warnings, timeline, and phrase captions. Verify claims/URLs yourself, then mark material reviewed. Edits to research reset this verification.
+6. **Preview Video:** Remotion Player shows the current draft and active audio interactively. It creates no snapshot/render job and uses no production video quota. Play it, then mark it reviewed; storyboard/audio changes invalidate that review.
+7. **Render & Download:** explicit action creates/reuses immutable snapshot and starts local MP4 render. Quota/status, progress, manifest, and download appear here. Without audio, confirm **Render tanpa narasi**. Template preview/render makes zero AI calls.
+
+UI typography uses Plus Jakarta Sans consistently, including technical editors; Segoe UI/Arial act as fallbacks when Google Fonts is unavailable.
 
 Renderer consumes supplied scenes and compositions. It does not generate a researched storyboard or topic-specific art from a free-form title.
 
-## Render/review
+## Render/download
 
-1. Click **Render MP4 lokal**. Without audio, confirm silent render. FFmpeg/Remotion renders 1080×1920 at 30 fps; UI reports real renderer progress. TTS narration is muxed into MP4 as AAC.
-2. When verification passes, use **Unduh MP4**. Check manifest summary and watch output.
-3. Review facts and license; mark reviewed or needs review. There is no auto-publish.
+FFmpeg/Remotion renders 1080×1920 at 30 fps; UI reports progress. Approved narration is muxed as AAC; silent, clipped, low-level, or duration-mismatched expected audio is reported distinctly. Manifest includes audio origin/hash, codec, duration, measured mean/peak, renderer version, and video SHA-256. Non-silent checks do not verify spoken wording; listen to the downloaded result. There is no auto-publish.
 
 One new changed-snapshot job per rolling 24h by default. Same snapshot reuses job; retry/rerender same job allowed, max three render attempts. Draft edits do not use allowance. New V2 renderer snapshot differs from existing V1 snapshot and may use existing daily slot; old V1 snapshot remains renderable as V1.
 

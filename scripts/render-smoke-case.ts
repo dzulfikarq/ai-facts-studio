@@ -1,5 +1,6 @@
 import "dotenv/config";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -29,14 +30,19 @@ if (version === LEGACY_RENDERER_VERSION) {
 
 try {
   await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", audioPath]);
+  const audioSha256 = createHash("sha256").update(await readFile(audioPath)).digest("hex");
+  await assert.rejects(renderSnapshot({ research, audio: { file: `audio/${audioName}`, durationSec: 2, source: "upload", sha256: "0".repeat(64) }, ...(version === RENDERER_VERSION ? { rendererVersion: RENDERER_VERSION } : {}) }, outputPath), /SHA-256/, "modified snapshot audio must fail integrity check before render");
   const manifest = await renderSnapshot({
     research,
-    audio: { file: `audio/${audioName}`, durationSec: 2 },
+    audio: { file: `audio/${audioName}`, durationSec: 2, source: "upload", sha256: audioSha256 },
     ...(version === RENDERER_VERSION ? { rendererVersion: RENDERER_VERSION } : {}),
   }, outputPath, () => {}, 1 / 3);
   assert.equal(manifest.rendererVersion, version);
   assert.equal(manifest.videoCodec, "h264");
   assert.equal(manifest.audioCodec, "aac");
+  assert.equal(manifest.audioValidation, "pass");
+  assert.equal(manifest.audioSource, "upload");
+  assert.equal(manifest.audioSha256, audioSha256);
   assert.equal(manifest.width, 360);
   assert.equal(manifest.height, 640);
   assert.ok(manifest.durationSec > 1.8 && manifest.durationSec < 2.2);

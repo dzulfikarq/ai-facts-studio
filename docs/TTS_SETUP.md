@@ -16,7 +16,7 @@ Gemini Free Tier currently marks input/output free of charge, but rate limits ar
 
 ## Voices, language, style, speed
 
-When user opens **Generate dengan AI Voice**, app calls official `ai.voices.list()` for **prebuilt** voices; options/genders reflect provider metadata when available. If lookup fails or project is unconfigured, official prebuilt names appear as fallback and are clearly marked unverified. Default locale `id-ID` (Bahasa Indonesia). TTS model also receives `speech_config.language`; no translation is performed. Voice list is cached in server memory for 15 minutes.
+When user opens **Generate dengan AI Voice**, app calls official `ai.voices.list()` for **all prebuilt** voices; current implementation does not filter catalog by selected locale. Options/genders reflect provider metadata when available; voice language metadata is informational, not per-project availability proof. If lookup fails or project is unconfigured, official prebuilt names appear as fallback and are clearly marked unverified. Default locale `id-ID` (Bahasa Indonesia) is sent separately as `speech_config.language`; no translation is performed. Voice list is cached in server memory for 15 minutes.
 
 Scene script is exact ordered concatenation of Research Package `narrationText` fields, not freeform browser input. Style presets map to Gemini `speech_metadata.style`. Pace slider sends qualitative instruction (slow/steady/brisk); Gemini TTS pace is prompt-guided, not exact playback-rate multiplier. `speech_metadata` keeps delivery directions separate from verbatim transcript.
 
@@ -34,11 +34,20 @@ Not integrated. Community Edge TTS implementation relies on an undocumented endp
 
 - `npm test`: Free Tier/model guard, SDK request config, voice/style/rate, cache key and scene estimate.
 - `npm run smoke:tts`: test-only mock, Test Voice/cache, unapproved full preview, explicit approval, regenerate/retry cap, FFmpeg WAV→MP3 normalization, ffprobe, immutable snapshot, Remotion MP4 and non-silent AAC. Mock output is a sine tone, **not generated speech**.
-- Real Gemini request not live-tested here; no `GEMINI_API_KEY` was supplied. `/api/tts/status` reports unconfigured. Configure key/project as above before trying real speech.
+- `GEMINI_TTS_LIVE_TEST=1 npm run smoke:gemini-live` (PowerShell: `$env:GEMINI_TTS_LIVE_TEST="1"; npm run smoke:gemini-live`) is opt-in and refuses to run without an API key and `GEMINI_TTS_FREE_TIER_ONLY=true`. It sends built-in sample text only; no project/narration is attached.
+
+### Live provider evidence — 24 Oct 2026
+
+One live Test Voice synthesis passed: `gemini-developer-api`, model `gemini-3.8-flash-lite-tts`, live catalog source `api`, voice `achernar`, requested locale `id-ID`, 9.68 sec, 155,948 bytes, normalized MP3, cache miss. ffprobe verified MP3/duration and the audio URL returned successfully; no human listening or voice-quality assessment was performed. Endpoint did not create a project or attach audio. This live sample consumed one local TTS synthesis attempt and is cached in configured `DATA_DIR`.
+
+This does **not** prove full-narration/approval/render against Gemini; those paths were exercised with the mock provider. Google project billing linkage is not queryable through the SDK/API key. The live test ran with the local Free Tier guard enabled; no claim is made about billing state or charges. Check AI Studio project billing before rerunning.
+
+### Troubleshooting
+
 - **Free Tier disabled:** set `GEMINI_TTS_FREE_TIER_ONLY=true` only after confirming no billing linked.
 - **Model not available / 404:** inspect current AI Studio model access, then change `GEMINI_TTS_MODEL` to another allowlisted Free Tier ID. No automatic fallback.
 - **429 quota:** wait for quota reset or use manual upload. App won't upgrade project or swap model.
-- **Voice missing:** select a locale that appears in provider's dynamic prebuilt voice list.
+- **Voice unavailable:** refresh catalog and choose a live-listed prebuilt voice. Fallback names are unverified; selected locale is sent separately and does not filter the voice list.
 - **Audio invalid:** check FFmpeg/ffprobe on `PATH`; generated WAV is normalized locally before caching.
 
 Cleanup: stop app and remove `data/`, `public/audio/`, and `renders/` to delete local TTS cache/audio.

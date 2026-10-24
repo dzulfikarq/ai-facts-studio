@@ -1,19 +1,42 @@
-# Testing and limitations
+# Testing and limitations — V1.0.1
 
-## Automated checks
+Verification performed 24 Oct 2026 on Windows x64. Commands below describe checks actually executed in this audit.
+Environment: Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`.
 
-`npm test`: schema safety, timing, cache-key behavior, mocked Gemini SDK/voice/style/rate mapping and rolling 24h cap. `npm run smoke:api`: temporary SQLite server, import/idempotency, ffprobe upload and video daily cap. `npm run smoke:tts`: mock Test Voice/cache → unapproved full preview → stale-preview rejection → explicit approval → regenerate/retry cap → immutable job snapshot → FFmpeg normalize → full-size MP4 render and non-silent AAC probe. `npm run typecheck`: strict TS. `npm run build`: typecheck + production Vite build. `npm run smoke:render`: short Remotion H.264/AAC render. `npm run render -- samples/mountain-formation.json`: full 56s 1080×1920 render.
+## Results
 
-Executed locally on Node 22.22.1, FFmpeg/ffprobe 9.0.2, Windows x64. TTS mock end-to-end rendered 3.05s H.264/AAC MP4 and `volumedetect` confirmed non-silent audio. Mock audio is a sine tone, not speech; `/api/tts/status` reports Gemini unconfigured, so no live-provider request occurred. Short video smoke passed at 2.0s / 360×640 / H.264 + AAC. Full mountain render passed at 56.042667s / 1080×1920 / H.264 + AAC silent track; output 6,513,583 bytes with SHA-256 `13ae92c00376c080a021c04df7f8fce5c82307ba4f34099a9d7665a03f970426`. `npm audit` reported 0 vulnerabilities. `npm run build` succeeded with a >500 KB JS chunk warning and Zod comment annotation warnings.
+| Command | Outcome |
+|---|---|
+| `npm test` | PASS — package validation, timing, Gemini guard/request mapping, cache key, quota logic. |
+| `npm run smoke:api` | PASS — temporary SQLite API, import/idempotency, ffprobe upload, delete cleanup, shared audio retention, rolling quota persists after delete. |
+| `npm run smoke:tts` | PASS — mock-only Test Voice/full preview/cache/approval/stale rejection/render protection; MP4 H.264 + audible AAC, 3.05 sec. Mock output is a sine tone, **not speech**. |
+| `npm run smoke:render` | PASS — 2 sec, 360×640, H.264 + AAC; SHA-256 `54c8c3e1901a18cddfd80555af4f32984e77d52679f23235fd0ba60d5d710d87`. |
+| `npm run typecheck` | PASS. |
+| `npm run build` | PASS; Zod comment-annotation and >500 KB JS chunk warnings remain. |
+| `npm audit` | PASS — 0 vulnerabilities. |
+| `GEMINI_TTS_LIVE_TEST=1 npm run smoke:gemini-live` | PASS — one live Test Voice synthesis. Provider `gemini-developer-api`; model `gemini-3.8-flash-lite-tts`; live catalog; voice `achernar`; requested locale `id-ID`; 9.68 sec; 155,948 bytes; MP3; cache miss. ffprobe and playback URL checked; no human listening/voice-quality review. No project created/audio attached. One synthesis attempt recorded in configured `DATA_DIR`. |
 
-## Implemented and tested locally
+`npm run render -- samples/mountain-formation.json` was **not** rerun in this audit. Earlier V1.0 evidence: 56.042667 sec, 1080×1920, H.264 + silent AAC, 6,513,583 bytes.
 
-Schema/timing functions, local API/import/editor/preview, manual upload/probe, immutable snapshots, Gemini TTS adapter, Free Tier guard/model allowlist, cached Test Voice, full narration preview/approval, estimated scene sync and local render path are implemented. TTS E2E runs against test-only mock provider; real Gemini API is not live-tested because no Gemini key was supplied. Mock output is a sine tone, **not speech**. Actual full mountain MP4 and short audio MP4 are rendered and ffprobe-verified. Test/build outcomes are tracked in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+## Keep mock and live evidence separate
 
-## Mocked / not live-tested
+- `npm run smoke:tts` uses test-only mock provider; output is synthetic tone. It verifies approval, snapshot, and render mechanics—not Gemini speech quality.
+- Live command is opt-in; it requires `GEMINI_TTS_LIVE_TEST=1`, a configured key, and `GEMINI_TTS_FREE_TIER_ONLY=true`. It uses built-in sample only, no project/full narration, and consumes quota on cache miss.
+- This audit live-tested catalog + Test Voice + MP3 normalization/ffprobe. It did **not** live-test full narration, approval, or Gemini-backed video rendering.
+- `GEMINI_TTS_FREE_TIER_ONLY=true` is a user assertion. API cannot discover linked billing; no claim of zero charges or project billing state.
 
-No live Gemini request, forced alignment, GitHub API dispatch/status/artifact retrieval, OpenCode custom-scene, or cloud round-trip. GitHub workflow file exists but has not run against GitHub credentials. Gemini Free Tier project billing linkage cannot be read via API key; verify no billing account linked in AI Studio. No Google billing is created or enabled by code. No screenshot/manual cross-browser test recorded unless status document says otherwise.
+## Cleanup and concurrency
 
-## Limits
+Deletion transaction removes project/job/render-attempt rows and writes upload/snapshot/MP4 cleanup entries atomically. Queue retries on startup and every 60 sec; shared content-addressed job/TTS audio stays cached. API smoke verifies normal cleanup and shared-audio retention. Locked-file/permission failure and timer retry were **not** fault-injected, so cleanup-retry failure path is code-reviewed, not runtime proven.
 
-One local renderer process; max 3 attempts/job; one new video snapshot/24h default. TTS max 3 requests per exact text/config and 10 requests/24h default; Test Voice and full previews share limits, cache hits do not count. No cancellation while Remotion render is in progress, no persistent cancellation signal, no audio cleanup UI/retention scheduler. Preview is browser Player (not an encoded low-res file). Captions use per-scene estimates, not word alignment. Free-tier script/audio data may be used by Google to improve products. If project billing is linked externally, Gemini can use paid tier despite the app's Free-Tier model guard; keep billing unlinked. Sample facts/sources require human review. Remotion license terms may change; confirm eligibility before production use.
+Legacy job rows still present are copied into rolling-usage history at startup. Jobs/projects deleted before this migration have no recoverable usage timestamp.
+
+## GitHub Actions
+
+Workflow was reviewed but not manually dispatched: `gh` CLI unavailable here. No run ID, artifact, or cloud-render evidence was collected. Workflow remains limited to committed JSON and does not invoke local project/audio transport. See [`GITHUB_ACTIONS_SETUP.md`](GITHUB_ACTIONS_SETUP.md).
+
+## Renderer limits
+
+`visualPreset`, `visualDescription`, and `motionCues` currently do not control output; `sfxCues` has no playback path. Some template IDs alias default artwork. See field matrix and V1.1 recommendations in [`VIDEO_PIPELINE.md`](VIDEO_PIPELINE.md).
+
+Other limits: captions are per-scene, not word-aligned; caches have no retention UI; no GitHub dispatch/download integration; app defaults to loopback but `HOST` can override it—keep it on `127.0.0.1`. Gemini key remains server-only and must never enter browser/config bundle.

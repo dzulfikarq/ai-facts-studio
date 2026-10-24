@@ -10,6 +10,8 @@ Reference: unique `id`, `title`, `publisher`, HTTP(S) `url`, ISO `checkedAt`, op
 
 Scene: unique `id`, increasing positive `order`, non-overlapping `startSec`/`endSec`, `narrationText`, `onScreenText`, allowlisted `templateId`, `visualDescription`, allowlisted `motionCues`, allowlisted `sfxCues`, `referenceIds` that exist in root `references`.
 
+Schema acceptance does not mean every field currently changes rendered output. V1.0.1 field-to-renderer wiring is documented in [`VIDEO_PIPELINE.md`](VIDEO_PIPELINE.md).
+
 Limits: 1–120 sec, 1–30 scenes, at most 50 references, 2,000 chars per narration segment, 120 chars on-screen text. URLs must be `http://` or `https://`. Timeline cannot overlap; scenes cannot exceed target duration. Motion cues: `fadeIn`, `slide`, `scale`, `pan`, `zoom`, `parallax`, `reveal`, `pulse`, `cut`, `dissolve`. Templates: `mountain-reveal`, `plate-collision`, `folding-uplift`, `himalaya`, `volcano`, `infographic`, `space-orbit`, `animal-habitat`.
 
 ## Example and validation

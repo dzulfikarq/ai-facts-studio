@@ -68,7 +68,22 @@ db.exec(`
     error_code TEXT
   );
   CREATE INDEX IF NOT EXISTS tts_attempts_recent_idx ON tts_attempts(cache_key, requested_at);
+  CREATE TABLE IF NOT EXISTS video_job_requests (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS video_job_requests_created_at_idx ON video_job_requests(created_at);
+  CREATE TABLE IF NOT EXISTS file_cleanup_queue (
+    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders')),
+    relative_path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    PRIMARY KEY (root, relative_path)
+  );
 `);
+
+db.exec("INSERT OR IGNORE INTO video_job_requests (id, created_at) SELECT id, created_at FROM jobs");
 
 const ttsColumns = db.prepare("PRAGMA table_info(tts_assets)").all() as Array<{ name: string }>;
 if (!ttsColumns.some((column) => column.name === "model")) db.exec("ALTER TABLE tts_assets ADD COLUMN model TEXT NOT NULL DEFAULT 'legacy'");

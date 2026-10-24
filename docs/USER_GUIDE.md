@@ -18,6 +18,10 @@
 
 One new changed-snapshot job per rolling 24h by default. Same snapshot reuses job; retry/rerender same job allowed, max three render attempts. Draft edits do not use allowance.
 
+## Video library
+
+Use **×** next to a project in Video Library or Recent Projects, then confirm in the custom dialog. Project, snapshots, render outputs, and its uploaded audio are removed. Shared content-addressed TTS/job audio caches remain; deleting a project does not reset the rolling video-job allowance. If filesystem cleanup is temporarily blocked, app queues it and retries automatically.
+
 ## Troubleshooting
 
 - **FFmpeg unavailable:** install FFmpeg and ffprobe, restart app, confirm both resolve from terminal PATH.

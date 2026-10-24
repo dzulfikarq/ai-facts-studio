@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, readFileSync, rmSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -23,12 +23,16 @@ const audioDir = path.resolve(root, "public/audio");
 const jobDir = path.join(dataDir, "jobs");
 const renderDir = path.resolve(root, "renders");
 const samplePath = path.resolve(root, "samples/mountain-formation.json");
+const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir };
+type CleanupRoot = keyof typeof cleanupRoots;
 const maxUploadMb = Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 100));
 const dailyLimit = Math.max(1, Number(process.env.DAILY_JOB_LIMIT ?? 1));
 const ttsDailyLimit = Math.max(1, Number(process.env.GEMINI_TTS_DAILY_REQUEST_LIMIT ?? 10));
 const maxTtsCharacters = 6000;
 let activeRenderJob: string | null = null;
+let activeJobCreation = false;
 const activeTtsKeys = new Set<string>();
+const activeProjectTasks = new Set<string>();
 const speechProvider = await createSpeechProvider();
 const audioUpload = multer({
   storage: multer.diskStorage({
@@ -92,6 +96,18 @@ function saveProject(id: string, project: StoredProject) {
     .run(project.researchPackage.title, JSON.stringify(project), now, id);
 }
 
+function withTransaction<T>(action: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = action();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* BEGIN/COMMIT may already have failed */ }
+    throw error;
+  }
+}
+
 function apiError(response: express.Response, status: number, message: string, extra: object = {}) {
   response.status(status).json({ error: message, ...extra });
 }
@@ -102,13 +118,70 @@ async function sha256File(filePath: string) {
   return hash.digest("hex");
 }
 
+function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
+  const base = cleanupRoots[rootName];
+  const target = path.resolve(targetPath);
+  const relativePath = path.relative(base, target);
+  if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath) || rootName === "audio" && path.dirname(target) !== audioDir) {
+    throw new Error("Cleanup path keluar dari direktori yang diizinkan.");
+  }
+  db.prepare("INSERT OR IGNORE INTO file_cleanup_queue (root, relative_path, created_at) VALUES (?, ?, ?)")
+    .run(rootName, relativePath, new Date().toISOString());
+}
+
+let cleanupRun: Promise<number> | null = null;
+
+function processFileCleanupQueue(): Promise<number> {
+  if (cleanupRun) return cleanupRun;
+  cleanupRun = runFileCleanupQueue().finally(() => { cleanupRun = null; });
+  return cleanupRun;
+}
+
+async function runFileCleanupQueue() {
+  const queue = db.prepare("SELECT root, relative_path FROM file_cleanup_queue ORDER BY created_at").all() as Array<{ root: string; relative_path: string }>;
+  for (const item of queue) {
+    const base = cleanupRoots[item.root as CleanupRoot];
+    const target = base ? path.resolve(base, item.relative_path) : "";
+    const relative = base ? path.relative(base, target) : "";
+    if (!base || !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || item.root === "audio" && path.dirname(target) !== audioDir) {
+      db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+        .run("Cleanup path invalid/outside allowed root.", item.root, item.relative_path);
+      continue;
+    }
+    try {
+      await rm(target, { recursive: true, force: true });
+      db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
+    } catch (error) {
+      db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+        .run(error instanceof Error ? error.message.slice(0, 500) : "Cleanup gagal.", item.root, item.relative_path);
+    }
+  }
+  return (db.prepare("SELECT COUNT(*) AS count FROM file_cleanup_queue").get() as { count: number }).count;
+}
+
+async function tryProcessFileCleanupQueue(): Promise<number | null> {
+  try { return await processFileCleanupQueue(); }
+  catch (error) {
+    console.error("Cleanup queue processing failed:", error instanceof Error ? error.message : "unknown error");
+    return null;
+  }
+}
+
+async function removeOrQueueCleanup(rootName: CleanupRoot, targetPath: string) {
+  try { await rm(targetPath, { recursive: true, force: true }); }
+  catch {
+    try { queueFileCleanup(rootName, targetPath); await processFileCleanupQueue(); }
+    catch (error) { console.error("File cleanup failed and could not be queued:", error instanceof Error ? error.message : "unknown error"); }
+  }
+}
+
 app.get("/api/status", async (_request, response) => {
   let ffmpegAvailable = false;
   try {
     await execFileAsync("ffmpeg", ["-version"], { timeout: 5000 });
     ffmpegAvailable = true;
   } catch { /* status only; render reports actionable error */ }
-  const recent = db.prepare("SELECT created_at FROM jobs WHERE created_at > ? ORDER BY created_at ASC")
+  const recent = db.prepare("SELECT created_at FROM video_job_requests WHERE created_at > ? ORDER BY created_at ASC")
     .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
   const allowance = canStartNewJob(recent.map((row) => row.created_at), Date.now(), dailyLimit);
   response.json({ ffmpegAvailable, githubWorkflowAvailable: existsSync(path.resolve(root, ".github/workflows/render-video.yml")), dailyLimit, jobsUsed: recent.length, nextAllowedAt: allowance.nextAllowedAt });
@@ -191,14 +264,20 @@ app.put("/api/projects/:id", (request, response) => {
 app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request, response) => {
   const id = String(request.params.id);
   if (!projectRow(id)) {
-    if (request.file) await rm(request.file.path, { force: true });
+    if (request.file) await removeOrQueueCleanup("audio", request.file.path);
     return apiError(response, 404, "Project tidak ditemukan.");
   }
   if (!request.file) return apiError(response, 400, "File audio tidak ditemukan.");
   if (activeRenderJob) {
-    await rm(request.file.path, { force: true });
+    await removeOrQueueCleanup("audio", request.file.path);
     return apiError(response, 409, "Audio tidak dapat diubah saat render berjalan.");
   }
+  if (activeProjectTasks.has(id)) {
+    await removeOrQueueCleanup("audio", request.file.path);
+    return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
+  }
+  activeProjectTasks.add(id);
+  let audioCommitted = false;
   try {
     const { stdout } = await execFileAsync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", request.file.path], { timeout: 20_000, maxBuffer: 1024 * 1024 });
     const probe = JSON.parse(stdout) as { streams?: Array<{ codec_type: string }>; format?: { duration?: string } };
@@ -206,94 +285,99 @@ app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request,
     if (!probe.streams?.some((stream) => stream.codec_type === "audio") || !Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 120) {
       throw new Error("File audio tidak terbaca atau durasinya di luar batas 1–120 detik.");
     }
-    const row = projectRow(id)!;
+    const sha256 = await sha256File(request.file.path);
+    if (activeRenderJob) {
+      await removeOrQueueCleanup("audio", request.file.path);
+      return apiError(response, 409, "Audio tidak dapat diubah saat render berjalan.");
+    }
+    const row = projectRow(id);
+    if (!row) {
+      await removeOrQueueCleanup("audio", request.file.path);
+      return apiError(response, 404, "Project tidak ditemukan.");
+    }
     const project = projectFromRow(row);
-    if (project.audio?.source === "upload") await rm(path.resolve(root, "public", project.audio.file), { force: true });
+    const previousUpload = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
     project.audio = {
       file: `audio/${request.file.filename}`,
       name: request.file.originalname.slice(0, 200),
       durationSec,
       bytes: request.file.size,
-      sha256: await sha256File(request.file.path),
+      sha256,
       source: "upload",
       timingMode: "scaled",
     };
+    withTransaction(() => {
+      saveProject(row.id, project);
+      if (previousUpload && path.dirname(previousUpload) === audioDir) queueFileCleanup("audio", previousUpload);
+    });
+    audioCommitted = true;
     invalidateBundleCache();
-    saveProject(row.id, project);
-    response.status(201).json(getProject(row.id));
+    const cleanupPending = await tryProcessFileCleanupQueue();
+    response.status(201).json({ ...getProject(row.id), cleanupPending });
   } catch (error) {
-    await rm(request.file.path, { force: true });
-    apiError(response, 400, error instanceof Error && error.message.startsWith("File audio") ? error.message : "Audio tidak valid; periksa FFmpeg/ffprobe dan format file.");
+    if (audioCommitted) {
+      const cleanupPending = await tryProcessFileCleanupQueue();
+      const saved = projectRow(id);
+      if (saved && !response.headersSent) return response.status(201).json({ ...getProject(id), cleanupPending });
+    } else {
+      await removeOrQueueCleanup("audio", request.file.path);
+    }
+    if (response.headersSent) return;
+    apiError(response, error instanceof Error && error.message.startsWith("File audio") ? 400 : 500, error instanceof Error && error.message.startsWith("File audio") ? error.message : "Audio gagal divalidasi atau disimpan.");
+  } finally {
+    activeProjectTasks.delete(id);
   }
 });
 
 app.delete("/api/projects/:id/audio", async (request, response) => {
   if (activeRenderJob) return apiError(response, 409, "Audio tidak dapat diubah saat render berjalan.");
-  const row = projectRow(request.params.id);
+  const id = String(request.params.id);
+  if (activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
+  const row = projectRow(id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  activeProjectTasks.add(id);
   const project = projectFromRow(row);
-  if (project.audio?.source === "upload") await rm(path.resolve(root, "public", project.audio.file), { force: true });
+  const previousUpload = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
   project.audio = null;
-  invalidateBundleCache();
-  saveProject(row.id, project);
-  response.json(getProject(row.id));
-});
-
-function jobAudioFromSnapshot(snapshotPath: string): string | null | undefined {
-  const resolvedSnapshot = path.resolve(snapshotPath);
-  if (!resolvedSnapshot.startsWith(`${jobDir}${path.sep}`)) return undefined;
   try {
-    const snapshot = JSON.parse(readFileSync(resolvedSnapshot, "utf8")) as RenderSnapshot;
-    if (!snapshot.audio) return null;
-    const file = snapshot.audio.file;
-    if (!file.startsWith("audio/jobs/")) return undefined;
-    const resolvedAudio = path.resolve(root, "public", file);
-    const jobAudioDir = path.resolve(root, "public/audio/jobs");
-    return resolvedAudio.startsWith(`${jobAudioDir}${path.sep}`) ? resolvedAudio : undefined;
-  } catch { return undefined; }
-}
+    withTransaction(() => {
+      saveProject(row.id, project);
+      if (previousUpload && path.dirname(previousUpload) === audioDir) queueFileCleanup("audio", previousUpload);
+    });
+    invalidateBundleCache();
+    const cleanupPending = await tryProcessFileCleanupQueue();
+    response.json({ ...getProject(row.id), cleanupPending });
+  } catch (error) {
+    apiError(response, 500, "Audio tidak dapat dilepas dengan aman.");
+  } finally {
+    activeProjectTasks.delete(id);
+  }
+});
 
 app.delete("/api/projects/:id", async (request, response) => {
   const id = String(request.params.id);
   const row = projectRow(id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
-  const jobs = db.prepare("SELECT id, snapshot_path FROM jobs WHERE project_id = ?").all(id) as Array<{ id: string; snapshot_path: string }>;
+  const jobs = db.prepare("SELECT id FROM jobs WHERE project_id = ?").all(id) as Array<{ id: string }>;
   if (activeRenderJob && jobs.some((job) => job.id === activeRenderJob)) return apiError(response, 409, "Project tidak dapat dihapus saat render berjalan.");
+  if (activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
 
   const project = projectFromRow(row);
   const uploadPath = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
   const safeUploadPath = uploadPath && path.dirname(uploadPath) === audioDir ? uploadPath : null;
-  const jobAudioPaths = new Set(jobs.map((job) => jobAudioFromSnapshot(job.snapshot_path)).filter((file): file is string => Boolean(file)));
-  db.exec("BEGIN IMMEDIATE");
-  try {
+  withTransaction(() => {
+    if (safeUploadPath) queueFileCleanup("audio", safeUploadPath);
+    for (const job of jobs) {
+      queueFileCleanup("jobs", path.join(jobDir, job.id));
+      queueFileCleanup("renders", path.join(renderDir, job.id));
+    }
     db.prepare("DELETE FROM render_attempts WHERE job_id IN (SELECT id FROM jobs WHERE project_id = ?)").run(id);
     db.prepare("DELETE FROM jobs WHERE project_id = ?").run(id);
     db.prepare("DELETE FROM projects WHERE id = ?").run(id);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-
-  // Content-addressed job audio may be shared; retain it if any surviving job references it.
-  const remainingSnapshots = db.prepare("SELECT snapshot_path FROM jobs").all() as Array<{ snapshot_path: string }>;
-  const referencedAudio = new Set<string>();
-  let canPruneJobAudio = true;
-  for (const item of remainingSnapshots) {
-    const file = jobAudioFromSnapshot(item.snapshot_path);
-    if (file === undefined) { canPruneJobAudio = false; break; }
-    if (file) referencedAudio.add(file);
-  }
-  if (canPruneJobAudio) for (const file of jobAudioPaths) if (!referencedAudio.has(file)) rmSync(file, { force: true });
-  if (safeUploadPath) rmSync(safeUploadPath, { force: true });
+  });
   invalidateBundleCache();
-  await Promise.all(jobs.map(async (job) => {
-    await Promise.all([
-      rm(path.join(jobDir, job.id), { recursive: true, force: true }),
-      rm(path.join(renderDir, job.id), { recursive: true, force: true }),
-    ]);
-  }));
-  response.status(204).end();
+  const cleanupPending = await tryProcessFileCleanupQueue();
+  response.json({ deleted: true, cleanupPending });
 });
 
 const ttsSettingsSchema = z.object({
@@ -421,8 +505,10 @@ async function createTtsAsset(text: string, settings: TtsSettings, regenerate = 
 
   activeTtsKeys.add(cacheKey);
   const attemptId = randomUUID();
-  db.prepare("INSERT INTO tts_attempts (id, cache_key, requested_at, state) VALUES (?, ?, ?, ?)").run(attemptId, cacheKey, new Date().toISOString(), "started");
+  let attemptRecorded = false;
   try {
+    db.prepare("INSERT INTO tts_attempts (id, cache_key, requested_at, state) VALUES (?, ?, ?, ?)").run(attemptId, cacheKey, new Date().toISOString(), "started");
+    attemptRecorded = true;
     const generated = await speechProvider.synthesize({ text, ...settings });
     const media = await normalizeGeminiAudio(generated);
     const audioFile = `audio/tts/${media.sha256}.mp3`;
@@ -442,7 +528,7 @@ async function createTtsAsset(text: string, settings: TtsSettings, regenerate = 
     return { asset: getCached()!, voice, cacheHit: false, scriptSha256 };
   } catch (error) {
     const code = error instanceof SpeechProviderError ? error.code : error instanceof Error && /audio|ffmpeg/i.test(error.message) ? "invalid-audio" : "synthesis-failed";
-    db.prepare("UPDATE tts_attempts SET state = ?, error_code = ? WHERE id = ?").run("failed", code, attemptId);
+    if (attemptRecorded) db.prepare("UPDATE tts_attempts SET state = ?, error_code = ? WHERE id = ?").run("failed", code, attemptId);
     throw error;
   } finally {
     activeTtsKeys.delete(cacheKey);
@@ -508,24 +594,31 @@ async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha25
   };
   project.pendingTts = null;
   project.audio = audio;
+  withTransaction(() => {
+    saveProject(projectId, project);
+    if (previousUpload && path.dirname(previousUpload) === audioDir) queueFileCleanup("audio", previousUpload);
+  });
   invalidateBundleCache();
-  saveProject(projectId, project);
-  if (previousUpload) await rm(previousUpload, { force: true });
-  return { project: getProject(projectId), audio, alignment: "estimated" as const };
+  const cleanupPending = await tryProcessFileCleanupQueue();
+  return { project: getProject(projectId), audio, cleanupPending, alignment: "estimated" as const };
 }
 
 app.post("/api/projects/:id/tts", async (request, response) => {
   const parsed = ttsRequestSchema.safeParse(request.body);
   if (!parsed.success) return apiError(response, 400, "Pilihan TTS tidak valid.", { issues: parsed.error.issues });
-  const row = projectRow(String(request.params.id));
+  const id = String(request.params.id);
+  if (activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
+  const row = projectRow(id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   const project = projectFromRow(row);
   const script = narrationScript(project.researchPackage);
   if (!script) return apiError(response, 400, "Naskah kosong. Isi narrationText pada storyboard terlebih dahulu.");
   if (script.length > maxTtsCharacters) return apiError(response, 413, `Naskah melebihi batas ${maxTtsCharacters} karakter TTS.`);
+  activeProjectTasks.add(id);
   try {
     const result = await createTtsAsset(script, parsed.data, parsed.data.regenerate);
-    const currentRow = projectRow(row.id)!;
+    const currentRow = projectRow(row.id);
+    if (!currentRow) throw new SpeechProviderError("Project tidak ditemukan.", "project-not-found", 404);
     const currentProject = projectFromRow(currentRow);
     if (createHash("sha256").update(narrationScript(currentProject.researchPackage)).digest("hex") !== result.scriptSha256) {
       throw new SpeechProviderError("Naskah berubah saat audio dibuat. Simpan storyboard lalu buat preview baru.", "script-changed", 409);
@@ -534,24 +627,31 @@ app.post("/api/projects/:id/tts", async (request, response) => {
     saveProject(row.id, currentProject);
     response.json({ project: getProject(row.id), preview: ttsPreview(result.asset, result.scriptSha256), cacheHit: result.cacheHit });
   } catch (error) { sendTtsError(response, error); }
+  finally { activeProjectTasks.delete(id); }
 });
 
 app.post("/api/projects/:id/tts/approve", async (request, response) => {
   if (activeRenderJob) return apiError(response, 409, "Audio tidak dapat diubah saat render berjalan.");
-  const row = projectRow(String(request.params.id));
+  const id = String(request.params.id);
+  if (activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
+  const row = projectRow(id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   const project = projectFromRow(row);
   if (!project.pendingTts) return apiError(response, 409, "Belum ada pratinjau narasi untuk digunakan.", { code: "no-pending-tts" });
   const asset = db.prepare("SELECT * FROM tts_assets WHERE cache_key = ?").get(project.pendingTts.cacheKey) as TtsAssetRow | undefined;
   if (!asset) return apiError(response, 410, "Audio preview tidak ditemukan. Buat pratinjau baru.", { code: "audio-not-found" });
+  activeProjectTasks.add(id);
   try {
     response.json(await attachTtsAudio(row.id, asset, project.pendingTts.scriptSha256));
   } catch (error) { sendTtsError(response, error); }
+  finally { activeProjectTasks.delete(id); }
 });
 
 app.post("/api/projects/:id/generate", async (request, response) => {
-  const row = projectRow(request.params.id);
+  const projectId = String(request.params.id);
+  const row = projectRow(projectId);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeProjectTasks.has(projectId)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
   const project = projectFromRow(row);
   if (project.audio?.source === "tts" && project.audio.tts?.scriptSha256 !== createHash("sha256").update(narrationScript(project.researchPackage)).digest("hex")) {
     return apiError(response, 409, "Naskah berubah setelah AI Voice dibuat. Generate ulang audio atau pilih upload manual.", { code: "tts-audio-stale" });
@@ -562,27 +662,56 @@ app.post("/api/projects/:id/generate", async (request, response) => {
   const existing = db.prepare("SELECT * FROM jobs WHERE project_id = ? AND source_sha256 = ?").get(row.id, sourceSha) as JobRow | undefined;
   if (existing) return response.json({ job: jobForClient(existing), warnings: researchWarnings(project.researchPackage) });
 
-  const recent = db.prepare("SELECT created_at FROM jobs WHERE created_at > ? ORDER BY created_at ASC")
+  const recent = db.prepare("SELECT created_at FROM video_job_requests WHERE created_at > ? ORDER BY created_at ASC")
     .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
   const allowance = canStartNewJob(recent.map((item) => item.created_at), Date.now(), dailyLimit);
   if (!allowance.allowed) return apiError(response, 429, "Batas job video baru untuk 24 jam tercapai.", { nextAllowedAt: allowance.nextAllowedAt });
+  if (activeJobCreation) return apiError(response, 409, "Pembuatan snapshot lain sedang berjalan.");
 
   const id = randomUUID();
   const createdAt = new Date().toISOString();
   const folder = path.join(jobDir, id);
-  await mkdir(folder, { recursive: true });
-  if (project.audio) {
-    const jobAudioPath = path.resolve(root, "public", snapshot.audio!.file);
-    await mkdir(path.dirname(jobAudioPath), { recursive: true });
-    if (!existsSync(jobAudioPath)) await copyFile(path.resolve(root, "public", project.audio.file), jobAudioPath);
-    invalidateBundleCache();
+  activeProjectTasks.add(projectId);
+  activeJobCreation = true;
+  try {
+    await mkdir(folder, { recursive: true });
+    if (project.audio) {
+      const jobAudioPath = path.resolve(root, "public", snapshot.audio!.file);
+      await mkdir(path.dirname(jobAudioPath), { recursive: true });
+      if (!existsSync(jobAudioPath)) await copyFile(path.resolve(root, "public", project.audio.file), jobAudioPath);
+      invalidateBundleCache();
+    }
+    const temporaryPath = path.join(folder, "snapshot.tmp");
+    const snapshotPath = path.join(folder, "snapshot.json");
+    await writeFile(temporaryPath, source, { flag: "wx" });
+    await rename(temporaryPath, snapshotPath);
+    const latestRow = projectRow(projectId);
+    if (!latestRow) {
+      await removeOrQueueCleanup("jobs", folder);
+      return apiError(response, 404, "Project tidak ditemukan.");
+    }
+    const latestProject = projectFromRow(latestRow);
+    const latestSourceSha = createHash("sha256").update(JSON.stringify(snapshotForProject(latestProject))).digest("hex");
+    if (latestSourceSha !== sourceSha) {
+      await removeOrQueueCleanup("jobs", folder);
+      return apiError(response, 409, "Project berubah saat preview dibuat. Simpan perubahan lalu ulangi Generate preview.", { code: "project-changed" });
+    }
+    withTransaction(() => {
+      db.prepare("INSERT INTO jobs (id, project_id, source_sha256, snapshot_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(id, row.id, sourceSha, snapshotPath, "preview-ready", createdAt, createdAt);
+      db.prepare("INSERT INTO video_job_requests (id, created_at) VALUES (?, ?)").run(id, createdAt);
+    });
+  } catch (error) {
+    try { await rm(folder, { recursive: true, force: true }); }
+    catch {
+      try { queueFileCleanup("jobs", folder); await processFileCleanupQueue(); }
+      catch (cleanupError) { console.error("Uncommitted snapshot cleanup could not be queued:", cleanupError instanceof Error ? cleanupError.message : "unknown error"); }
+    }
+    return apiError(response, 500, "Snapshot job gagal disimpan; batas job harian tidak terpakai.");
+  } finally {
+    activeProjectTasks.delete(projectId);
+    activeJobCreation = false;
   }
-  const temporaryPath = path.join(folder, "snapshot.tmp");
-  const snapshotPath = path.join(folder, "snapshot.json");
-  await writeFile(temporaryPath, source, { flag: "wx" });
-  await rename(temporaryPath, snapshotPath);
-  db.prepare("INSERT INTO jobs (id, project_id, source_sha256, snapshot_path, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, row.id, sourceSha, snapshotPath, "preview-ready", createdAt, createdAt);
   response.status(201).json({ job: jobForClient(db.prepare("SELECT * FROM jobs WHERE id = ?").get(id) as JobRow), warnings: researchWarnings(project.researchPackage) });
 });
 
@@ -627,7 +756,11 @@ app.post("/api/jobs/:id/render", async (request, response) => {
       const finish = new Date().toISOString();
       db.prepare("UPDATE jobs SET state = ?, updated_at = ?, error = ? WHERE id = ?").run("failed", finish, message, job.id);
       db.prepare("UPDATE render_attempts SET state = ?, finished_at = ?, error = ? WHERE id = ?").run("failed", finish, message, attemptId);
-      await rm(outputPath, { force: true });
+      try { await rm(outputPath, { force: true }); }
+      catch {
+        try { queueFileCleanup("renders", outputPath); void processFileCleanupQueue().catch((cleanupError) => console.error("Render output cleanup retry failed:", cleanupError instanceof Error ? cleanupError.message : "unknown error")); }
+        catch (cleanupError) { console.error("Render output cleanup could not be queued:", cleanupError instanceof Error ? cleanupError.message : "unknown error"); }
+      }
     } finally {
       activeRenderJob = null;
     }
@@ -672,6 +805,14 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   console.error("Request gagal:", error instanceof Error ? error.message : "unknown error");
   apiError(response, 500, "Terjadi kesalahan lokal. Periksa log server.");
 });
+
+const pendingCleanup = await tryProcessFileCleanupQueue();
+if (pendingCleanup === null) console.warn("File cleanup queue could not be checked; will retry every 60 seconds.");
+else if (pendingCleanup) console.warn(`File cleanup pending: ${pendingCleanup}; will retry every 60 seconds.`);
+const cleanupRetryTimer = setInterval(() => {
+  void processFileCleanupQueue().catch((error) => console.error("Cleanup queue retry failed:", error instanceof Error ? error.message : "unknown error"));
+}, 60_000);
+cleanupRetryTimer.unref();
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3001);

@@ -1,6 +1,6 @@
 {
   "name": "ai-facts-studio",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,6 +14,7 @@
     "test": "tsx scripts/test.ts",
     "smoke:api": "tsx scripts/api-smoke.ts",
     "smoke:tts": "tsx scripts/tts-smoke.ts",
+    "smoke:gemini-live": "tsx scripts/gemini-live-smoke.ts",
     "render": "tsx scripts/render.ts",
     "smoke:render": "tsx scripts/render-smoke.ts"
   },

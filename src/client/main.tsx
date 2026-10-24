@@ -382,7 +382,7 @@ function App() {
     if (!await askConfirmation({ title: "Hapus video project?", message: `“${target.researchPackage.title}” beserta storyboard, job, dan hasil render akan dihapus permanen.`, confirmLabel: "Hapus video", tone: "danger" })) return;
     setBusy(true);
     try {
-      await api<void>(`/api/projects/${id}`, { method: "DELETE" });
+      const result = await api<{ deleted: boolean; cleanupPending: number | null }>(`/api/projects/${id}`, { method: "DELETE" });
       if (project?.id === id) {
         setProject(null);
         setResearch(null);
@@ -393,7 +393,11 @@ function App() {
         setAudioMode("upload");
       }
       await refresh();
-      setMessage(`Project “${target.researchPackage.title}” dihapus.`);
+      setMessage(result.cleanupPending === null
+        ? `Project “${target.researchPackage.title}” dihapus. Cleanup file masih antre dan akan dicoba ulang otomatis.`
+        : result.cleanupPending > 0
+          ? `Project “${target.researchPackage.title}” dihapus. ${result.cleanupPending} cleanup file akan dicoba ulang otomatis.`
+          : `Project “${target.researchPackage.title}” dihapus.`);
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }

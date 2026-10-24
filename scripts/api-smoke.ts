@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -26,6 +26,7 @@ let jobAudioPath: string | undefined;
 let jobSnapshotPath: string | undefined;
 let projectUploadPath: string | undefined;
 let jobId: string | undefined;
+let renderOutputPath: string | undefined;
 
 try {
   let ready = false;
@@ -74,6 +75,9 @@ try {
   assert.ok(snapshot.audio.file.startsWith("audio/jobs/"), "job snapshot should reference immutable audio copy");
   jobAudioPath = path.resolve("public", snapshot.audio.file);
   await readFile(jobAudioPath);
+  renderOutputPath = path.join("renders", first.job.id, "attempt-1.mp4");
+  await mkdir(path.dirname(renderOutputPath), { recursive: true });
+  await writeFile(renderOutputPath, "smoke-render-placeholder");
 
   const removed = await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "DELETE" });
   assert.equal(removed.status, 200);
@@ -85,17 +89,23 @@ try {
   const secondUpload = await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "POST", body: secondForm }).then((response) => response.json());
   projectUploadPath = path.resolve("public", secondUpload.audio.file);
   const deleted = await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" });
-  assert.equal(deleted.status, 204);
+  const deletion = await deleted.json();
+  assert.equal(deleted.status, 200);
+  assert.equal(deletion.deleted, true);
+  assert.equal(deletion.cleanupPending, 0, "cleanup queue should drain after project deletion");
   assert.equal((await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.status)), 404, "deleted project should disappear");
   assert.equal((await fetch(`${baseUrl}/api/jobs/${jobId}`).then((response) => response.status)), 404, "project jobs should be deleted");
   await assert.rejects(readFile(projectUploadPath), "project upload should be deleted");
   await assert.rejects(readFile(jobSnapshotPath), "job snapshot should be deleted");
-  await assert.rejects(readFile(jobAudioPath), "unreferenced immutable job audio should be deleted");
+  await assert.rejects(readFile(renderOutputPath), "job MP4 should be deleted");
+  await readFile(jobAudioPath); // content-addressed audio remains a shared immutable cache
+  assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 1, "deleting a project must not reset rolling job quota");
   projectId = undefined;
-  console.log(`PASS: production UI/API, import/idempotency, upload, daily cap, project/job/file deletion, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
+  console.log(`PASS: production UI/API, import/idempotency, upload, deletion cleanup, shared audio retention, quota after deletion, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
 } finally {
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" }).catch(() => {});
   if (jobAudioPath) await rm(jobAudioPath, { force: true });
+  if (renderOutputPath) await rm(path.dirname(renderOutputPath), { recursive: true, force: true });
   server.kill();
   await new Promise<void>((resolve) => {
     if (server.exitCode !== null) return resolve();

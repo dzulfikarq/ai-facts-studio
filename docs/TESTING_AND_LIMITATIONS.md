@@ -6,10 +6,10 @@ Verified 24 Oct 2026 on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffpro
 
 | Command | Result |
 |---|---|
-| `npm test` | PASS — migration, schema/audio thresholds, acceptance samples, renderer/cues, Gemini guards/quota, workflow gates, and draft/audio preview-review invalidation. |
+| `npm test` | PASS — migration, schema/audio thresholds, acceptance samples, renderer/cues, Gemini guards/quota, AI Generation mode/provider/request quota and official text model allowlist, workflow gates, and draft/audio preview-review invalidation. |
 | `npm run typecheck` | PASS. |
-| `npm run smoke:api` | PASS — local UI/API, V1 DB migration, upload/cleanup, author-review invalidation on research edits, snapshot SHA, silent-render confirmation, quota persistence. Gemini disabled in isolated test DB. |
-| `npm run smoke:tts` | PASS — mock preview/cache/approval, old upload retained until approval, settings/script edits, restart persistence, snapshot immutability, AAC loudness/duration/peak. Tone fixture, not speech. |
+| `npm run smoke:api` | PASS — local UI/API, V1 DB migration, upload/cleanup, author-review invalidation, AI mode default/validation/persistence and TTS quota isolation, snapshot SHA, silent-render confirmation, quota persistence. Gemini disabled in isolated test DB. |
+| `npm run smoke:tts` | PASS — mode switch/restart leaves TTS preview, approval, and rendered job intact; mock preview/cache/approval, old upload preservation, settings/script edits, snapshot immutability, AAC checks. Tone fixture, not speech. |
 | `npm run smoke:render` | PASS — legacy V1 and V2 H.264/AAC with audio snapshot SHA validation. |
 | `npm run smoke:samples` | PASS — all 3 acceptance packages, silent-expected AAC, H.264 1080×1920, 56.04/24.04/32.04 sec. |
 | `npm run smoke:samples-audio` | PASS — all 3 acceptance packages with `mock-fixture` sine audio; non-silent AAC, mean −24.1 dB, safe peak and aligned duration. Not speech. |
@@ -32,4 +32,5 @@ Full live MP4 is **blocked by quota**, not passed: production video quota is 1/1
 - Non-silent/AAC checks do not verify transcript, pronunciation, or naturalness; human listening is required.
 - TTS provider errors/caches/quotas are tested with mock; live preview and approval pass, but final MP4 mux remains blocked by production job quota.
 - Wizard logic is unit/API tested; responsive and keyboard behavior still needs manual browser review.
+- AI Generation mode only configures providers. No automatic Research/Storyboard/Visual Director generation exists; Production local config status does not verify a live Google request.
 - Cleanup failure injection and GitHub Actions dispatch remain untested.

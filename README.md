@@ -18,7 +18,7 @@ copy .env.example .env   # Windows; optional
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173> and follow five steps: **Materi & Storyboard** → **Narasi** → **Review & Subtitle** → **Preview Video** → **Render & Download**. Preview Video is interactive and uses no production render job/quota. AI path: explicitly load voices → **Test Voice** (optional) → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini** → review draft Player → explicit final render. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, confirmation is required before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
+Open <http://127.0.0.1:5173> and follow five steps: **Materi & Storyboard** → **Narasi** → **Review & Subtitle** → **Preview Video** → **Render & Download**. Preview Video is interactive and uses no production render job/quota. **Settings → AI Generation** selects Development (manual ChatGPT/OpenCode prompt + JSON import) or configured Production (Gemini Text). This mode is stored separately from `NODE_ENV` and TTS; generators are not implemented yet. AI Voice remains a separate explicit path: load voices → optional **Test Voice** → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini**. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, confirmation is required before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
 
 Engine renders supplied Research Package scenes/compositions; it does **not** turn arbitrary titles into researched storyboards or topic-specific illustrations. Compose new topics from reusable nodes/diagrams or author their composition manually.
 
@@ -89,6 +89,7 @@ Cloud dispatch/status/download are not connected to the local UI. Workflow does 
 - [Dynamic Motion Graphics Engine](docs/DYNAMIC_MOTION_GRAPHICS_ENGINE.md)
 - [Template and asset guide](docs/TEMPLATE_AND_ASSET_GUIDE.md)
 - [AI Voice / TTS setup](docs/TTS_SETUP.md)
+- [AI Generation settings](docs/AI_GENERATION_SETUP.md)
 - [GitHub Actions setup](docs/GITHUB_ACTIONS_SETUP.md)
 - [OpenCode integration](docs/OPENCODE_INTEGRATION.md)
 - [User guide](docs/USER_GUIDE.md)

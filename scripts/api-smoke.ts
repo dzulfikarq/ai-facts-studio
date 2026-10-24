@@ -45,7 +45,7 @@ await new Promise<void>((resolve, reject) => probe.close((error) => error ? reje
 const baseUrl = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
+  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
   stdio: "ignore",
 });
 let projectId: string | undefined;
@@ -79,6 +79,23 @@ try {
   assert.equal(ttsCatalog.locales[0].locale, "id-ID", "Indonesian should be first/default locale");
   assert.ok(ttsCatalog.voices.length > 0, "official prebuilt fallback catalog should keep voice selector populated");
   assert.equal(ttsCatalog.catalogSource, "fallback");
+
+  const getAiSettings = () => fetch(`${baseUrl}/api/settings/ai-generation`);
+  const initialAiSettings = await getAiSettings().then((response) => response.json());
+  assert.equal(initialAiSettings.mode, "development", "AI generation defaults to Development independent of NODE_ENV");
+  assert.equal(initialAiSettings.generationAvailable, false, "settings phase does not enable a generator");
+  assert.equal(initialAiSettings.providers.development.id, "manual-prompt");
+  assert.equal(initialAiSettings.providers.production.configured, false);
+  assert.ok(!("apiKey" in initialAiSettings.providers.production), "API key must not be exposed to frontend");
+  assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "staging" }) })).status, 400, "backend validates mode values");
+  assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "production" }) })).status, 409, "unconfigured/paid-capable Production cannot be selected");
+  const unchangedAiSettings = await getAiSettings().then((response) => response.json());
+  assert.equal(unchangedAiSettings.mode, "development", "rejected Production change must leave persisted mode unchanged");
+  assert.equal((await fetch(`${baseUrl}/api/tts/status`).then((response) => response.json())).requestsUsed, ttsStatus.requestsUsed, "AI settings do not consume TTS quota");
+  assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "development" }) })).status, 200, "Development choice persists through backend settings");
+  const settingsDb = new DatabaseSync(path.join(dataPath, "ai-facts-studio.sqlite"));
+  assert.equal((settingsDb.prepare("SELECT mode FROM ai_generation_settings WHERE id = 1").get() as { mode: string }).mode, "development", "mode preference is stored in SQLite");
+  settingsDb.close();
 
   const research = await fetch(`${baseUrl}/api/sample`).then((response) => response.json());
   const silentProject = await fetch(`${baseUrl}/api/projects`, {
@@ -159,7 +176,7 @@ try {
   await readFile(jobAudioPath); // content-addressed audio remains a shared immutable cache
   assert.equal((await fetch(`${baseUrl}/api/status`).then((response) => response.json())).jobsUsed, 3, "deleting a project must not reset rolling job quota");
   projectId = undefined;
-  console.log(`PASS: production UI/API, import/idempotency, research-review invalidation, upload/cleanup, shared audio, quota persistence, id-ID voice fallback. Gemini configured=${ttsStatus.configured}.`);
+  console.log(`PASS: production UI/API, import/idempotency, AI mode validation/persistence + TTS quota isolation, research-review invalidation, upload/cleanup, shared audio, quota persistence. Gemini configured=${ttsStatus.configured}.`);
 } finally {
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" }).catch(() => {});
   if (jobAudioPath) await rm(jobAudioPath, { force: true });

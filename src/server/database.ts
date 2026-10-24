@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { parseResearchPackage } from "../domain/research";
+import { aiGenerationSchema } from "./ai-generation/provider";
 
 export const dataDir = path.resolve(process.env.DATA_DIR ?? "data");
 mkdirSync(dataDir, { recursive: true });
@@ -86,6 +87,7 @@ db.exec(`
 `);
 
 db.exec("INSERT OR IGNORE INTO video_job_requests (id, created_at) SELECT id, created_at FROM jobs");
+db.exec(aiGenerationSchema);
 
 const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
 if (!jobColumns.some((column) => column.name === "renderer_version")) db.exec("ALTER TABLE jobs ADD COLUMN renderer_version INTEGER NOT NULL DEFAULT 1");

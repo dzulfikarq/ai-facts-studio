@@ -17,7 +17,7 @@ const port = address.port;
 await new Promise<void>((resolve, reject) => portProbe.close((error) => error ? reject(error) : resolve()));
 
 const baseUrl = `http://127.0.0.1:${port}`;
-const serverEnv = { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "1", DAILY_JOB_LIMIT: "1", GEMINI_TTS_DAILY_REQUEST_LIMIT: "20", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: path.join(tempDir, "data") };
+const serverEnv = { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "1", GEMINI_API_KEY: "settings-test-key", GEMINI_TEXT_MODEL: "gemini-3.5-flash-lite", GEMINI_TEXT_FREE_TIER_ONLY: "true", AI_GENERATION_DAILY_REQUEST_LIMIT: "20", DAILY_JOB_LIMIT: "1", GEMINI_TTS_DAILY_REQUEST_LIMIT: "20", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: path.join(tempDir, "data") };
 function spawnServer() {
   const child = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], { cwd: process.cwd(), env: serverEnv, stdio: "pipe" });
   child.stdout.pipe(process.stdout);
@@ -143,10 +143,23 @@ try {
   audioPaths.add(path.resolve("public", freshPreview.preview.audioUrl.slice(1)));
   assert.equal(freshPreview.project.audio.file, uploaded.audio.file, "fresh preview never replaces old upload before approval");
 
+  const pendingBeforeModeChange = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  const ttsRequestsBeforeModeChange = await fetch(`${baseUrl}/api/tts/status`).then((response) => response.json()).then((status) => status.requestsUsed);
+  const productionModeResponse = await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "production" }) });
+  const productionMode = await productionModeResponse.json();
+  assert.equal(productionModeResponse.status, 200, productionMode.error);
+  assert.equal(productionMode.mode, "production");
+
   await restartServer();
+  const restoredAiSettings = await fetch(`${baseUrl}/api/settings/ai-generation`).then((response) => response.json());
+  assert.equal(restoredAiSettings.mode, "production", "AI mode persists across API restart independently of NODE_ENV");
   const restoredPending = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
   assert.equal(restoredPending.pendingTts.cacheKey, freshPreview.preview.cacheKey, "pending preview survives API restart");
   assert.equal(restoredPending.audio.file, uploaded.audio.file, "restart preserves selected audio until approval");
+  assert.deepEqual(restoredPending.researchPackage, pendingBeforeModeChange.researchPackage, "mode change must not edit project research");
+  assert.deepEqual(restoredPending.pendingTts, pendingBeforeModeChange.pendingTts, "mode change must preserve pending audio approval");
+  assert.equal((await fetch(`${baseUrl}/api/tts/status`).then((response) => response.json())).requestsUsed, ttsRequestsBeforeModeChange, "mode change does not consume TTS quota");
+  assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "development" }) })).status, 200, "mode can be switched back without altering pending preview");
   await readFile(projectUploadPath);
 
   const approvedResponse = await fetch(`${baseUrl}/api/projects/${projectId}/tts/approve`, { method: "POST" });
@@ -216,7 +229,14 @@ try {
   renderPath = path.resolve("renders", generatedJob.job.id);
   const output = path.resolve(renderPath, "attempt-1.mp4");
   assert.equal(snapshot.research.scenes[0].narrationText, changedStory.scenes[0].narrationText, "render uses immutable pre-edit narration snapshot");
-  console.log(`PASS: mock Test Voice/cache + upload preservation + settings/edit/restart approval + immutable snapshot → ${completed.manifest.audioValidation} AAC (${completed.manifest.audioMeanVolumeDb} dB mean, ${completed.manifest.durationSec.toFixed(2)}s). Mock is tone, not speech.`);
+  const renderedProjectBeforeModeChange = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "production" }) })).status, 200, "configured Production can be selected after render");
+  const renderedProjectAfterModeChange = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  assert.equal(renderedProjectAfterModeChange.audio.sha256, renderedProjectBeforeModeChange.audio.sha256, "mode change preserves approved audio");
+  assert.equal(renderedProjectAfterModeChange.latestJob.id, renderedProjectBeforeModeChange.latestJob.id, "mode change preserves render job");
+  assert.equal(renderedProjectAfterModeChange.latestJob.state, "rendered", "mode change preserves completed render");
+  await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "development" }) });
+  console.log(`PASS: AI mode persistence/isolation + mock Test Voice/cache + upload preservation + settings/edit/restart approval + immutable snapshot → ${completed.manifest.audioValidation} AAC (${completed.manifest.audioMeanVolumeDb} dB mean, ${completed.manifest.durationSec.toFixed(2)}s). Mock is tone, not speech.`);
 } finally {
   await stopServer(server);
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "DELETE" }).catch(() => {});

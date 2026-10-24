@@ -15,6 +15,7 @@ import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import { dataDir, db, jobForClient, projectFromRow, type JobRow, type StoredAudio, type StoredProject } from "./database";
+import { getAiGenerationSettings, isLoopbackAddress, writeAiGenerationMode } from "./ai-generation/provider";
 import { createSpeechProvider, SpeechProviderError, ttsCacheKey, type SpeechAudio, type SpeechVoice, type SpeechVoiceCatalog } from "./tts/provider";
 
 const execFileAsync = promisify(execFile);
@@ -221,6 +222,30 @@ app.get("/api/status", async (_request, response) => {
     .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
   const allowance = canStartNewJob(recent.map((row) => row.created_at), Date.now(), dailyLimit);
   response.json({ ffmpegAvailable, githubWorkflowAvailable: existsSync(path.resolve(root, ".github/workflows/render-video.yml")), dailyLimit, jobsUsed: recent.length, nextAllowedAt: allowance.nextAllowedAt });
+});
+
+const aiGenerationModeSchema = z.object({ mode: z.enum(["development", "production"]) }).strict();
+const localSettingsOnly = (request: express.Request, response: express.Response) => {
+  if (isLoopbackAddress(request.socket.remoteAddress)) return true;
+  apiError(response, 403, "AI Generation Settings hanya bisa dibaca dan diubah dari perangkat lokal.", { code: "local-only" });
+  return false;
+};
+
+app.get("/api/settings/ai-generation", (request, response) => {
+  if (!localSettingsOnly(request, response)) return;
+  response.json(getAiGenerationSettings(db));
+});
+
+app.put("/api/settings/ai-generation", (request, response) => {
+  if (!localSettingsOnly(request, response)) return;
+  const parsed = aiGenerationModeSchema.safeParse(request.body);
+  if (!parsed.success) return apiError(response, 400, "AI Generation Mode harus Development atau Production.", { code: "invalid-ai-generation-mode", issues: parsed.error.issues });
+  const settings = getAiGenerationSettings(db);
+  if (parsed.data.mode === "production" && !settings.providers.production.configured) {
+    return apiError(response, 409, settings.providers.production.disabledReason ?? "Production belum dikonfigurasi.", { code: "ai-generation-unconfigured" });
+  }
+  writeAiGenerationMode(db, parsed.data.mode);
+  response.json(getAiGenerationSettings(db));
 });
 
 app.get("/api/tts/status", (_request, response) => {

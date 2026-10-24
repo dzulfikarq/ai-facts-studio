@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
@@ -13,6 +14,8 @@ import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
 import { visualCompositionFrame } from "../src/video/visual-primitives";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, type WorkflowSignals } from "../src/client/workflow";
+import { aiGenerationSchema, DEFAULT_TEXT_MODEL, FREE_TIER_TEXT_MODELS, getAiGenerationSettings, getProductionProviderStatus, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "../src/server/ai-generation/provider";
+import { AiGenerationRequestError, reserveAiGenerationRequest } from "../src/server/ai-generation/quota";
 
 const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin"];
 const parsedSamples = [];
@@ -71,6 +74,42 @@ const previewFingerprint = previewReviewFingerprint(mountain, reviewAudio, 2);
 assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, { ...reviewAudio, sha256: "different-audio-sha" }, 2), "audio changes must invalidate preview review");
 assert.notEqual(previewFingerprint, previewReviewFingerprint({ ...mountain, title: `${mountain.title}!` }, reviewAudio, 2), "research changes must invalidate preview review");
 assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, reviewAudio, 3), "renderer changes must invalidate preview review");
+
+const aiDb = new DatabaseSync(":memory:");
+aiDb.exec(aiGenerationSchema);
+assert.equal(readAiGenerationMode(aiDb), "development", "AI mode defaults to Development, independent of NODE_ENV");
+const priorNodeEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = "production";
+assert.equal(readAiGenerationMode(aiDb), "development", "deployment mode must not select AI Generation mode");
+if (priorNodeEnv === undefined) delete process.env.NODE_ENV;
+else process.env.NODE_ENV = priorNodeEnv;
+const aiNow = Date.parse("2026-10-24T12:00:00.000Z");
+const aiEnv = { GEMINI_API_KEY: "test-server-key", GEMINI_TEXT_MODEL: "gemini-3.5-flash-lite", GEMINI_TEXT_FREE_TIER_ONLY: "true", AI_GENERATION_DAILY_REQUEST_LIMIT: "2" };
+assert.equal(DEFAULT_TEXT_MODEL, "gemini-3.5-flash-lite");
+assert.deepEqual(FREE_TIER_TEXT_MODELS, ["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+assert.ok(!(FREE_TIER_TEXT_MODELS as readonly string[]).includes("gemini-3.8-flash-lite"), "invalid Gemini model is excluded from text allowlist");
+const productionStatus = getProductionProviderStatus(aiEnv, 0);
+assert.equal(productionStatus.configured, true);
+assert.equal(productionStatus.model, "gemini-3.5-flash-lite");
+assert.equal(getProductionProviderStatus({ ...aiEnv, GEMINI_TEXT_MODEL: "" }).model, DEFAULT_TEXT_MODEL, "default text model follows official allowlist");
+assert.ok(!JSON.stringify(productionStatus).includes("test-server-key"), "provider status must never return API key");
+assert.equal(getProductionProviderStatus({ ...aiEnv, GEMINI_TEXT_FREE_TIER_ONLY: "false" }).configured, false, "text Free Tier guard fails closed");
+assert.equal(getProductionProviderStatus({ ...aiEnv, GEMINI_TEXT_MODEL: "gemini-3.8-flash-lite" }).configured, false, "invalid Gemini 3.8 Flash-Lite text ID must fail closed");
+assert.equal(getProductionProviderStatus({ ...aiEnv, GEMINI_TEXT_MODEL: DEFAULT_TTS_MODEL }).configured, false, "TTS model cannot be reused as text model");
+assert.throws(() => reserveAiGenerationRequest(aiDb, "production", { ...productionStatus, model: DEFAULT_TTS_MODEL }, "research", aiNow), (error) => error instanceof AiGenerationRequestError && error.httpStatus === 503, "request gate rejects unallowlisted/paid model even if caller supplies configured status");
+const firstAiRequest = reserveAiGenerationRequest(aiDb, "production", productionStatus, "research", aiNow);
+reserveAiGenerationRequest(aiDb, "production", productionStatus, "storyboard", aiNow + 1);
+assert.throws(() => reserveAiGenerationRequest(aiDb, "production", productionStatus, "visual-director", aiNow + 2), (error) => error instanceof AiGenerationRequestError && error.httpStatus === 429);
+assert.throws(() => reserveAiGenerationRequest(aiDb, "development", productionStatus, "research", aiNow + 3), (error) => error instanceof AiGenerationRequestError && error.code === "manual-mode");
+writeAiGenerationMode(aiDb, "production", new Date(aiNow).toISOString());
+assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).mode, "production", "mode preference persists independently in settings table");
+assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).providers.production.requestsUsed, 2);
+assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).generationAvailable, false, "configuration foundation does not expose a generator prematurely");
+assert.ok(firstAiRequest.id);
+assert.equal(isLoopbackAddress("127.0.0.1"), true);
+assert.equal(isLoopbackAddress("::ffff:127.0.0.1"), true);
+assert.equal(isLoopbackAddress("203.0.113.8"), false, "settings writes are limited to loopback clients");
+aiDb.close();
 
 const overlap = structuredClone(mountain);
 overlap.scenes[1]!.startSec = overlap.scenes[0]!.endSec - 0.5;
@@ -204,4 +243,4 @@ try { await unavailableGemini.synthesize({ text: "test", locale: "id-ID", voiceI
 catch (error) { unavailableCode = (error as { code?: string }).code ?? ""; }
 assert.equal(unavailableCode, "model-unavailable", "unavailable model stops without paid fallback");
 
-console.log(`PASS: ${samples.length} packages; migration/schema/audio, workflow gates and review invalidation, renderer/cue determinism, Gemini Free Tier guard, cache, timing, rolling limit.`);
+console.log(`PASS: ${samples.length} packages; migration/schema/audio, AI mode/provider/quota, workflow gates/review invalidation, renderer/cue determinism, Gemini TTS guard/cache, timing, rolling limits.`);

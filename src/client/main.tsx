@@ -53,12 +53,26 @@ type Project = {
 };
 
 type Status = { ffmpegAvailable: boolean; githubWorkflowAvailable: boolean; dailyLimit: number; jobsUsed: number; nextAllowedAt: string | null };
+type AiGenerationMode = "development" | "production";
+type AiGenerationSettings = {
+  mode: AiGenerationMode;
+  providers: {
+    development: { id: "manual-prompt"; displayName: string; configured: true };
+    production: { id: "gemini-developer-api"; displayName: string; model: string | null; allowedModels: string[]; configured: boolean; disabledReason: string | null; freeTierOnly: boolean; dailyLimit: number; requestsUsed: number; requestsRemaining: number };
+  };
+  generationAvailable: false;
+};
 type TtsVoice = { id: string; name: string; locale: string; localeName: string; gender: string; description?: string; wordsPerMinute: number; availability: "api" | "fallback" };
 type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; dailyLimit?: number; requestsUsed?: number; requestsRemaining?: number; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
 type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null };
 type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "danger" };
 type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void };
+
+const developmentAiPrompt = `Bantu susun Research Package AI Facts Studio v1.1 untuk topik: [TULIS TOPIK].
+Gunakan sumber yang diberikan dan tandai klaim yang belum terverifikasi; jangan membuat URL, kutipan, atau fakta palsu.
+Saya akan menyertakan schema docs/RESEARCH_PACKAGE_SCHEMA.md dan sample JSON di percakapan. Jika belum diberikan, minta saya menempelkannya sebelum menyusun output.
+Kembalikan hanya satu JSON valid sesuai schema yang disertakan. Sertakan references, scenes, narrationText, captionSegments, visualComposition, dan motionPlan yang valid. Jangan sertakan Markdown atau komentar.`;
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -87,13 +101,16 @@ function friendlyError(error: unknown) {
 }
 
 function App() {
-  const [view, setView] = useState<"dashboard" | "create" | "workspace">("dashboard");
+  const [view, setView] = useState<"dashboard" | "create" | "workspace" | "settings">("dashboard");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [research, setResearch] = useState<ResearchPackage | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [jsonDraft, setJsonDraft] = useState("");
   const [status, setStatus] = useState<Status | null>(null);
+  const [aiGenerationSettings, setAiGenerationSettings] = useState<AiGenerationSettings | null>(null);
+  const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
+  const [aiSettingsError, setAiSettingsError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(true);
@@ -142,6 +159,12 @@ function App() {
     setStatus(serverStatus);
   }
 
+  async function refreshAiGenerationSettings() {
+    const settings = await api<AiGenerationSettings>("/api/settings/ai-generation");
+    setAiGenerationSettings(settings);
+    return settings;
+  }
+
   function askConfirmation(options: ConfirmationOptions) {
     return new Promise<boolean>((resolve) => {
       confirmationRef.current?.resolve(false);
@@ -158,7 +181,10 @@ function App() {
     pending?.resolve(confirmed);
   }
 
-  useEffect(() => { void refresh().catch((error) => setMessage(friendlyError(error))); }, []);
+  useEffect(() => {
+    void refresh().catch((error) => setMessage(friendlyError(error)));
+    void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
+  }, []);
 
   useEffect(() => {
     if (!project?.id) return;
@@ -253,6 +279,37 @@ function App() {
         setJsonDraft(JSON.stringify(sample, null, 2));
       } catch (error) { setMessage(friendlyError(error)); }
     }
+  }
+
+  async function openSettings() {
+    if (busy || ttsBusy || ttsLoading || aiSettingsBusy) return;
+    if (!await saveBeforeLeavingWorkspace()) return;
+    setView("settings");
+    setMessage("");
+    setAiSettingsError("");
+    try { await refreshAiGenerationSettings(); }
+    catch (error) { setAiSettingsError(friendlyError(error)); }
+  }
+
+  function openManualJsonImport() {
+    setMessage("Impor Research Package hasil prompt manual di halaman ini.");
+    setView("create");
+  }
+
+  async function setAiGenerationMode(mode: AiGenerationMode) {
+    if (aiSettingsBusy || !aiGenerationSettings || mode === aiGenerationSettings.mode) return;
+    setAiSettingsBusy(true);
+    setAiSettingsError("");
+    try {
+      const updated = await api<AiGenerationSettings>("/api/settings/ai-generation", jsonRequest("PUT", { mode }));
+      setAiGenerationSettings(updated);
+    } catch (error) { setAiSettingsError(friendlyError(error)); }
+    finally { setAiSettingsBusy(false); }
+  }
+
+  async function copyDevelopmentPrompt() {
+    try { await navigator.clipboard.writeText(developmentAiPrompt); setMessage("Prompt Development disalin. Tempel di ChatGPT/OpenCode, lalu impor Research Package JSON."); }
+    catch { setAiSettingsError("Clipboard tidak tersedia. Pilih dan salin prompt secara manual."); }
   }
 
   async function loadSample() {
@@ -577,6 +634,7 @@ function App() {
       <div className="side-label">WORKSPACE</div>
       <button className={`nav-item ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading}><span className="nav-glyph">⌂</span> Dashboard</button>
       <button className={`nav-item ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading}><span className="nav-glyph">＋</span> Create video</button>
+      <button className={`nav-item ${view === "settings" ? "active" : ""}`} onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Settings AI Generation"><span className="nav-glyph">⚙</span> Settings</button>
       <div className="side-label library-label">VIDEO LIBRARY <span>{projects.length}</span></div>
       <div className="project-nav">
         {projects.map((item) => <div className="project-nav-row" key={item.id}>
@@ -595,8 +653,8 @@ function App() {
 
     <main className="main-area">
       <header className="topbar">
-        <div className="breadcrumb"><span>AI Facts Studio</span><b>/</b><strong>{view === "workspace" ? currentWorkspaceStep.title : view === "create" ? "Create video" : "Dashboard"}</strong></div>
-        <div className="topbar-right"><span className="local-indicator"><i /> LOCAL MODE</span><button className="avatar" aria-label="Pengguna lokal">AF</button></div>
+        <div className="breadcrumb"><span>AI Facts Studio</span><b>/</b><strong>{view === "workspace" ? currentWorkspaceStep.title : view === "create" ? "Create video" : view === "settings" ? "Settings" : "Dashboard"}</strong></div>
+        <div className="topbar-right"><span className={`local-indicator ${aiGenerationSettings?.mode ?? ""}`}><i /> AI GEN · {aiGenerationSettings?.mode === "production" ? "PRODUCTION" : aiGenerationSettings?.mode === "development" ? "DEVELOPMENT" : "LOADING"}</span><button className="avatar" aria-label="Pengguna lokal">AF</button></div>
       </header>
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
@@ -615,6 +673,15 @@ function App() {
         </div>
         <div className="notice-line"><span className="notice-icon">ⓘ</span><span>Import bukan verifikasi fakta. Tinjau klaim, URL, dan timing sebelum render atau publikasi.</span></div>
       </section>}
+
+      {view === "settings" && <AiGenerationSettingsPage
+        settings={aiGenerationSettings}
+        busy={aiSettingsBusy}
+        error={aiSettingsError}
+        onMode={(mode) => void setAiGenerationMode(mode)}
+        onCopyPrompt={() => void copyDevelopmentPrompt()}
+        onImport={openManualJsonImport}
+      />}
 
       {view === "workspace" && project && research && <section className="page workspace-page">
         <div className="workspace-heading">
@@ -766,6 +833,62 @@ function App() {
     </main>
     {confirmation && <ConfirmationDialog key="confirmation" options={confirmation} onResolve={resolveConfirmation} />}
   </div>;
+}
+
+function AiGenerationSettingsPage({ settings, busy, error, onMode, onCopyPrompt, onImport }: {
+  settings: AiGenerationSettings | null;
+  busy: boolean;
+  error: string;
+  onMode: (mode: AiGenerationMode) => void;
+  onCopyPrompt: () => void;
+  onImport: () => void;
+}) {
+  const production = settings?.providers.production;
+  return <section className="page ai-generation-settings">
+    <div className="page-heading"><div><div className="eyebrow">KONFIGURASI PROVIDER</div><h1>Settings</h1><p>AI Generation Mode terpisah dari AI Voice, NODE_ENV, dan mode deployment.</p></div></div>
+    {error && <div className="workflow-alert danger" role="alert">{error}</div>}
+    {!settings ? <div className="workflow-empty" role={error ? undefined : "status"}>{error ? "Pengaturan gagal dimuat." : "Memuat pengaturan AI…"}</div> : <>
+      <section className="ai-settings-panel">
+        <div className="settings-panel-heading"><div><h2>AI Generation Mode</h2><p>Pilihan disimpan lokal di SQLite. Membuka halaman ini tidak menghubungi provider.</p></div><span className={`settings-mode-badge ${settings.mode}`}>{settings.mode === "development" ? "DEVELOPMENT" : "PRODUCTION"}</span></div>
+        <div className="ai-mode-switch" role="radiogroup" aria-label="AI Generation Mode">
+          <button type="button" role="radio" aria-checked={settings.mode === "development"} className={settings.mode === "development" ? "selected" : ""} onClick={() => onMode("development")} disabled={busy}>
+            <strong>Development</strong><span>Manual prompt · ChatGPT / OpenCode</span>
+          </button>
+          <button type="button" role="radio" aria-checked={settings.mode === "production"} className={settings.mode === "production" ? "selected" : ""} onClick={() => onMode("production")} disabled={busy || !production?.configured}>
+            <strong>Production</strong><span>Gemini Developer API · backend only</span>
+          </button>
+        </div>
+        <p className="settings-persistence-note">Mengubah mode tidak mengubah project, storyboard, approval audio, snapshot, atau render.</p>
+      </section>
+
+      <div className="ai-provider-grid">
+        <section className={`ai-provider-card ${settings.mode === "development" ? "active" : ""}`}>
+          <div className="ai-provider-card-head"><div><span className="eyebrow">DEVELOPMENT</span><h2>Manual prompt + JSON import</h2></div><span className="settings-status-pill configured">Siap · tanpa API</span></div>
+          <p>Salin prompt ke ChatGPT atau OpenCode di luar aplikasi. Tinjau hasilnya, lalu impor Research Package JSON melalui Create video.</p>
+          <label className="manual-prompt-label" htmlFor="development-prompt">Prompt template</label>
+          <textarea id="development-prompt" className="manual-prompt" readOnly value={developmentAiPrompt} />
+          <div className="settings-card-actions"><button type="button" className="button button-light" onClick={onCopyPrompt}>Salin prompt</button><button type="button" className="button button-primary" onClick={onImport}>Buka impor JSON <b>→</b></button></div>
+          <small>Development tidak mengirim prompt atau data ke Gemini secara otomatis.</small>
+        </section>
+
+        <section className={`ai-provider-card ${settings.mode === "production" ? "active" : ""}`}>
+          <div className="ai-provider-card-head"><div><span className="eyebrow">PRODUCTION</span><h2>Gemini Text API</h2></div><span className={`settings-status-pill ${production?.configured ? "configured" : "unconfigured"}`}>{production?.configured ? "Configured" : "Unconfigured"}</span></div>
+          <p>Konfigurasi divalidasi server-side. Generator Research, Storyboard, dan Visual Director belum diaktifkan pada fase ini.</p>
+          <dl className="ai-config-details">
+            <div><dt>Text model</dt><dd>{production?.model ?? "Belum dikonfigurasi"}</dd></div>
+            <div><dt>Free Tier guard</dt><dd>{production?.freeTierOnly ? "Aktif" : "Tidak aktif"}</dd></div>
+            <div><dt>Model allowlist</dt><dd>{production?.allowedModels.join(" · ")}</dd></div>
+            <div><dt>Request quota</dt><dd>{production ? `${production.requestsUsed}/${production.dailyLimit} per 24 jam · ${production.requestsRemaining} tersisa` : "—"}</dd></div>
+          </dl>
+          {!production?.configured && <div className="workflow-alert attention" role="status">{production?.disabledReason ?? "Gemini Text belum dikonfigurasi."}</div>}
+          {production?.configured && <div className="settings-provider-note">Konfigurasi lokal lengkap; koneksi/model belum diuji. Tidak ada paid-model fallback.</div>}
+          <small>API key hanya dibaca backend dari <code>GEMINI_API_KEY</code>; tidak ditampilkan atau disimpan di browser/SQLite. Text model dan quota terpisah dari TTS.</small>
+        </section>
+      </div>
+
+      <div className="ai-settings-footnote"><strong>Belum ada generator otomatis.</strong><span>Settings hanya memilih mode dan memvalidasi konfigurasi. Production request berikutnya wajib memakai provider contract, Free Tier allowlist, dan rolling quota backend.</span></div>
+    </>}
+  </section>;
 }
 
 function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmation; onResolve: (confirmed: boolean) => void }) {

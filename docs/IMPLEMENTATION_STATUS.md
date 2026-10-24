@@ -12,16 +12,18 @@ Baseline HEAD `ddd92c5`; V1.0.4 changes are uncommitted. Verified 24 Oct 2026 on
 - Workspace now follows five gated steps: Materi & Storyboard, Narasi, Review & Subtitle, Preview Video, and Render & Download. Progress resumes per project but cannot skip incomplete review gates.
 - Interactive Player uses current draft and approved audio without creating snapshot/job or consuming video quota. Explicit final render is only snapshot/job entry point. Preview review is tied to storyboard/audio fingerprint; edits invalidate it.
 - Research edits invalidate author verification. Gemini voice catalog loads only after explicit user action; TTS is not triggered by navigation.
+- AI Generation Settings persists Development/Production separately from `NODE_ENV`, deployment, and TTS. Production uses its own Gemini Text model allowlist, Free Tier guard, and rolling request quota; backend status never exposes the shared API key. Development remains manual prompt + JSON import. Provider task contract is defined; generator execution remains unavailable.
+- Gemini Text allowlist rechecked against Google's official catalog/pricing: `gemini-3.8-flash` retained, `gemini-3.5-flash-lite` default; invalid `gemini-3.8-flash-lite` removed. Gemini TTS model/allowlist unchanged.
 - Live full-narration command is opt-in and staged: one preview request → user listen/approval → snapshot/Player review → explicit render confirmation. Standard tests do not invoke it.
 
 ## Automated validation
 
 | Check | Result |
 |---|---|
-| `npm test` | PASS — 5 packages, Research Package migration/safety, caption/audio-quality validation, motion, TTS guards, cache/quota, workflow gates and preview-review invalidation. |
+| `npm test` | PASS — 5 packages, Research Package migration/safety, caption/audio-quality validation, motion, TTS guards/cache/quota, workflow gates, AI mode/provider/quota contract and model allowlist, and preview-review invalidation. |
 | `npm run typecheck` | PASS. |
-| `npm run smoke:api` | PASS — V1 migration, upload/delete, research edit invalidates author review, TTS quota status, snapshot audio SHA, explicit silent-render gate, rolling quota persistence. Gemini disabled in isolated DB. |
-| `npm run smoke:tts` | PASS — mock integration covers active-upload preservation, voice/locale/style/pace changes, stale script rejection, pending/approved restart persistence, immutable snapshot, AAC level/duration/peak. Mock is sine tone, not speech. |
+| `npm run smoke:api` | PASS — V1 migration, upload/delete, research-review invalidation, AI mode validation/default/persistence, local-only settings API, TTS quota isolation, snapshot audio SHA, silent-render gate, rolling quota. Gemini disabled in isolated DB. |
+| `npm run smoke:tts` | PASS — Development/Production preference persists across restart without changing pending audio, approval, or rendered job; mock TTS covers active-upload preservation, settings/script edits, immutable snapshot, AAC validation. Mock is sine tone, not speech. |
 | `npm run smoke:render` | PASS — V1/V2 H.264/AAC and snapshot audio integrity. |
 | `npm run smoke:samples` | PASS — Mountain, Lightning, Sea Salt silent MP4s, H.264 1080×1920, 56.04/24.04/32.04 sec. Reports tag `silent-expected`. |
 | `npm run smoke:samples-audio` | PASS — all 3 samples render with FFmpeg sine fixture marked `mock-fixture` (not speech), AAC mean −24.1 dB, clipping/duration validated. |

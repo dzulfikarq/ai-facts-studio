@@ -12,6 +12,10 @@
 
 UI typography uses Plus Jakarta Sans consistently, including technical editors; Segoe UI/Arial act as fallbacks when Google Fonts is unavailable.
 
+## AI Generation settings
+
+Open **Settings → AI Generation**. **Development** is default: copy manual prompt to ChatGPT/OpenCode, review result, then import JSON in **Create video**. The app makes no Gemini text calls in this mode. **Production** can be selected only when backend key, separate Gemini Text model, Free Tier guard, and quota are configured. Model/key configuration lives in server `.env`; UI never accepts or returns API keys. AI Generation mode is stored separately from deployment mode and TTS. This phase configures provider access only; automatic research/storyboard/visual generation is not available. Details: [`AI_GENERATION_SETUP.md`](AI_GENERATION_SETUP.md).
+
 Renderer consumes supplied scenes and compositions. It does not generate a researched storyboard or topic-specific art from a free-form title.
 
 ## Render/download

@@ -4,6 +4,8 @@
 
 AI Voice uses Google's official [`@google/genai`](https://github.com/googleapis/js-genai) SDK and Gemini Developer API `interactions.create`; no Azure, Vertex AI, Edge TTS, unofficial endpoints, paid-model fallback, or billing API. Default `GEMINI_TTS_MODEL=gemini-3.8-flash-lite-tts`. Google's [current model catalog](https://ai.google.dev/gemini-api/docs/models#audio_models) lists Gemini 3.8 Flash-Lite TTS as a stable TTS model. Current [pricing](https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash-lite-tts) lists Free Tier input/output as **Free of charge**. `gemini-3.8-flash-tts` is the second model in this app's Free-Tier allowlist. If configured model is unavailable to the API key/project, generation stops; app never changes model automatically.
 
+AI Generation Text has separate `GEMINI_TEXT_MODEL`, `GEMINI_TEXT_FREE_TIER_ONLY`, model allowlist, and request quota. It may share server-side `GEMINI_API_KEY`; it never reuses the TTS model or TTS quota. Setup: [`AI_GENERATION_SETUP.md`](AI_GENERATION_SETUP.md).
+
 ## Free Tier-only safeguard
 
 1. Create/select a **Google AI Studio Free Tier project with no billing account linked**. Create an API key restricted to Gemini API. Google upgrades Free usage tier when billing is linked; app never calls billing/setup APIs.

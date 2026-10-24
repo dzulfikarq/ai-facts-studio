@@ -1,27 +1,26 @@
 # Testing and limitations — V1.0.3
 
-Verified 24 Oct 2026 on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`. Baseline HEAD `b622550`; V1.0.3 edits are uncommitted worktree changes.
+Verified 24 Oct 2026 on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`. Baseline HEAD `6e608d8`; visual-quality changes are worktree edits.
 
 ## Results
 
 | Command | Result |
 |---|---|
-| `npm test` | PASS — migration, validation, caption schema/generation edge cases, registry, cues, Gemini guard, quota. |
+| `npm test` | PASS — 5 packages, caption/composition bounds, salt topic acceptance, motion, TTS guards, quota. |
 | `npm run typecheck` | PASS. |
-| `npm run smoke:api` | PASS — import, upload/delete, cleanup, shared cache, quota persistence. Gemini configured=false. |
-| `npm run smoke:tts` | PASS — mocked Test Voice/full narration preview/approval; 3.05 sec H.264 + audible AAC. Mock audio is tone, not speech. |
-| `npm run smoke:render` | PASS — V2 and legacy V1, H.264 + AAC at 360×640. |
-| `npm run test:visual` | PASS — 35 golden frames at 270×480; templates, presets, cues, captions, lightning, transitions. Reviewed PNGs in ignored `renders/visual-regression/v1.0.3/`. |
-| `npm run smoke:samples` | PASS — Mountain 56.04 sec / 9,140,730 bytes / SHA-256 `76c5b942135ed22d03691608371069de4827562c6226a69b67b154ebf019ae64`; Lightning 24.04 sec / 3,653,478 bytes / SHA-256 `54f2dcaabd206fcac8e4d22d06ca710dc7786176ecf11d4016036c9da4e68953`; both 1080×1920 H.264. |
-| `npm run build` | PASS; Zod annotation and 589.77 KB chunk warnings. |
+| `npm run smoke:api` | PASS — API/storage/cleanup/quota; Gemini configured=false. |
+| `npm run smoke:tts` | PASS — mocked Test Voice/full preview/approval; 3.05 sec H.264 + audible AAC. Mock is tone, not speech. |
+| `npm run smoke:render` | PASS on rerun — V2 and legacy V1, H.264 + AAC, 360×640. First run had transient Chromium target-close error. |
+| `npm run test:visual` | PASS — 39 frames at 270×480; templates, presets, cues, lightning, sea-salt, transitions. Before/after art checked in `renders/visual-regression/v1.0.3/` and `renders/visual-regression/v1.0.3-quality/`. |
+| `npm run smoke:samples` | PASS — Mountain 56.04 sec / 10,501,425 bytes / SHA-256 `6401934e7be69f5bb9970607ebd0a11454ecc4f00a0dc4b2197d41b7ee4815f2`; Lightning 24.04 sec / 4,666,109 bytes / SHA-256 `e6cc318188960eb1d5aaab230b723d91eed4928ddfc1e7ec5bf4a2384c77adee`; Sea Salt 32.04 sec / 10,084,209 bytes / SHA-256 `d488d8896df4a736173db8af298a62a97583dcf6de152266e5936eb6a4f0adf3`. All 1080×1920 H.264. |
+| `npm run build` | PASS; Zod annotation + 594.52 KB chunk warnings. |
 | `npm audit` | PASS — 0 vulnerabilities. |
 
-Sample MP4s/manifests and 10 extracted PNGs saved at `renders/v1.0.3-review/`; frames cover every Mountain/Lightning scene. Both MP4s contain silent AAC (`-91.0 dB` mean/max), no narration. Compared with V1.0.2, duration/resolution stayed fixed while captions changed from a static scene block to larger phrase-by-phrase display; file sizes rose 18.1%/18.3%. `SAMPLE_RENDER_OUTPUT_DIR` lets `npm run smoke:samples` retain outputs; existing MP4/manifest paths are protected from overwrite.
+MP4s, manifests, and 14 full-resolution review frames saved under `renders/v1.0.3-final/`. MP4s contain silent AAC (`-91 dB` mean/max), no narration. Prior V1.0.3 output size → final: Mountain 9,140,730 → 10,501,425 bytes; Lightning 3,653,478 → 4,666,109 bytes. Resolution/duration unchanged.
 
-## Audio and remaining limits
+## Limits
 
-- Live Gemini was not run: local smoke reported `Gemini configured=false`. No live speech-quality or full-narration listening review.
-- Mock TTS validates approval, timing, codec, and muxing only; it does not establish speech quality or Gemini billing status.
-- Caption timing is deterministic per phrase/scene, not word-aligned. Long display text can be ellipsized.
-- `visualDescription` remains editorial; graphics are authored SVG compositions. SFX metadata has no playback/mixing/ducking.
-- Golden hashes target local Windows/Chrome/font rasterization. Cleanup failure/retry fault injection and GitHub Actions dispatch were not tested.
+- No arbitrary-title research/storyboard/illustration generation. App renders supplied scenes/compositions; Sea Salt is a manually authored acceptance package demonstrating reusable generic icons/diagrams.
+- Gemini unavailable in environment; no live speech-quality/full-narration listening test. Mock tests mux/approval only.
+- Captions are phrase/scene timing estimates, not word-aligned. SFX have no playback/mixing. Visual goldens target local Windows/Chrome/font rasterization.
+- Cleanup retry fault injection and GitHub Actions dispatch remain untested.

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Generate reusable, deterministic 2D graphics from validated Research Package data. No AI/video API call is used during preview/render. Same input, renderer version, and frame produce same scene state.
+Render reusable, deterministic 2D graphics from validated, authored Research Package compositions. No AI/video API call is used during preview/render. Same input, renderer version, and frame produce same scene state. V2 frames foreground art into illustration area while keeping low-depth backdrops and title/caption UI fixed; layered shadows and preset camera drift add depth on the 9:16 canvas.
 
 ## Renderer architecture
 
@@ -35,7 +35,7 @@ Each v1.1 scene includes `visualComposition`:
 }
 ```
 
-Supported nodes: `shape` (rect/ellipse/circle/line/polygon), SVG `path`, `text`, allowlisted `icon`, allowlisted local `image`, `diagram`, and nested `group`. Node frames include x/y/width/height/rotation/opacity/z-index; schema rejects path markup/code, arbitrary URLs, unknown assets, duplicate layers, and rotated bounds outside 1080×1920. Group children use canonical canvas coordinates scaled into group bounds; outer canvas clips. `visualDescription` remains human guidance only; it is never parsed or passed to code generation.
+Supported nodes: `shape` (rect/ellipse/circle/line/polygon), SVG `path`, `text`, allowlisted `icon` (`rock`, `river`, `crystal` among others), allowlisted local `image`, `diagram` (`water-cycle`, generic 2–4-step `process-flow`), and nested `group`. Node frames include x/y/width/height/rotation/opacity/z-index; schema rejects path markup/code, arbitrary URLs, unknown assets, duplicate layers, and rotated bounds outside 1080×1920. Group children use canonical canvas coordinates scaled into group bounds; outer canvas clips. `visualDescription` remains human guidance only; it is never parsed or passed to code generation.
 
 V1.0 packages pass strict old-schema validation, then upgrade to v1.1 in memory: template ID supplies structured defaults, motion cue strings get default plans, and original editorial text/references/timing remain intact. Existing SQLite projects normalize on read and persist v1.1 when next saved.
 
@@ -49,7 +49,7 @@ V1.0 packages pass strict old-schema validation, then upgrade to v1.1 in memory:
 
 Color tokens (`canvas`, `surface`, `primary`, `accent`, `text`, `muted`, `snow`, `danger`) resolve through selected preset; explicit `#RRGGBB` remains fixed.
 
-`motionPlan` has one entry per ordered `motionCue`: `{cue,targetLayer,delayFrames,durationFrames,easing}`. Targets are `all`, `scene`, or a layer ID. Motion uses Remotion frame, `interpolate`, and bounded `spring`; plans execute in array order, translations sum, scale factors multiply/clamp, alpha multiplies, and reveal clips its layer. `cut` is immediate and takes precedence over `dissolve`; `dissolve` cross-fades prior artwork for configured frames. Repeated compatible cues compound deterministically.
+`motionPlan` has one entry per ordered `motionCue`: `{cue,targetLayer,delayFrames,durationFrames,easing}`. Targets are `all`, `scene`, or a layer ID. Motion uses Remotion frame, `interpolate`, and bounded `spring`; plans execute in array order, translations sum, scale factors multiply/clamp, alpha multiplies, and reveal clips its layer. Pan/zoom/parallax/slide/pulse now use larger bounded trajectories; presets add camera drift and zoom. `cut` is immediate and takes precedence over `dissolve`; `dissolve` cross-fades prior artwork for configured frames. Repeated compatible cues compound deterministically.
 
 The scene editor exposes checkboxes for cue selection and JSON editors for composition/cue timing. `visualDescription` is shown separately as editorial text.
 
@@ -59,6 +59,8 @@ V2 captions show one phrase at a time, wrap to at most two lines, use preset con
 
 New V2 jobs store `rendererVersion: 2` in immutable snapshot, SQLite job row, and manifest. Old snapshots without version default to V1 and still render via the preserved legacy component. V2 preview and render share `VersionedVideo`. Audio path/hash stays immutable; daily quota policy is unchanged.
 
-Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run test:visual`. Visual test renders 35 PNG frames under ignored `renders/visual-regression/v1.0.3/` and compares hashes to `scripts/visual-goldens.json`. It includes all templates, presets, cue behavior, staggered entrance, lightning scenes, captions, and transition frames. Do not refresh goldens automatically; inspect frames first. Hash baseline is local Windows/Chrome-specific and may differ on another platform/font rasterizer.
+Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run test:visual`. Visual test renders 39 PNG frames under ignored `renders/visual-regression/v1.0.3-quality/` and compares hashes to `scripts/visual-goldens.json`. It includes all templates, presets, cue behavior, staggered entrance, lightning and sea-salt scenes, captions, and transition frames. Before/after illustration frames were inspected before golden refresh. Hash baseline is local Windows/Chrome-specific and may differ on another platform/font rasterizer.
 
 SFX remains partial: `sfxCues` is metadata only, with no local licensed library, cue timeline, mixing, ducking, or playback.
+
+Topic limit: renderer consumes supplied scenes/compositions; it does not research free-form titles, draft storyboards, or invent topic-specific art. `Kenapa Air Laut Asin?` is a manually composed acceptance package using reusable icons/diagrams.

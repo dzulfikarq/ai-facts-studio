@@ -1,0 +1,186 @@
+{
+  "schemaVersion": "1.1",
+  "id": "why-seawater-is-salty-id",
+  "title": "Kenapa Air Laut Asin?",
+  "category": "Geografi",
+  "visualPreset": "animated-infographic",
+  "language": "id-ID",
+  "targetDurationSec": 32,
+  "aspectRatio": "9:16",
+  "narration": "Pelapukan batuan melepaskan ion mineral. Sungai membawa natrium dan klorida ke laut; ventilasi hidrotermal juga menyumbang garam. Penguapan memindahkan air, bukan garam, sementara siklus air terus berjalan.",
+  "references": [
+    {
+      "id": "noaa-why-ocean-salty",
+      "title": "Why is the ocean salty?",
+      "publisher": "NOAA National Ocean Service",
+      "url": "https://oceanservice.noaa.gov/facts/whysalty.html",
+      "checkedAt": "2026-10-24"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "salt-01-weathering",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 8,
+      "narrationText": "Air hujan yang agak asam melapukkan batuan di darat. Proses itu melepaskan ion mineral ke aliran air.",
+      "onScreenText": "BATUAN MELEPAS MINERAL",
+      "templateId": "infographic",
+      "visualDescription": "Ilustrasi edukasi pelapukan batuan dan mineral yang larut; komposisi disusun manual dari primitif reusable.",
+      "motionCues": ["fadeIn", "reveal", "parallax"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "ridge", "delayFrames": 0, "durationFrames": 24, "easing": "easeOut" },
+        { "cue": "reveal", "targetLayer": "rock", "delayFrames": 0, "durationFrames": 32, "easing": "easeOut" },
+        { "cue": "parallax", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "sky", "depth": 0.05, "nodes": [
+            { "type": "icon", "icon": "sun", "x": 800, "y": 450, "width": 150, "height": 150, "color": "accent" },
+            { "type": "icon", "icon": "cloud", "x": 100, "y": 510, "width": 230, "height": 130, "color": "snow" }
+          ]},
+          { "id": "ridge", "depth": 0.18, "nodes": [
+            { "type": "shape", "shape": "polygon", "x": 0, "y": 700, "width": 1080, "height": 850, "points": [{ "x": 0, "y": 0.25 }, { "x": 0.22, "y": 0.04 }, { "x": 0.43, "y": 0.23 }, { "x": 0.7, "y": 0.08 }, { "x": 1, "y": 0.28 }, { "x": 1, "y": 1 }, { "x": 0, "y": 1 }], "fill": "surface" },
+            { "type": "icon", "icon": "mountain", "x": 70, "y": 650, "width": 510, "height": 620, "color": "primary" }
+          ]},
+          { "id": "rock", "depth": 0.55, "nodes": [
+            { "type": "icon", "icon": "rock", "x": 340, "y": 820, "width": 380, "height": 330, "color": "text" },
+            { "type": "path", "x": 325, "y": 910, "width": 390, "height": 220, "d": "M18 18 L34 40 L48 28 L63 57 M45 36 L42 62 M61 31 L78 50", "fill": "none", "stroke": "snow", "strokeWidth": 4 },
+            { "type": "icon", "icon": "water-drop", "x": 270, "y": 650, "width": 58, "height": 82, "color": "primary" },
+            { "type": "icon", "icon": "water-drop", "x": 370, "y": 610, "width": 48, "height": 68, "color": "primary" },
+            { "type": "icon", "icon": "crystal", "x": 720, "y": 1110, "width": 82, "height": 95, "color": "accent" },
+            { "type": "icon", "icon": "crystal", "x": 800, "y": 1170, "width": 54, "height": 65, "color": "danger" }
+          ]},
+          { "id": "runoff", "depth": 0.9, "nodes": [
+            { "type": "path", "x": 0, "y": 1340, "width": 1080, "height": 220, "d": "M0 38 C22 5 34 85 52 52 S78 18 100 62", "fill": "none", "stroke": "primary", "strokeWidth": 13 },
+            { "type": "text", "x": 570, "y": 1350, "width": 420, "height": 75, "text": "ION MINERAL", "color": "text", "fontSize": 34, "font": "heading", "weight": "800", "align": "middle" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-why-ocean-salty"]
+    },
+    {
+      "id": "salt-02-river-transport",
+      "order": 2,
+      "startSec": 8,
+      "endSec": 16,
+      "narrationText": "Sungai membawa ion terlarut seperti natrium dan klorida menuju laut. Ventilasi hidrotermal di dasar laut juga menambah garam.",
+      "onScreenText": "SUNGAI MENGIRIM ION KE LAUT",
+      "templateId": "infographic",
+      "visualDescription": "Aliran sungai membawa ion dari daratan ke pesisir; sumber hidrotermal ditandai sebagai kontribusi tambahan.",
+      "motionCues": ["slide", "pan", "dissolve"],
+      "motionPlan": [
+        { "cue": "slide", "targetLayer": "terrain", "delayFrames": 0, "durationFrames": 24, "easing": "easeOut" },
+        { "cue": "pan", "targetLayer": "ions", "delayFrames": 0, "durationFrames": 90, "easing": "linear" },
+        { "cue": "dissolve", "targetLayer": "scene", "delayFrames": 0, "durationFrames": 18, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "terrain", "depth": 0.16, "nodes": [
+            { "type": "shape", "shape": "rect", "x": 0, "y": 780, "width": 1080, "height": 750, "fill": "surface" },
+            { "type": "icon", "icon": "rock", "x": 90, "y": 610, "width": 260, "height": 260, "color": "primary" },
+            { "type": "icon", "icon": "wave", "x": 710, "y": 1130, "width": 330, "height": 180, "color": "surface" }
+          ]},
+          { "id": "river", "depth": 0.43, "nodes": [
+            { "type": "path", "x": 0, "y": 810, "width": 1080, "height": 670, "d": "M5 6 C42 10 20 25 57 35 S23 56 53 68 S75 85 100 92", "fill": "none", "stroke": "primary", "strokeWidth": 34 },
+            { "type": "path", "x": 0, "y": 838, "width": 1080, "height": 620, "d": "M5 6 C42 10 20 25 57 35 S23 56 53 68 S75 85 100 92", "fill": "none", "stroke": "snow", "strokeWidth": 3, "opacity": 0.6 }
+          ]},
+          { "id": "ions", "depth": 0.72, "nodes": [
+            { "type": "icon", "icon": "crystal", "x": 240, "y": 900, "width": 58, "height": 66, "color": "accent" },
+            { "type": "icon", "icon": "crystal", "x": 485, "y": 1030, "width": 52, "height": 60, "color": "danger" },
+            { "type": "icon", "icon": "crystal", "x": 690, "y": 1240, "width": 60, "height": 68, "color": "accent" },
+            { "type": "icon", "icon": "crystal", "x": 885, "y": 1360, "width": 48, "height": 56, "color": "danger" }
+          ]},
+          { "id": "labels", "depth": 0.94, "nodes": [
+            { "type": "diagram", "kind": "process-flow", "x": 600, "y": 370, "width": 420, "height": 420, "labels": ["BATUAN LAPUK", "ION LARUT", "SUNGAI → LAUT"], "color": "text", "accent": "accent" },
+            { "type": "text", "x": 145, "y": 1430, "width": 530, "height": 62, "text": "Na⁺ + Cl⁻", "color": "snow", "fontSize": 42, "font": "heading", "weight": "800", "align": "middle" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-why-ocean-salty"]
+    },
+    {
+      "id": "salt-03-evaporation",
+      "order": 3,
+      "startSec": 16,
+      "endSec": 24,
+      "narrationText": "Matahari menguapkan air, bukan garam terlarutnya. Karena air pergi tetapi ion tertinggal, penguapan menaikkan salinitas setempat.",
+      "onScreenText": "AIR MENGUAP, GARAM TERTINGGAL",
+      "templateId": "infographic",
+      "visualDescription": "Penampang laut menunjukkan uap air naik sementara ion natrium dan klorida tetap terlarut.",
+      "motionCues": ["fadeIn", "zoom", "pulse", "dissolve"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "ocean", "delayFrames": 0, "durationFrames": 24, "easing": "easeOut" },
+        { "cue": "zoom", "targetLayer": "vapor", "delayFrames": 0, "durationFrames": 120, "easing": "easeInOut" },
+        { "cue": "pulse", "targetLayer": "ions", "delayFrames": 12, "durationFrames": 48, "easing": "linear" },
+        { "cue": "dissolve", "targetLayer": "scene", "delayFrames": 0, "durationFrames": 18, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "sunlight", "depth": 0.08, "nodes": [
+            { "type": "icon", "icon": "sun", "x": 770, "y": 500, "width": 200, "height": 200, "color": "accent" }
+          ]},
+          { "id": "ocean", "depth": 0.2, "nodes": [
+            { "type": "path", "x": 0, "y": 820, "width": 1080, "height": 800, "d": "M0 18 Q14 2 28 18 T56 18 T84 18 T100 18 V100 H0Z", "fill": "surface" },
+            { "type": "shape", "shape": "rect", "x": 0, "y": 970, "width": 1080, "height": 610, "fill": "primary" },
+            { "type": "path", "x": 0, "y": 920, "width": 1080, "height": 160, "d": "M0 48 Q12 10 24 48 T48 48 T72 48 T96 48", "fill": "none", "stroke": "snow", "strokeWidth": 8, "opacity": 0.75 }
+          ]},
+          { "id": "ions", "depth": 0.56, "nodes": [
+            { "type": "icon", "icon": "crystal", "x": 170, "y": 1160, "width": 90, "height": 105, "color": "accent" },
+            { "type": "icon", "icon": "crystal", "x": 420, "y": 1300, "width": 65, "height": 76, "color": "snow" },
+            { "type": "icon", "icon": "crystal", "x": 720, "y": 1120, "width": 78, "height": 90, "color": "accent" },
+            { "type": "icon", "icon": "crystal", "x": 890, "y": 1360, "width": 58, "height": 68, "color": "snow" },
+            { "type": "text", "x": 280, "y": 1430, "width": 520, "height": 70, "text": "Na⁺        Cl⁻        Na⁺", "color": "snow", "fontSize": 34, "font": "heading", "weight": "800", "align": "middle" }
+          ]},
+          { "id": "vapor", "depth": 0.82, "nodes": [
+            { "type": "icon", "icon": "water-drop", "x": 300, "y": 770, "width": 70, "height": 100, "color": "snow" },
+            { "type": "icon", "icon": "water-drop", "x": 460, "y": 700, "width": 58, "height": 84, "color": "snow" },
+            { "type": "icon", "icon": "water-drop", "x": 610, "y": 780, "width": 50, "height": 72, "color": "snow" },
+            { "type": "icon", "icon": "arrow", "x": 330, "y": 850, "width": 105, "height": 68, "rotation": 270, "color": "accent" },
+            { "type": "icon", "icon": "arrow", "x": 505, "y": 800, "width": 105, "height": 68, "rotation": 270, "color": "accent" }
+          ]},
+          { "id": "callout", "depth": 0.95, "nodes": [
+            { "type": "text", "x": 180, "y": 570, "width": 600, "height": 75, "text": "AIR NAIK · GARAM TERTINGGAL", "color": "text", "fontSize": 34, "font": "heading", "weight": "800", "align": "middle" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-why-ocean-salty"]
+    },
+    {
+      "id": "salt-04-water-cycle",
+      "order": 4,
+      "startSec": 24,
+      "endSec": 32,
+      "narrationText": "Hujan, sungai, dan penguapan adalah bagian dari siklus air; garam tetap terlarut di laut. Rata-rata air laut mengandung sekitar 3,5 persen garam.",
+      "onScreenText": "SIKLUS AIR, GARAM DI LAUT",
+      "templateId": "infographic",
+      "visualDescription": "Siklus air menghubungkan hujan, daratan, sungai, dan laut; garam terlarut tidak ikut menguap.",
+      "motionCues": ["fadeIn", "pan", "dissolve"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "cycle", "delayFrames": 0, "durationFrames": 24, "easing": "easeOut" },
+        { "cue": "pan", "targetLayer": "cycle", "delayFrames": 0, "durationFrames": 90, "easing": "easeInOut" },
+        { "cue": "dissolve", "targetLayer": "scene", "delayFrames": 0, "durationFrames": 18, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "canvas",
+        "layers": [
+          { "id": "cycle", "depth": 0.48, "nodes": [
+            { "type": "diagram", "kind": "water-cycle", "x": 110, "y": 500, "width": 860, "height": 900, "labels": ["UAP", "HUJAN", "LAUT"], "color": "primary", "accent": "accent" }
+          ]},
+          { "id": "salinity", "depth": 0.9, "nodes": [
+            { "type": "text", "x": 140, "y": 1390, "width": 800, "height": 72, "text": "RATA-RATA SALINITAS 3,5%", "color": "text", "fontSize": 38, "font": "heading", "weight": "800", "align": "middle" },
+            { "type": "icon", "icon": "crystal", "x": 835, "y": 1470, "width": 54, "height": 62, "color": "accent" }
+          ]}
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["noaa-why-ocean-salty"]
+    }
+  ]
+}

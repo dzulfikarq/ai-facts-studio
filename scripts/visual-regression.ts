@@ -15,12 +15,16 @@ import type { VideoProps } from "../src/video/types";
 const root = process.cwd();
 const recordOnly = process.argv.includes("--record");
 const baselinePath = path.resolve(root, "scripts/visual-goldens.json");
-const outputDir = path.resolve(root, "renders/visual-regression/v1.0.3");
+const outputDir = path.resolve(root, "renders/visual-regression/v1.0.3-quality");
 const raw = JSON.parse(await readFile(path.join(root, "samples/lightning-charge.json"), "utf8")) as unknown;
 const parsed = parseResearchPackage(raw);
 assert.equal(parsed.success, true, "lightning sample must migrate/validate");
 if (!parsed.success) throw new Error("Lightning sample invalid.");
 const basePackage = parsed.data;
+const saltResult = parseResearchPackage(JSON.parse(await readFile(path.join(root, "samples/kenapa-air-laut-asin.json"), "utf8")));
+assert.equal(saltResult.success, true, "sea-salt acceptance sample must validate");
+if (!saltResult.success) throw new Error("Sea-salt sample invalid.");
+const saltPackage = saltResult.data;
 
 function packageFor(templateId: Scene["templateId"], preset: ResearchPackage["visualPreset"], cues: Scene["motionCues"], visualComposition = defaultVisualComposition(templateId)) {
   const original = basePackage.scenes[0]!;
@@ -49,6 +53,11 @@ cases.push({ key: "preset/animated-infographic/staggered-entrance", research: pa
 basePackage.scenes.forEach((scene,index)=>cases.push({
   key: `lightning/scene-${String(index+1).padStart(2,"0")}/middle`,
   research: { ...basePackage, targetDurationSec: 3, scenes: [{ ...scene, startSec: 0, endSec: 3 }] },
+  frame: 45,
+}));
+saltPackage.scenes.forEach((scene,index)=>cases.push({
+  key: `sea-salt/scene-${String(index+1).padStart(2,"0")}/middle`,
+  research: { ...saltPackage, scenes: [{ ...scene, startSec: 0, endSec: 3 }], targetDurationSec: 3 },
   frame: 45,
 }));
 cases.push({ key: "motion/none/frame-12", research: packageFor("mountain-reveal", "flat-2d-storytelling", []), frame: 12 });
@@ -110,5 +119,5 @@ if (recordOnly) {
   const baseline = JSON.parse(await readFile(baselinePath, "utf8")) as { rendererVersion: number; scale: number; frames: Record<string, string> };
   assert.equal(baseline.rendererVersion, RENDERER_VERSION);
   assert.deepEqual(hashes, baseline.frames, "golden frame changed; inspect renders/visual-regression before updating baseline");
-  console.log(`PASS: ${cases.length} golden frames; 8 templates, 3 presets, 9 cues, lightning scenes, transition start/mid/end.`);
+  console.log(`PASS: ${cases.length} golden frames; 8 templates, 3 presets, 9 cues, lightning + sea-salt scenes, transition start/mid/end.`);
 }

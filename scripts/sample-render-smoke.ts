@@ -12,7 +12,7 @@ const outputDir = process.env.SAMPLE_RENDER_OUTPUT_DIR
   ? path.resolve(process.cwd(), process.env.SAMPLE_RENDER_OUTPUT_DIR)
   : await mkdtemp(path.join(os.tmpdir(), "ai-facts-sample-renders-"));
 const cleanupOutput = !process.env.SAMPLE_RENDER_OUTPUT_DIR;
-const samples = ["mountain-formation", "lightning-charge"];
+const samples = ["mountain-formation", "lightning-charge", "kenapa-air-laut-asin"];
 
 try {
   for (const name of samples) {

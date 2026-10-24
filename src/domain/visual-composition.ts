@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 export const visualColorTokens = ["canvas", "surface", "primary", "accent", "text", "muted", "snow", "danger"] as const;
-export const visualIconIds = ["sun", "cloud", "lightning", "arrow", "mountain", "planet", "water-drop", "leaf", "bear", "wave"] as const;
+export const visualIconIds = ["sun", "cloud", "lightning", "arrow", "mountain", "planet", "water-drop", "leaf", "bear", "wave", "rock", "river", "crystal"] as const;
 export const trustedImageAssets = ["cloud", "lightning", "sun"] as const;
-export const diagramKinds = ["charge-separation", "orbit", "geological-layers", "volcano-cross-section", "water-cycle"] as const;
+export const diagramKinds = ["charge-separation", "orbit", "geological-layers", "volcano-cross-section", "water-cycle", "process-flow"] as const;
 
 const colorSchema = z.union([
   z.literal("none"),
@@ -82,7 +82,12 @@ export const diagramNodeSchema = z.object({
   labels: z.array(z.string().max(80)).max(8).default([]),
   color: colorSchema.optional(),
   accent: colorSchema.optional(),
-}).strict().superRefine(validateNodeFrame);
+}).strict().superRefine((node, ctx) => {
+  validateNodeFrame(node, ctx);
+  if (node.kind === "process-flow" && (node.labels.length < 2 || node.labels.length > 4)) {
+    ctx.addIssue({ code: "custom", message: "Process flow membutuhkan 2–4 label langkah", path: ["labels"] });
+  }
+});
 
 export const visualLeafNodeSchema = z.discriminatedUnion("type", [shapeNodeSchema, pathNodeSchema, textNodeSchema, iconNodeSchema, imageNodeSchema, diagramNodeSchema]);
 export const groupNodeSchema = z.object({

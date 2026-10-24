@@ -10,8 +10,9 @@ import { DEFAULT_TTS_MODEL, FREE_TIER_TTS_MODELS, GEMINI_TTS_LOCALES, ttsCacheKe
 import { cueProgress, layerMotion, sceneTransitionOpacity } from "../src/video/motion";
 import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
+import { visualCompositionFrame } from "../src/video/visual-primitives";
 
-const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge"];
+const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin"];
 const parsedSamples = [];
 for (const name of samples) {
   const raw = JSON.parse(await readFile(`samples/${name}.json`, "utf8")) as unknown;
@@ -25,6 +26,20 @@ for (const name of samples) {
 }
 
 const mountain = parsedSamples[0]!;
+const seaSalt = parsedSamples.at(-1)!;
+assert.equal(seaSalt.title, "Kenapa Air Laut Asin?");
+assert.equal(seaSalt.scenes.length, 4);
+const seaSaltNodes = seaSalt.scenes.flatMap((scene) => scene.visualComposition.layers.flatMap((layer) => layer.nodes));
+assert.ok(seaSaltNodes.some((node) => node.type === "icon" && node.icon === "rock"), "salt sample illustrates mineral weathering with reusable rock icon");
+assert.ok(seaSaltNodes.some((node) => node.type === "icon" && node.icon === "crystal"), "salt sample uses reusable mineral crystal icon");
+assert.ok(seaSaltNodes.some((node) => node.type === "diagram" && node.kind === "process-flow"), "salt sample uses generic process-flow diagram");
+assert.ok(seaSaltNodes.some((node) => node.type === "diagram" && node.kind === "water-cycle"), "salt sample visualizes water cycle");
+assert.ok(visualCompositionFrame(seaSalt.scenes[3]!.visualComposition).scale > 1, "small diagrams should be framed larger inside 9:16 canvas");
+const invalidFlow = structuredClone(seaSalt);
+const processFlow = invalidFlow.scenes[1]!.visualComposition.layers.flatMap((layer) => layer.nodes).find((node) => node.type === "diagram" && node.kind === "process-flow");
+assert.equal(processFlow?.type, "diagram");
+if (processFlow?.type === "diagram") processFlow.labels = ["ONE STEP"];
+assert.equal(parseResearchPackage(invalidFlow).success, false, "process-flow accepts two to four labeled steps");
 const badUrl = structuredClone(mountain);
 badUrl.references[0]!.url = "javascript:alert(1)";
 assert.equal(parseResearchPackage(badUrl).success, false, "unsafe URL must fail");
@@ -161,4 +176,4 @@ try { await unavailableGemini.synthesize({ text: "test", locale: "id-ID", voiceI
 catch (error) { unavailableCode = (error as { code?: string }).code ?? ""; }
 assert.equal(unavailableCode, "model-unavailable", "unavailable model stops without paid fallback");
 
-console.log(`PASS: ${samples.length} packages; v1.0→v1.1 migration, visual/caption schema safety, registry/cue determinism, Gemini Free Tier guard, cache, timing, and rolling limit checks.`);
+console.log(`PASS: ${samples.length} packages; v1.0→v1.1 migration, visual/caption schema safety, general-topic salt acceptance package, registry/cue determinism, Gemini Free Tier guard, cache, timing, and rolling limit checks.`);

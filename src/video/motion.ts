@@ -24,16 +24,16 @@ export function layerMotion(plans: MotionCuePlan[], layerId: string, depth: numb
     const t = cueProgress(plan, localFrame);
     switch (plan.cue) {
       case "fadeIn": state.opacity *= t; break;
-      case "slide": state.translateY += (1 - t) * 72; break;
-      case "scale": state.scale *= 0.86 + 0.14 * t; break;
-      case "pan": state.translateX += interpolate(progress, [0, 1], [26, -26]) * t; break;
-      case "zoom": state.scale *= 1 + 0.12 * progress * t; break;
+      case "slide": state.translateY += (1 - t) * 108; break;
+      case "scale": state.scale *= 0.82 + 0.18 * t; break;
+      case "pan": state.translateX += interpolate(progress, [0, 1], [42, -42]) * t; break;
+      case "zoom": state.scale *= 1 + 0.18 * progress * t; break;
       case "parallax":
-        state.translateX += (0.5 - depth) * 52 * progress * t;
-        state.translateY += (0.5 - depth) * 18 * progress * t;
+        state.translateX += (0.5 - depth) * 88 * progress * t;
+        state.translateY += (0.5 - depth) * 34 * progress * t;
         break;
       case "reveal": state.reveal = Math.min(state.reveal, t); break;
-      case "pulse": state.scale *= 1 + Math.sin(t * Math.PI) * 0.045; break;
+      case "pulse": state.scale *= 1 + Math.sin(t * Math.PI) * 0.06; break;
     }
   }
   state.opacity = clamp01(state.opacity);

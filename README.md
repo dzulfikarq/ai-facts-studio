@@ -1,6 +1,6 @@
 # AI Facts Studio V1.0.3
 
-Local-first studio for turning checked Indonesian research into reusable, animated 2D vertical videos. V1.0.3 adds readable phrase-by-phrase captions, manual timing/emphasis, and visual regression coverage while keeping V1.0.2 structured compositions, presets, motion cues, and cleanup/quota safeguards. Rendering uses no AI calls. Optional AI Voice sends a sample or script to configured Gemini TTS only after explicit user action. The app defaults to `127.0.0.1`; drafts, audio, jobs, and local MP4s stay on the device except text explicitly sent to Gemini.
+Local-first studio for turning checked Indonesian research into reusable, animated 2D vertical videos. V1.0.3 improves reusable illustrations with auto-framing, depth shadows, stronger camera/layer motion, richer water-cycle/process diagrams, and adds phrase captions plus `Kenapa Air Laut Asin?` acceptance package. Rendering uses no AI calls. Optional AI Voice sends a sample or script to configured Gemini TTS only after explicit user action. The app defaults to `127.0.0.1`; drafts, audio, jobs, and local MP4s stay on the device except text explicitly sent to Gemini.
 
 ## Requirements
 
@@ -18,7 +18,9 @@ copy .env.example .env   # Windows; optional
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>. Import `samples/mountain-formation.json` or `samples/lightning-charge.json`, edit storyboard/composition, choose visual preset, then preview/render. AI path: **Test Voice** → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini** → **Generate preview** → **Render MP4 lokal**. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, custom confirmation asks before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
+Open <http://127.0.0.1:5173>. Import `samples/mountain-formation.json`, `samples/lightning-charge.json`, or `samples/kenapa-air-laut-asin.json`, edit storyboard/composition, choose visual preset, then preview/render. AI path: **Test Voice** → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini** → **Generate preview** → **Render MP4 lokal**. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, custom confirmation asks before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
+
+Engine renders supplied Research Package scenes/compositions; it does **not** turn arbitrary titles into researched storyboards or topic-specific illustrations. Compose new topics from reusable nodes/diagrams or author their composition manually.
 
 The first render may download Chromium. `npm run build && npm start` serves production UI/API on `http://127.0.0.1:3001`.
 
@@ -35,10 +37,11 @@ npm run typecheck
 npm run build
 npm run render -- samples/mountain-formation.json
 npm run render -- samples/lightning-charge.json
+npm run render -- samples/kenapa-air-laut-asin.json
 npm audit
 ```
 
-Standalone render writes `renders/<title>.mp4` and a `.manifest.json`; existing output is never overwritten. Set `RENDER_OUTPUT_DIR` to render into a separate folder. `npm run smoke:samples` normally cleans temporary outputs; set `SAMPLE_RENDER_OUTPUT_DIR=renders/v1.0.3-review` to retain Mountain and Lightning MP4s/manifests for manual review. The app's database is `data/ai-facts-studio.sqlite`; uploaded audio is in `public/audio/`. These generated files are git-ignored.
+Standalone render writes `renders/<title>.mp4` and a `.manifest.json`; existing output is never overwritten. Set `RENDER_OUTPUT_DIR` to render into a separate folder. `npm run smoke:samples` normally cleans temporary outputs; set `SAMPLE_RENDER_OUTPUT_DIR=renders/v1.0.3-final` to retain all three MP4s/manifests for manual review. The app's database is `data/ai-facts-studio.sqlite`; uploaded audio is in `public/audio/`. These generated files are git-ignored.
 
 Legacy Research Package v1.0 still imports and upgrades to v1.1. New jobs use renderer V2; old immutable snapshots use frozen renderer V1. Manifests record renderer version.
 

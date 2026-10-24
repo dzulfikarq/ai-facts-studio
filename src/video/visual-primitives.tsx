@@ -39,6 +39,9 @@ function IconShape({ icon, color }: { icon: string; color: string }) {
     case "leaf": return <><path d="M14 80C16 28 49 10 89 12 88 52 66 85 23 87Z" fill={color}/><path d="M23 85 75 28" stroke="#fff7e7" strokeWidth="4"/></>;
     case "bear": return <><ellipse cx="48" cy="60" rx="31" ry="25" fill={color}/><circle cx="69" cy="39" r="20" fill={color}/><circle cx="56" cy="22" r="8" fill={color}/><circle cx="80" cy="22" r="8" fill={color}/><circle cx="76" cy="37" r="3" fill="#17323a"/><ellipse cx="87" cy="45" rx="7" ry="5" fill="#17323a"/><path d="M30 77v13m34-13v13" stroke={color} strokeWidth="9" strokeLinecap="round"/></>;
     case "wave": return <path d="M3 55q22-28 44 0t44 0M3 77q22-28 44 0t44 0" fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"/>;
+    case "rock": return <><path d="m8 78 8-36 18-8 8-22 24 8 9 19 17 11 1 28Z" fill={color}/><path d="m17 48 21-5 13 9 23-3 18 11M24 68l22-6 18 7 20-4" fill="none" stroke="#fff7e7" strokeOpacity=".55" strokeWidth="5" strokeLinecap="round"/><path d="m34 34 10 18 12 5" fill="none" stroke="#17323a" strokeOpacity=".35" strokeWidth="4"/></>;
+    case "river": return <><path d="M6 20c34 0 15 23 49 24s16 31 40 32v12c-40 0-22-29-48-30S62 46 6 47Z" fill={color}/><path d="M12 28c20 0 14 12 32 13" fill="none" stroke="#fff7e7" strokeOpacity=".65" strokeWidth="4" strokeLinecap="round"/></>;
+    case "crystal": return <><path d="m50 7 19 20 7 40-26 26-26-26 7-40Z" fill={color}/><path d="m50 7 1 86m18-66L33 27M76 67 50 48 24 67" fill="none" stroke="#fff7e7" strokeOpacity=".7" strokeWidth="4" strokeLinejoin="round"/></>;
     default: return null;
   }
 }
@@ -64,6 +67,37 @@ function Diagram({ kind, labels, color, accent }: { kind: string; labels: string
   if (kind === "volcano-cross-section") return <>
     <path d="M8 87 39 35 50 48 61 35 92 87Z" fill={color}/><path d="M46 48h8l-4 39" stroke={accent} strokeWidth="7" fill="none"/>
     {labels.slice(0,2).map((label,index)=><Label key={label} x={50} y={index?97:28}>{label}</Label>)}
+  </>;
+  if (kind === "process-flow") {
+    const steps = labels.slice(0, 4);
+    const cardHeight = Math.min(24, (88 - (steps.length - 1) * 8) / steps.length);
+    const startY = (100 - (steps.length * cardHeight + (steps.length - 1) * 8)) / 2;
+    return <>
+      {steps.map((step, index) => {
+        const y = startY + index * (cardHeight + 8);
+        const lines = textLines(step, 62, cardHeight, 6.5);
+        return <g key={`${index}-${step}`}>
+          {index < steps.length - 1 && <><path d={`M50 ${y + cardHeight + 1}v5`} stroke={accent} strokeWidth="2.5"/><path d={`m46 ${y + cardHeight + 3} 4 5 4-5`} fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round"/></>}
+          <rect x="8" y={y} width="84" height={cardHeight} rx="6" fill={color} opacity=".1" stroke={color} strokeOpacity=".45" strokeWidth="1.5"/>
+          <circle cx="18" cy={y + cardHeight / 2} r="5.2" fill={accent}/>
+          <text x="18" y={y + cardHeight / 2 + 1.8} textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="5" fontWeight="800" fill="#ffffff">{index + 1}</text>
+          {lines.map((line, lineIndex) => <text key={lineIndex} x="55" y={y + cardHeight / 2 + (lineIndex - (lines.length - 1) / 2) * 7 + 2} textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="6.5" fontWeight="700" fill={color}>{line}</text>)}
+        </g>;
+      })}
+    </>;
+  }
+  if (kind === "water-cycle") return <>
+    <circle cx="80" cy="18" r="8" fill={accent}/>
+    {[0, 60, 120].map((angle) => <path key={angle} d="M80 5v-3" stroke={accent} strokeWidth="2.5" strokeLinecap="round" transform={`rotate(${angle} 80 18)`}/>)}
+    <path d="M7 63 20 44l12 10 11-20 17 29Z" fill={color} opacity=".72"/>
+    <path d="M5 72q12-5 24 0t24 0 24 0 24 0v24H5Z" fill={color}/>
+    <path d="M5 76q12-5 24 0t24 0 24 0 24 0" fill="none" stroke="#ffffff" strokeOpacity=".7" strokeWidth="2"/>
+    <path d="M26 32c-2-8 5-14 13-11 4-9 18-8 21 1 8-2 13 6 9 12H31" fill="#ffffff" fillOpacity=".9" stroke={color} strokeOpacity=".4" strokeWidth="1.5"/>
+    <path d="M74 63C77 52 78 43 70 34m-30 2c-1 8-5 13-8 20m-5 11c11 4 21 2 30-2" fill="none" stroke={accent} strokeWidth="2.7" strokeLinecap="round"/>
+    <path d="m67 36 3-5 4 5m-44 15-4 6-4-5m26 8 7 1-4 5" fill="none" stroke={accent} strokeWidth="2.5" strokeLinejoin="round"/>
+    <text x="78" y="53" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="5.1" fontWeight="700" fill={color}>{labels[0] ?? "UAP"}</text>
+    <text x="15" y="42" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="4.8" fontWeight="700" fill={color}>{labels[1] ?? "HUJAN"}</text>
+    <text x="30" y="91" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="4.8" fontWeight="700" fill="#ffffff">{labels[2] ?? "LAUT"}</text>
   </>;
   return <>
     <circle cx="50" cy="22" r="10" fill={accent}/><path d="M50 34v26m-7-8 7 8 7-8M45 66c-14-17-28-4-22 8 3 7 11 7 15 3m9-11c14-17 28-4 22 8-3 7-11 7-15 3" fill="none" stroke={color} strokeWidth="4" strokeLinecap="round"/>
@@ -98,36 +132,69 @@ function LeafNode({ node, style }: { node: Exclude<VisualNode, { type: "group" }
 
 export function VisualCompositionView({ scene, composition, style, frame, progress }: { scene: Scene; composition: VisualComposition; style: VisualStyle; frame: number; progress: number }) {
   const layers = [...composition.layers].sort((a,b)=>a.depth-b.depth);
+  const foregroundLayers = layers.filter((layer) => layer.depth > 0.1);
+  const contentLayers = foregroundLayers.length ? foregroundLayers : layers;
+  const backdropLayers = foregroundLayers.length ? layers.filter((layer) => layer.depth <= 0.1) : [];
+  const framing = visualCompositionFrame(composition);
+  const camera = style.backdrop === "cinematic"
+    ? { x: -24 + 48 * progress, y: Math.sin(progress * Math.PI) * 16, scale: 1 + 0.055 * progress }
+    : style.backdrop === "grid"
+      ? { x: Math.sin(progress * Math.PI * 2) * 8, y: Math.sin(progress * Math.PI) * 8, scale: 1 + 0.035 * progress }
+      : { x: Math.sin(progress * Math.PI) * 10, y: -Math.sin(progress * Math.PI) * 4, scale: 1 + 0.018 * progress };
+  const renderLayer = (layer: VisualComposition["layers"][number]) => {
+    const motion = layerMotion(scene.motionPlan, layer.id, layer.depth, frame, progress);
+    if (style.backdrop === "flat") {
+      motion.translateX += Math.sin(progress * Math.PI * 2) * 11 * (0.5 - layer.depth);
+      motion.translateY += Math.sin(progress * Math.PI) * 5 * (0.5 - layer.depth);
+    } else if (style.backdrop === "grid") {
+      const entrance = Math.max(0, Math.min(1, (progress - layer.depth * 0.08) / 0.18));
+      motion.translateY += (1 - entrance) * 26;
+      motion.opacity *= 0.72 + 0.28 * entrance;
+    } else {
+      motion.translateX += (0.5 - layer.depth) * 66 * progress;
+      motion.translateY += (0.5 - layer.depth) * 24 * progress;
+      motion.scale = Math.min(1.2, motion.scale * (1 + 0.06 * progress));
+    }
+    const clipId = `reveal-${safeId(scene.id)}-${safeId(layer.id)}`;
+    const transform = `translate(${motion.translateX} ${motion.translateY}) translate(540 960) scale(${motion.scale}) translate(-540 -960)`;
+    const nodes = [...layer.nodes].sort((a,b)=>(a.zIndex??0)-(b.zIndex??0));
+    const depthShadow = layer.depth > 0.25 ? `drop-shadow(0 ${Math.round(4 + layer.depth * 8)}px ${Math.round(4 + layer.depth * 6)}px rgba(4, 22, 31, 0.2))` : undefined;
+    return <g key={layer.id} opacity={motion.opacity} transform={transform} style={depthShadow ? { filter: depthShadow } : undefined}>
+      {motion.reveal < 1 && <defs><clipPath id={clipId}><rect x="0" y="0" width={1080*motion.reveal} height="1920"/></clipPath></defs>}
+      <g clipPath={motion.reveal < 1 ? `url(#${clipId})` : undefined}>
+        {nodes.map((node,index)=>{
+          if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} node={node} style={style}/>;
+          const groupTransform = `translate(${node.x} ${node.y}) rotate(${node.rotation??0} ${node.width/2} ${node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
+          return <g key={`group-${index}`} transform={groupTransform} opacity={node.opacity??1}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} node={child} style={style}/>)}</g>;
+        })}
+      </g>
+    </g>;
+  };
   return <>
     <rect width="1080" height="1920" fill={resolveVisualColor(composition.background, style)}/>
-    {layers.map((layer)=>{
-      const motion = layerMotion(scene.motionPlan, layer.id, layer.depth, frame, progress);
-      if (style.backdrop === "flat") {
-        motion.translateX += Math.sin(progress * Math.PI * 2) * 7 * (0.5 - layer.depth);
-        motion.translateY += Math.sin(progress * Math.PI) * 3 * (0.5 - layer.depth);
-      } else if (style.backdrop === "grid") {
-        const entrance = Math.max(0, Math.min(1, (progress - layer.depth * 0.08) / 0.18));
-        motion.translateY += (1 - entrance) * 12;
-        motion.opacity *= 0.76 + 0.24 * entrance;
-      } else {
-        motion.translateX += (0.5 - layer.depth) * 28 * progress;
-        motion.scale = Math.min(1.2, motion.scale * (1 + 0.035 * progress));
-      }
-      const clipId = `reveal-${safeId(scene.id)}-${safeId(layer.id)}`;
-      const transform = `translate(${motion.translateX} ${motion.translateY}) translate(540 960) scale(${motion.scale}) translate(-540 -960)`;
-      const nodes = [...layer.nodes].sort((a,b)=>(a.zIndex??0)-(b.zIndex??0));
-      return <g key={layer.id} opacity={motion.opacity} transform={transform}>
-        {motion.reveal < 1 && <defs><clipPath id={clipId}><rect x="0" y="0" width={1080*motion.reveal} height="1920"/></clipPath></defs>}
-        <g clipPath={motion.reveal < 1 ? `url(#${clipId})` : undefined}>
-          {nodes.map((node,index)=>{
-            if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} node={node} style={style}/>;
-            const groupTransform = `translate(${node.x} ${node.y}) rotate(${node.rotation??0} ${node.width/2} ${node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
-            return <g key={`group-${index}`} transform={groupTransform} opacity={node.opacity??1}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} node={child} style={style}/>)}</g>;
-          })}
-        </g>
-      </g>;
-    })}
+    {backdropLayers.map(renderLayer)}
+    <g transform={`translate(${540 + camera.x} ${990 + camera.y}) scale(${camera.scale}) translate(-540 -990) translate(${framing.translateX} ${framing.translateY}) scale(${framing.scale})`}>
+      {contentLayers.map(renderLayer)}
+    </g>
   </>;
+}
+
+export function visualCompositionFrame(composition: VisualComposition) {
+  const foreground = composition.layers.filter((layer) => layer.depth > 0.1);
+  const nodes = (foreground.length ? foreground : composition.layers).flatMap((layer) => layer.nodes).filter((node) => !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
+  if (!nodes.length) return { scale: 1, translateX: 0, translateY: 0 };
+  const bounds = nodes.reduce((box, node) => ({
+    left: Math.min(box.left, node.x),
+    top: Math.min(box.top, node.y),
+    right: Math.max(box.right, node.x + node.width),
+    bottom: Math.max(box.bottom, node.y + node.height),
+  }), { left: 1080, top: 1920, right: 0, bottom: 0 });
+  const width = Math.max(1, bounds.right - bounds.left);
+  const height = Math.max(1, bounds.bottom - bounds.top);
+  const scale = Math.min(1.3, 1080 / width, 1100 / height);
+  const centerX = (bounds.left + bounds.right) / 2;
+  const centerY = (bounds.top + bounds.bottom) / 2;
+  return { scale, translateX: 540 - centerX * scale, translateY: 990 - centerY * scale };
 }
 
 export { IconShape };

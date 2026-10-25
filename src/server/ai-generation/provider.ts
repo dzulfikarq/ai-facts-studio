@@ -22,13 +22,16 @@ export const DEFAULT_TEXT_MODEL = "gemini-3.5-flash-lite";
 export const FREE_TIER_TEXT_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const;
 export type AiGenerationMode = "development" | "production";
 export type AiGenerationTask = "research" | "storyboard" | "visual-director";
-export type AiGenerationOutputFormat = "text" | "research-package-v1.1-json";
+export type AiGenerationOutputFormat = "text" | "research-package-v1.1-json" | "ai-research-storyboard-v1";
 
 export type AiGenerationRequest = {
   task: AiGenerationTask;
   prompt: string;
   outputFormat: AiGenerationOutputFormat;
+  responseSchema?: unknown;
   maxOutputTokens?: number;
+  signal?: AbortSignal;
+  onPhase?: (phase: "generating") => void;
 };
 
 export type AiGenerationResult = {
@@ -62,11 +65,21 @@ export type ProductionProviderStatus = {
 export type AiGenerationSettings = {
   mode: AiGenerationMode;
   providers: {
-    development: { id: "manual-prompt"; displayName: string; configured: true };
+    development: {
+      id: "opencode-local";
+      displayName: string;
+      configured: boolean;
+      connected: boolean;
+      version: string | null;
+      models: Array<{ id: string; providerID: string; modelID: string; name: string }>;
+      disabledReason: string | null;
+    };
     production: ProductionProviderStatus;
   };
-  generationAvailable: false;
+  generationAvailable: boolean;
 };
+
+export type DevelopmentProviderStatus = AiGenerationSettings["providers"]["development"];
 
 export function readAiGenerationMode(db: SettingsDatabase): AiGenerationMode {
   const row = db.prepare("SELECT mode FROM ai_generation_settings WHERE id = 1").get() as { mode?: string } | undefined;
@@ -110,16 +123,21 @@ export function getProductionProviderStatus(env: NodeJS.ProcessEnv = process.env
   };
 }
 
-export function getAiGenerationSettings(db: SettingsDatabase, env: NodeJS.ProcessEnv = process.env, now = Date.now()): AiGenerationSettings {
+export function getAiGenerationSettings(db: SettingsDatabase, env: NodeJS.ProcessEnv = process.env, now = Date.now(), development?: DevelopmentProviderStatus): AiGenerationSettings {
   const since = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const requestsUsed = (db.prepare("SELECT COUNT(*) AS count FROM ai_generation_attempts WHERE requested_at > ?").get(since) as { count: number }).count;
+  const mode = readAiGenerationMode(db);
+  const production = getProductionProviderStatus(env, requestsUsed);
   return {
-    mode: readAiGenerationMode(db),
+    mode,
     providers: {
-      development: { id: "manual-prompt", displayName: "ChatGPT / OpenCode · manual prompt + JSON import", configured: true },
-      production: getProductionProviderStatus(env, requestsUsed),
+      development: development ?? {
+        id: "opencode-local", displayName: "OpenCode · local", configured: false, connected: false,
+        version: null, models: [], disabledReason: "Status OpenCode belum diperiksa. Manual prompt tetap tersedia.",
+      },
+      production,
     },
-    generationAvailable: false,
+    generationAvailable: mode === "development" || production.configured,
   };
 }
 

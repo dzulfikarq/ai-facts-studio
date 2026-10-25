@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
-import { ApiError } from "@google/genai";
+import { ApiError, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai";
 import { GeminiSpeechProvider, type GeminiSdkClient } from "../src/server/tts/gemini-provider";
 import { DEFAULT_TTS_MODEL, FREE_TIER_TTS_MODELS, GEMINI_TTS_LOCALES, ttsCacheKey } from "../src/server/tts/provider";
 import { cueProgress, layerMotion, sceneTransitionOpacity } from "../src/video/motion";
@@ -14,8 +16,13 @@ import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
 import { visualCompositionFrame } from "../src/video/visual-primitives";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, type WorkflowSignals } from "../src/client/workflow";
+import { aiGeneratedContentSchema, aiGenerationInputSchema, buildAiGenerationDraft, buildDevelopmentPrompt, parseManualAiResult, parseManualAiResultText, researchPackageWithConfirmedSources, restoreAiGenerationDraft, type AiGeneratedContent } from "../src/domain/ai-generation";
 import { aiGenerationSchema, DEFAULT_TEXT_MODEL, FREE_TIER_TEXT_MODELS, getAiGenerationSettings, getProductionProviderStatus, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "../src/server/ai-generation/provider";
 import { AiGenerationRequestError, reserveAiGenerationRequest } from "../src/server/ai-generation/quota";
+import { GeminiTextGenerationError, GeminiTextGenerationProvider } from "../src/server/ai-generation/gemini-text-provider";
+import { getOpenCodeProviderStatus, OpenCodeGenerationError, OpenCodeTextGenerationProvider } from "../src/server/ai-generation/opencode-provider";
+import { generateAiResearchStoryboard } from "../src/server/ai-generation/generate";
+import type { AiGenerationProvider } from "../src/server/ai-generation/provider";
 
 const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin"];
 const parsedSamples = [];
@@ -104,12 +111,213 @@ assert.throws(() => reserveAiGenerationRequest(aiDb, "development", productionSt
 writeAiGenerationMode(aiDb, "production", new Date(aiNow).toISOString());
 assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).mode, "production", "mode preference persists independently in settings table");
 assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).providers.production.requestsUsed, 2);
-assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).generationAvailable, false, "configuration foundation does not expose a generator prematurely");
+assert.equal(getAiGenerationSettings(aiDb, aiEnv, aiNow).generationAvailable, true, "configured Production mode exposes explicit generation capability");
 assert.ok(firstAiRequest.id);
 assert.equal(isLoopbackAddress("127.0.0.1"), true);
 assert.equal(isLoopbackAddress("::ffff:127.0.0.1"), true);
 assert.equal(isLoopbackAddress("203.0.113.8"), false, "settings writes are limited to loopback clients");
 aiDb.close();
+
+const sourceUrl = "https://ocean.example/research";
+const aiTopics = ["Kenapa air laut asin?", "Bagaimana gunung berapi terbentuk?", "Mengapa petir bisa terjadi?", "Kenapa langit berwarna biru?"];
+const aiInput = aiGenerationInputSchema.parse({ topic: aiTopics[0], language: "id-ID", targetDurationSec: 30, deliveryStyle: "edukatif", additionalInstructions: "Pakai bahasa sederhana", sourceUrls: [sourceUrl] });
+const makeAiContent = (topic: string): AiGeneratedContent => ({
+  summary: `Ringkasan riset untuk ${topic}`,
+  category: "Sains & Antariksa",
+  visualPreset: "animated-infographic",
+  keyFacts: [
+    { claim: `Fakta utama tentang ${topic}`, classification: "fact", sourceUrls: [sourceUrl], uncertaintyNote: "Periksa konteks sumber." },
+    { claim: "Analogi membantu menjelaskan konsep.", classification: "interpretation", sourceUrls: [], uncertaintyNote: "Ini penjelasan editorial." },
+  ],
+  uncertainties: ["Minta review manusia untuk setiap klaim."],
+  narration: `Narasi edukatif untuk ${topic}.`,
+  scenes: [
+    { narrationText: `Pengenalan ${topic}.`, onScreenText: "Pertanyaan utama", visualDescription: "Tampilkan objek utama lalu beri highlight bertahap.", templateId: "infographic", motionCues: ["fadeIn"], sourceUrls: [sourceUrl] },
+    { narrationText: "Jelaskan proses secara berurutan.", onScreenText: "Bagaimana prosesnya?", visualDescription: "Tampilkan diagram proses dengan panah yang muncul berurutan.", templateId: "infographic", motionCues: ["slide", "reveal"], sourceUrls: [] },
+    { narrationText: "Rangkum fakta dan batas pengetahuan.", onScreenText: "Kesimpulan", visualDescription: "Rangkum konsep pada kartu fakta sederhana.", templateId: "mountain-reveal", motionCues: ["scale"], sourceUrls: [sourceUrl] },
+  ],
+});
+for (const topic of aiTopics) {
+  const content = makeAiContent(topic);
+  assert.equal(aiGeneratedContentSchema.safeParse(content).success, true, `${topic} output should fit structured AI response schema`);
+  const input = { ...aiInput, topic };
+  const generatedDraft = buildAiGenerationDraft(input, content, `ai-package-${aiTopics.indexOf(topic)}`);
+  assert.equal(generatedDraft.researchPackage.title, topic, "unrelated free-form topics use same generic package builder");
+  assert.equal(generatedDraft.researchPackage.scenes.length, 3);
+  assert.equal(generatedDraft.researchPackage.scenes.at(-1)!.endSec, input.targetDurationSec);
+  assert.equal(generatedDraft.researchPackage.references.length, 0, "unverified user sources are not auto-attached to project references");
+  assert.equal(generatedDraft.review.facts[0]!.verification, "referenced-unverified", "source association never claims an independent fact-check");
+}
+assert.match(buildDevelopmentPrompt(aiInput), /Kenapa air laut asin\?/);
+assert.match(buildDevelopmentPrompt(aiInput), /Jangan mengarang fakta/);
+assert.equal(parseManualAiResultText("{", aiInput, "invalid-json").success, false, "manual paste reports malformed JSON locally");
+assert.equal(parseManualAiResult({ schemaVersion: "9.9" }, aiInput, "invalid-package").success, false, "manual paste rejects unsupported Research Package versions");
+const manualParsed = parseManualAiResult(makeAiContent(aiInput.topic), aiInput, "manual-ai-package");
+assert.equal(manualParsed.success, true, "manual Development result uses same local schema/build path");
+if (manualParsed.success) {
+  assert.equal(manualParsed.draft.mode, "development");
+  assert.equal(restoreAiGenerationDraft(JSON.parse(JSON.stringify(manualParsed.draft)))?.researchPackage.title, aiInput.topic, "saved AI review draft survives reload validation");
+  const selectedSource = manualParsed.draft.sourceCandidates[0]!;
+  const readyPackage = researchPackageWithConfirmedSources({
+    ...manualParsed.draft,
+    selectedSourceIds: [selectedSource.id],
+    sceneSourceIds: { ...manualParsed.draft.sceneSourceIds, [manualParsed.draft.researchPackage.scenes[0]!.id]: [selectedSource.id] },
+  }, "2026-10-24");
+  assert.equal(readyPackage.success, true);
+  if (readyPackage.success) {
+    assert.equal(readyPackage.data.references[0]!.url, sourceUrl);
+    const retriedPackage = researchPackageWithConfirmedSources({ ...manualParsed.draft, researchPackage: readyPackage.data, selectedSourceIds: [selectedSource.id] }, "2026-10-25");
+    assert.equal(retriedPackage.success && retriedPackage.data.references[0]!.checkedAt, "2026-10-24", "source review date stays stable across Create Project retry");
+    assert.deepEqual(readyPackage.data.scenes[0]!.referenceIds, [selectedSource.id]);
+  }
+}
+const fabricatedSourceContent = { ...makeAiContent(aiInput.topic), keyFacts: [{ claim: "Klaim tanpa source input.", classification: "fact" as const, sourceUrls: ["https://invented.example/reference"] }] };
+const fabricatedSourceDraft = buildAiGenerationDraft(aiInput, fabricatedSourceContent, "no-model-reference");
+assert.equal(fabricatedSourceDraft.sourceCandidates.some((source) => source.url.includes("invented.example")), false, "model-invented URLs are never promoted to source candidates");
+assert.equal(fabricatedSourceDraft.review.facts[0]!.verification, "unverified");
+assert.equal(parseManualAiResult(mountain, aiInput, "manual-v1-package").success, true, "manual result accepts existing Research Package v1.0 after migration");
+assert.equal(aiGenerationInputSchema.safeParse({ ...aiInput, sourceUrls: ["javascript:alert(1)"] }).success, false, "AI source URLs allow HTTP(S) only");
+assert.equal(aiGenerationInputSchema.safeParse({ ...aiInput, sourceUrls: ["https://user:pass@source.example/article"] }).success, false, "AI source URLs reject embedded credentials");
+
+const generationDb = new DatabaseSync(":memory:");
+generationDb.exec(aiGenerationSchema);
+let providerCalls = 0;
+const capturedGeminiRequest: { value?: GenerateContentParameters } = {};
+const mockAiProvider = new GeminiTextGenerationProvider(productionStatus.model!, "server-only-test-key", (apiKey) => {
+  assert.equal(apiKey, "server-only-test-key", "Gemini key is supplied to backend provider factory only");
+  return { models: { generateContent: async (request) => {
+    providerCalls++;
+    capturedGeminiRequest.value = request;
+    return { text: providerCalls === 1 ? "not-json" : JSON.stringify(makeAiContent(aiInput.topic)), modelVersion: productionStatus.model } as unknown as GenerateContentResponse;
+  } } };
+});
+const productionPhases: string[] = [];
+const mockGeneratedDraft = await generateAiResearchStoryboard(generationDb, "production", productionStatus, aiInput, mockAiProvider, { onPhase: (phase) => productionPhases.push(phase) });
+assert.equal(providerCalls, 2, "invalid structured response gets one bounded validation retry");
+assert.ok(productionPhases.includes("repairing") && productionPhases.includes("validating"), "pipeline reports repair and validation phases");
+assert.equal(mockGeneratedDraft.researchPackage.title, aiInput.topic);
+assert.equal(capturedGeminiRequest.value?.model, "gemini-3.5-flash-lite");
+assert.equal(capturedGeminiRequest.value?.config?.responseMimeType, "application/json");
+assert.ok(capturedGeminiRequest.value?.config?.responseJsonSchema, "Gemini Text uses structured response schema");
+assert.equal(capturedGeminiRequest.value?.config?.tools, undefined, "production does not enable unbudgeted Google Search grounding");
+assert.equal(getAiGenerationSettings(generationDb, aiEnv, Date.now()).providers.production.requestsUsed, 2, "each Gemini retry consumes one text quota request");
+generationDb.close();
+
+const failedGenerationDb = new DatabaseSync(":memory:");
+failedGenerationDb.exec(aiGenerationSchema);
+let providerErrorCalls = 0;
+const failedProvider = new GeminiTextGenerationProvider(productionStatus.model!, "server-only-test-key", () => ({ models: { generateContent: async () => { providerErrorCalls++; throw new ApiError({ status: 429, message: "mock quota" }); } } }));
+await assert.rejects(generateAiResearchStoryboard(failedGenerationDb, "production", productionStatus, aiInput, failedProvider), (error) => error instanceof GeminiTextGenerationError && error.code === "free-tier-quota");
+assert.equal(providerErrorCalls, 1, "provider/network failures do not trigger generation retries");
+assert.equal(getAiGenerationSettings(failedGenerationDb, aiEnv, Date.now()).providers.production.requestsUsed, 1, "failed provider request still consumes rolling request allowance");
+failedGenerationDb.close();
+
+const topicGenerationDb = new DatabaseSync(":memory:");
+topicGenerationDb.exec(aiGenerationSchema);
+const topicProvider: AiGenerationProvider = {
+  id: "gemini-developer-api", displayName: "Gemini Text mock", model: productionStatus.model!,
+  generate: async (request) => {
+    const topic = request.prompt.match(/^Topic: (.+)$/m)?.[1] ?? "unknown topic";
+    return { text: JSON.stringify(makeAiContent(topic)), model: productionStatus.model! };
+  },
+};
+for (const topic of aiTopics) {
+  const generatedTopic = await generateAiResearchStoryboard(topicGenerationDb, "production", { ...productionStatus, dailyLimit: 10 }, { ...aiInput, topic }, topicProvider);
+  assert.equal(generatedTopic.researchPackage.title, topic, "mock Gemini Research/Storyboard generator must support unrelated topics");
+  assert.equal(generatedTopic.researchPackage.scenes.length, 3);
+}
+assert.equal(getAiGenerationSettings(topicGenerationDb, aiEnv, Date.now()).providers.production.requestsUsed, aiTopics.length);
+topicGenerationDb.close();
+
+const openCodeEnv = { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_SERVER_USERNAME: "opencode", OPENCODE_SERVER_PASSWORD: "test-opencode-password" };
+const openCodeDb = new DatabaseSync(":memory:");
+openCodeDb.exec(aiGenerationSchema);
+const openCodeDirectories: string[] = [];
+let capturedOpenCodeMessage: Record<string, unknown> | undefined;
+let capturedOpenCodeConfig: Record<string, unknown> | undefined;
+let openCodeSessionDeleted = false;
+const mockOpenCodeFetch: typeof fetch = async (input, init) => {
+  const url = new URL(String(input));
+  const authorization = new Headers(init?.headers).get("authorization");
+  if (url.pathname === "/global/health" && !authorization) return new Response("auth required", { status: 401, headers: { "www-authenticate": "Basic realm=opencode" } });
+  assert.equal(authorization, `Basic ${Buffer.from("opencode:test-opencode-password").toString("base64")}`, "OpenCode Basic credentials stay server-side");
+  const directory = url.searchParams.get("directory");
+  if (directory) openCodeDirectories.push(directory);
+  if (url.pathname === "/global/health") return Response.json({ healthy: true, version: "1.19.4" });
+  if (url.pathname === "/provider") return Response.json({
+    all: [
+      { id: "openai", name: "OpenAI", models: { "gpt-5-mini": { id: "gpt-5-mini", name: "GPT-5 mini", status: "active" } } },
+      { id: "not-connected", name: "Not connected", models: { model: { id: "model", name: "Model", status: "active" } } },
+    ],
+    connected: ["openai"],
+  });
+  if (url.pathname === "/config" && init?.method === "PATCH") { capturedOpenCodeConfig = JSON.parse(String(init.body)); return Response.json({}); }
+  if (url.pathname === "/config") return Response.json({ plugin: [], mcp: {}, instructions: [] });
+  if (url.pathname === "/session" && init?.method === "POST") return Response.json({ id: "session-test" });
+  if (url.pathname === "/session/session-test/message") {
+    capturedOpenCodeMessage = JSON.parse(String(init?.body));
+    return Response.json({ info: {}, parts: [{ type: "text", text: JSON.stringify(makeAiContent(aiInput.topic)) }] });
+  }
+  if (url.pathname === "/session/session-test" && init?.method === "DELETE") { openCodeSessionDeleted = true; return Response.json(true); }
+  if (url.pathname === "/session/session-test/abort") return Response.json(true);
+  return new Response("Not found", { status: 404 });
+};
+const openCodeStatus = await getOpenCodeProviderStatus(openCodeEnv, mockOpenCodeFetch);
+assert.equal(openCodeStatus.configured, true);
+assert.equal(openCodeStatus.version, "1.19.4");
+assert.deepEqual(openCodeStatus.models.map((model) => model.id), ["openai/gpt-5-mini"], "only connected provider models are listed");
+assert.equal(JSON.stringify(openCodeStatus).includes("test-opencode-password"), false, "OpenCode status never exposes authentication secrets");
+assert.equal((await getOpenCodeProviderStatus(openCodeEnv, async () => Response.json({ healthy: true }))).configured, false, "unauthenticated OpenCode servers fail closed");
+assert.equal((await getOpenCodeProviderStatus({ ...openCodeEnv, OPENCODE_SERVER_PASSWORD: "" }, mockOpenCodeFetch)).configured, false, "OpenCode auth is required");
+assert.equal((await getOpenCodeProviderStatus({ ...openCodeEnv, OPENCODE_SERVER_URL: "https://example.com" }, mockOpenCodeFetch)).configured, false, "non-loopback OpenCode endpoints are rejected");
+const openCodeProvider = new OpenCodeTextGenerationProvider("openai/gpt-5-mini", openCodeEnv, mockOpenCodeFetch);
+const developmentPhases: string[] = [];
+const openCodeDraft = await generateAiResearchStoryboard(openCodeDb, "development", null, aiInput, openCodeProvider, { onPhase: (phase) => developmentPhases.push(phase) });
+assert.equal(openCodeDraft.mode, "development", "OpenCode draft stays in Development mode");
+assert.deepEqual(developmentPhases, ["connecting", "generating", "validating"], "OpenCode UI progress maps to real generation pipeline phases");
+assert.equal(openCodeDraft.provider, "opencode-local");
+assert.equal(openCodeDraft.model, "openai/gpt-5-mini");
+assert.equal(openCodeDraft.researchPackage.title, aiInput.topic);
+assert.equal(openCodeSessionDeleted, true, "temporary OpenCode session is deleted after generation");
+assert.ok(openCodeDirectories.length > 0 && openCodeDirectories.every((directory) => directory.startsWith(os.tmpdir()) && !directory.startsWith(process.cwd())), "OpenCode session and config use isolated temp directories");
+assert.ok(openCodeDirectories.every((directory) => !existsSync(directory)), "temporary OpenCode directories are removed after use");
+assert.equal(capturedOpenCodeConfig?.model, "openai/gpt-5-mini");
+assert.equal(capturedOpenCodeConfig?.small_model, "openai/gpt-5-mini", "background title/summary calls cannot pick another model");
+assert.equal(capturedOpenCodeConfig?.share, "disabled", "temporary generation config disables session sharing");
+assert.deepEqual(capturedOpenCodeConfig?.tools, { "*": false });
+const restrictedAgent = Object.values(capturedOpenCodeConfig?.agent as Record<string, Record<string, unknown>>)[0]!;
+assert.deepEqual(restrictedAgent.tools, { "*": false });
+assert.deepEqual(restrictedAgent.permission, { "*": "deny" });
+assert.equal(restrictedAgent.mode, "primary", "OpenCode uses dedicated generation agent, not coding agent");
+assert.deepEqual(capturedOpenCodeMessage?.tools, { "*": false }, "session-level OpenCode permissions deny every tool");
+assert.equal((capturedOpenCodeMessage?.agent as string).startsWith("ai_facts_"), true);
+assert.deepEqual(capturedOpenCodeMessage?.model, { providerID: "openai", modelID: "gpt-5-mini" });
+assert.deepEqual(capturedOpenCodeMessage?.parts && (capturedOpenCodeMessage.parts as Array<{ type: string }>).map((part) => part.type), ["text"], "only user prompt text enters OpenCode session");
+assert.equal(getAiGenerationSettings(openCodeDb, aiEnv, Date.now()).providers.production.requestsUsed, 0, "Development OpenCode requests do not consume Gemini quota");
+
+let remoteAbortCalled = false;
+const abortableOpenCodeFetch: typeof fetch = async (input, init) => {
+  const url = new URL(String(input));
+  if (url.pathname === "/global/health" && !new Headers(init?.headers).has("authorization")) return new Response("auth required", { status: 401, headers: { "www-authenticate": "Basic realm=opencode" } });
+  if (url.pathname === "/global/health") return Response.json({ healthy: true, version: "1.19.4" });
+  if (url.pathname === "/provider") return Response.json({ all: [{ id: "openai", name: "OpenAI", models: { model: { id: "model", name: "Model", status: "active" } } }], connected: ["openai"] });
+  if (url.pathname === "/config" && init?.method === "PATCH") return Response.json({});
+  if (url.pathname === "/config") return Response.json({ plugin: [], mcp: {}, instructions: [] });
+  if (url.pathname === "/session" && init?.method === "POST") return Response.json({ id: "session-test" });
+  if (url.pathname === "/session/session-test/message") return new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    if (signal?.aborted) reject(new DOMException("Aborted", "AbortError"));
+    else signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  });
+  if (url.pathname === "/session/session-test/abort") { remoteAbortCalled = true; return Response.json(true); }
+  if (url.pathname === "/session/session-test" && init?.method === "DELETE") return Response.json(true);
+  return new Response("Not found", { status: 404 });
+};
+const cancelController = new AbortController();
+const abortableProvider = new OpenCodeTextGenerationProvider("openai/model", openCodeEnv, abortableOpenCodeFetch);
+await assert.rejects(abortableProvider.generate({ task: "research", prompt: "test", outputFormat: "ai-research-storyboard-v1", signal: cancelController.signal, onPhase: () => cancelController.abort() }), (error) => error instanceof OpenCodeGenerationError && error.code === "cancelled");
+assert.equal(remoteAbortCalled, true, "Cancel interrupts active OpenCode session");
+openCodeDb.close();
 
 const overlap = structuredClone(mountain);
 overlap.scenes[1]!.startSec = overlap.scenes[0]!.endSec - 0.5;
@@ -243,4 +451,4 @@ try { await unavailableGemini.synthesize({ text: "test", locale: "id-ID", voiceI
 catch (error) { unavailableCode = (error as { code?: string }).code ?? ""; }
 assert.equal(unavailableCode, "model-unavailable", "unavailable model stops without paid fallback");
 
-console.log(`PASS: ${samples.length} packages; migration/schema/audio, AI mode/provider/quota, workflow gates/review invalidation, renderer/cue determinism, Gemini TTS guard/cache, timing, rolling limits.`);
+console.log(`PASS: ${samples.length} packages; migration/schema/audio, AI mode/providers/quota, OpenCode isolation/cancel, workflow gates/review invalidation, renderer/cue determinism, Gemini TTS guard/cache, timing, rolling limits.`);

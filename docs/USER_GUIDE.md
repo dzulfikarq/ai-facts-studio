@@ -14,9 +14,13 @@ UI typography uses Plus Jakarta Sans consistently, including technical editors; 
 
 ## AI Generation settings
 
-Open **Settings → AI Generation**. **Development** is default: copy manual prompt to ChatGPT/OpenCode, review result, then import JSON in **Create video**. The app makes no Gemini text calls in this mode. **Production** can be selected only when backend key, separate Gemini Text model, Free Tier guard, and quota are configured. Model/key configuration lives in server `.env`; UI never accepts or returns API keys. AI Generation mode is stored separately from deployment mode and TTS. This phase configures provider access only; automatic research/storyboard/visual generation is not available. Details: [`AI_GENERATION_SETUP.md`](AI_GENERATION_SETUP.md).
+Open **Settings → AI Generation**. **Development** is default and checks authenticated OpenCode server/model status. In **Create video → Generate with AI**, select a connected OpenCode model and click **Generate Research & Storyboard**; this sends topic/instructions/optional URLs to local OpenCode. OpenCode uses isolated temp directory and tools disabled. Selected provider may still charge according to its own account; no model fallback occurs. Manual prompt/paste remains under **Advanced**. **Production** generates a structured draft only after explicit click and when backend Gemini key, text model, Free Tier guard, and quota are configured. Secrets live in server environment, never browser. Mode persists separately from deployment mode and TTS.
 
-Renderer consumes supplied scenes and compositions. It does not generate a researched storyboard or topic-specific art from a free-form title.
+In **Create video → Generate with AI**, enter topic, language, target, style, optional instructions, and optionally user-provided source URLs. Review generated summary, fact/interpretation labels, uncertainty, scenes, timings, templates, and visual direction. Renderer still uses authored templates; visual descriptions are editorial instructions, not generated art. App does not fetch or independently verify citations. It accepts only user-supplied source candidates, marks claims unverified, and adds a URL to Research Package only after you manually check and confirm it. Correct any issues, mark review complete, then click **Create Project**. Saved drafts persist in browser storage; Project creation uses idempotency key to avoid double-submit duplicates.
+
+Details: [`AI_GENERATION_SETUP.md`](AI_GENERATION_SETUP.md).
+
+Renderer consumes supplied scenes and compositions from imported or AI-generated Research Packages. It does not generate topic-specific art from visual descriptions.
 
 ## Render/download
 

@@ -13,5 +13,8 @@ renders/ui-refinement/*
 !renders/ui-refinement/after-desktop.png
 !renders/ui-refinement/after-mobile.png
 !renders/ui-refinement/after-advanced.png
+!renders/ui-refinement/ai-generation-review.png
+!renders/ui-refinement/ai-generation-form.png
+!renders/ui-refinement/ai-generation-mobile.png
 public/audio/*
 !public/audio/.gitkeep

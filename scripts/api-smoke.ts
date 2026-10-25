@@ -45,7 +45,7 @@ await new Promise<void>((resolve, reject) => probe.close((error) => error ? reje
 const baseUrl = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
+  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", OPENCODE_SERVER_URL: "http://localhost:4096", OPENCODE_SERVER_PASSWORD: "smoke-password", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), DATA_DIR: dataPath },
   stdio: "ignore",
 });
 let projectId: string | undefined;
@@ -83,10 +83,22 @@ try {
   const getAiSettings = () => fetch(`${baseUrl}/api/settings/ai-generation`);
   const initialAiSettings = await getAiSettings().then((response) => response.json());
   assert.equal(initialAiSettings.mode, "development", "AI generation defaults to Development independent of NODE_ENV");
-  assert.equal(initialAiSettings.generationAvailable, false, "settings phase does not enable a generator");
-  assert.equal(initialAiSettings.providers.development.id, "manual-prompt");
+  assert.equal(initialAiSettings.generationAvailable, true, "Development mode exposes the explicit manual prompt/import flow");
+  assert.equal(initialAiSettings.providers.development.id, "opencode-local");
+  assert.equal(initialAiSettings.providers.development.configured, false, "Development status fails closed without a valid authenticated OpenCode loopback endpoint");
+  assert.equal(JSON.stringify(initialAiSettings).includes("smoke-password"), false, "OpenCode auth never reaches browser settings response");
   assert.equal(initialAiSettings.providers.production.configured, false);
   assert.ok(!("apiKey" in initialAiSettings.providers.production), "API key must not be exposed to frontend");
+  const developmentRequest = { input: { topic: "Kenapa langit biru?", language: "id-ID", targetDurationSec: 30, deliveryStyle: "edukatif", additionalInstructions: "", sourceUrls: [] }, model: "openai/gpt-5-mini" };
+  const missingOrigin = await fetch(`${baseUrl}/api/ai-generation`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(developmentRequest) });
+  assert.equal(missingOrigin.status, 403, "model-trigger endpoint requires same-origin request");
+  const crossOrigin = await fetch(`${baseUrl}/api/ai-generation`, { method: "POST", headers: { "content-type": "application/json", origin: "https://attacker.example" }, body: JSON.stringify(developmentRequest) });
+  assert.equal(crossOrigin.status, 403, "cross-origin model trigger is rejected");
+  const developmentGeneration = await fetch(`${baseUrl}/api/ai-generation`, {
+    method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify(developmentRequest),
+  });
+  assert.equal(developmentGeneration.status, 503, "Development one-click generation requires authenticated loopback OpenCode");
+  assert.equal((await developmentGeneration.json()).code, "opencode-unavailable");
   assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "staging" }) })).status, 400, "backend validates mode values");
   assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "production" }) })).status, 409, "unconfigured/paid-capable Production cannot be selected");
   const unchangedAiSettings = await getAiSettings().then((response) => response.json());
@@ -98,6 +110,20 @@ try {
   settingsDb.close();
 
   const research = await fetch(`${baseUrl}/api/sample`).then((response) => response.json());
+  const requestId = "7ae1a87d-c840-4a13-9a17-55de36cce721";
+  const createIdempotently = (researchPackage: unknown) => fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage, requestId }),
+  });
+  const firstIdempotentCreate = await createIdempotently(research);
+  const firstIdempotentProject = await firstIdempotentCreate.json();
+  const repeatedIdempotentCreate = await createIdempotently(research);
+  const repeatedIdempotentProject = await repeatedIdempotentCreate.json();
+  assert.equal(firstIdempotentCreate.status, 201);
+  assert.equal(repeatedIdempotentCreate.status, 200);
+  assert.equal(repeatedIdempotentProject.id, firstIdempotentProject.id, "same AI draft request ID must not create duplicate projects");
+  assert.equal((await createIdempotently({ ...research, title: `${research.title} changed` })).status, 409, "request ID cannot be reused for a different project payload");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${firstIdempotentProject.id}`, { method: "DELETE" })).status, 200);
+
   const silentProject = await fetch(`${baseUrl}/api/projects`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
   }).then((response) => response.json());

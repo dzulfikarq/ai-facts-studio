@@ -21,4 +21,4 @@ Composition layers are depth-sorted groups. Explicit `group` nodes support one l
 
 ## Existing registry
 
-`mountain-reveal`, `plate-collision`, `folding-uplift`, `himalaya`, `volcano`, `infographic`, `space-orbit`, and `animal-habitat` each have separate default composition and registry entry. Reusable SVG rendering is shared through primitives, including rock/river/crystal icons and process-flow/water-cycle diagrams; old V1 renderer stays versioned for old job snapshots. New topics require authored Research Package scenes/compositions; free-title artwork generation is not implemented.
+`mountain-reveal`, `plate-collision`, `folding-uplift`, `himalaya`, `volcano`, `infographic`, `space-orbit`, and `animal-habitat` each have separate default composition and registry entry. Reusable SVG rendering is shared through primitives, including rock/river/crystal icons and process-flow/water-cycle diagrams; old V1 renderer stays versioned for old job snapshots. AI Generation can draft a Research Package for new topics, but topic-specific art still requires template/composition authoring; free-title Visual Director generation is not implemented.

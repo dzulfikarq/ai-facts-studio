@@ -63,4 +63,4 @@ Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run te
 
 SFX remains partial: `sfxCues` is metadata only, with no local licensed library, cue timeline, mixing, ducking, or playback.
 
-Topic limit: renderer consumes supplied scenes/compositions; it does not research free-form titles, draft storyboards, or invent topic-specific art. `Kenapa Air Laut Asin?` is a manually composed acceptance package using reusable icons/diagrams.
+Renderer limit: engine consumes supplied scenes/compositions and does not research topics or invent topic-specific art. AI Generation can draft Research/Storyboard separately; its `visualDescription` remains editorial, while renderer uses authored templates/compositions. `Kenapa Air Laut Asin?` remains manually composed acceptance package using reusable icons/diagrams.

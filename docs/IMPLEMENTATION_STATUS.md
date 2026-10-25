@@ -1,6 +1,6 @@
 # AI Facts Studio V1.0.4 — implementation status
 
-Baseline HEAD `ddd92c5`; V1.0.4 changes are uncommitted. Verified 24 Oct 2026 on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`.
+Baseline HEAD `9af3155` includes V1.0.4 and corrected AI Generation Settings. Fase 2 Research/Storyboard and OpenCode changes remain uncommitted. Baseline matrix verified 24 Oct 2026; targeted provider/UI regression checks rerun 25 Oct on Windows x64, Node `v22.22.1`, npm `10.9.4`, FFmpeg/ffprobe `9.0.2`.
 
 ## Implemented
 
@@ -12,7 +12,7 @@ Baseline HEAD `ddd92c5`; V1.0.4 changes are uncommitted. Verified 24 Oct 2026 on
 - Workspace now follows five gated steps: Materi & Storyboard, Narasi, Review & Subtitle, Preview Video, and Render & Download. Progress resumes per project but cannot skip incomplete review gates.
 - Interactive Player uses current draft and approved audio without creating snapshot/job or consuming video quota. Explicit final render is only snapshot/job entry point. Preview review is tied to storyboard/audio fingerprint; edits invalidate it.
 - Research edits invalidate author verification. Gemini voice catalog loads only after explicit user action; TTS is not triggered by navigation.
-- AI Generation Settings persists Development/Production separately from `NODE_ENV`, deployment, and TTS. Production uses its own Gemini Text model allowlist, Free Tier guard, and rolling request quota; backend status never exposes the shared API key. Development remains manual prompt + JSON import. Provider task contract is defined; generator execution remains unavailable.
+- AI Generation Settings persists Development/Production separately from `NODE_ENV`, deployment, and TTS. Development one-click calls authenticated loopback OpenCode with a selected connected model, temporary directory, purpose-built research agent, denied tools, cancel/timeout, and cleanup; manual prompt/paste remains under Advanced. Production uses backend Gemini Text, bounded validation repair, Free Tier model/guard, and rolling quota. Source URLs are user-provided, never fetched/auto-verified; no model-generated URLs enter Research Package. Visual Director/art generation remains unavailable.
 - Gemini Text allowlist rechecked against Google's official catalog/pricing: `gemini-3.8-flash` retained, `gemini-3.5-flash-lite` default; invalid `gemini-3.8-flash-lite` removed. Gemini TTS model/allowlist unchanged.
 - Live full-narration command is opt-in and staged: one preview request → user listen/approval → snapshot/Player review → explicit render confirmation. Standard tests do not invoke it.
 
@@ -20,9 +20,9 @@ Baseline HEAD `ddd92c5`; V1.0.4 changes are uncommitted. Verified 24 Oct 2026 on
 
 | Check | Result |
 |---|---|
-| `npm test` | PASS — 5 packages, Research Package migration/safety, caption/audio-quality validation, motion, TTS guards/cache/quota, workflow gates, AI mode/provider/quota contract and model allowlist, and preview-review invalidation. |
+| `npm test` | PASS — Research Package migration/safety, multi-topic Research/Storyboard fixtures, Development prompt/manual validation, mocked OpenCode connected/model selection/isolation/tool denial/cancel, mocked Production structured output + bounded retry, Free Tier/model/quota gates, TTS, motion, and workflow validation. |
 | `npm run typecheck` | PASS. |
-| `npm run smoke:api` | PASS — V1 migration, upload/delete, research-review invalidation, AI mode validation/default/persistence, local-only settings API, TTS quota isolation, snapshot audio SHA, silent-render gate, rolling quota. Gemini disabled in isolated DB. |
+| `npm run smoke:api` | PASS — V1 migration, upload/delete, AI mode validation/default/persistence, OpenCode unavailable and same-origin gates, local-only settings API, idempotent project creation, TTS quota isolation, snapshot/audio integrity, silent-render gate, rolling quota. Gemini disabled in isolated DB. |
 | `npm run smoke:tts` | PASS — Development/Production preference persists across restart without changing pending audio, approval, or rendered job; mock TTS covers active-upload preservation, settings/script edits, immutable snapshot, AAC validation. Mock is sine tone, not speech. |
 | `npm run smoke:render` | PASS — V1/V2 H.264/AAC and snapshot audio integrity. |
 | `npm run smoke:samples` | PASS — Mountain, Lightning, Sea Salt silent MP4s, H.264 1080×1920, 56.04/24.04/32.04 sec. Reports tag `silent-expected`. |
@@ -43,6 +43,6 @@ Review artifacts: silent outputs + ffprobe/audio reports in `renders/v1.0.4-revi
 
 ## Limits
 
-- Renderer consumes supplied Research Package scenes; free-form titles do not generate research/storyboards/topic illustrations.
+- Gemini can draft Research/Storyboard from free-form topics; user review remains mandatory. Renderer consumes the resulting Research Package and does not generate topic-specific artwork from visual descriptions.
 - Captions are phrase/scene estimates, not word-aligned. Audio loudness/clipping checks do not perform speech recognition.
 - SFX playback/mixing remains absent. Golden hashes target local Windows/Chrome/font rasterization; cleanup fault injection and GitHub Actions dispatch remain untested.

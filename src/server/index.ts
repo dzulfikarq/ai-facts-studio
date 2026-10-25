@@ -9,13 +9,18 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
 import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import { dataDir, db, jobForClient, projectFromRow, type JobRow, type StoredAudio, type StoredProject } from "./database";
-import { getAiGenerationSettings, isLoopbackAddress, writeAiGenerationMode } from "./ai-generation/provider";
+import { generateAiResearchStoryboard, AiGenerationOutputError } from "./ai-generation/generate";
+import { GeminiTextGenerationError, GeminiTextGenerationProvider } from "./ai-generation/gemini-text-provider";
+import { getOpenCodeProviderStatus, OpenCodeGenerationError, OpenCodeTextGenerationProvider } from "./ai-generation/opencode-provider";
+import { AiGenerationRequestError } from "./ai-generation/quota";
+import { getAiGenerationSettings, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "./ai-generation/provider";
 import { createSpeechProvider, SpeechProviderError, ttsCacheKey, type SpeechAudio, type SpeechVoice, type SpeechVoiceCatalog } from "./tts/provider";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +38,8 @@ const ttsDailyLimit = Math.max(1, Number(process.env.GEMINI_TTS_DAILY_REQUEST_LI
 const maxTtsCharacters = 6000;
 let activeRenderJob: string | null = null;
 let activeJobCreation = false;
+let activeAiGeneration = false;
+let activeAiGenerationPhase: "idle" | "connecting" | "generating" | "validating" | "repairing" = "idle";
 const activeTtsKeys = new Set<string>();
 const activeProjectTasks = new Set<string>();
 const speechProvider = await createSpeechProvider();
@@ -225,18 +232,32 @@ app.get("/api/status", async (_request, response) => {
 });
 
 const aiGenerationModeSchema = z.object({ mode: z.enum(["development", "production"]) }).strict();
+const aiGenerationRequestSchema = z.object({ input: aiGenerationInputSchema, model: z.string().trim().min(1).max(300).optional() }).strict();
 const localSettingsOnly = (request: express.Request, response: express.Response) => {
   if (isLoopbackAddress(request.socket.remoteAddress)) return true;
   apiError(response, 403, "AI Generation Settings hanya bisa dibaca dan diubah dari perangkat lokal.", { code: "local-only" });
   return false;
 };
 
-app.get("/api/settings/ai-generation", (request, response) => {
+const sameOriginRequest = (request: express.Request, response: express.Response) => {
+  const origin = request.get("origin");
+  let parsedOrigin: URL;
+  try { parsedOrigin = new URL(origin ?? ""); }
+  catch { apiError(response, 403, "Request AI harus berasal dari origin aplikasi lokal.", { code: "invalid-origin" }); return false; }
+  const originHost = parsedOrigin.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!["http:", "https:"].includes(parsedOrigin.protocol) || !["127.0.0.1", "::1", "localhost"].includes(originHost) || parsedOrigin.host !== request.get("host")) {
+    apiError(response, 403, "Request AI harus berasal dari origin aplikasi lokal.", { code: "invalid-origin" });
+    return false;
+  }
+  return true;
+};
+
+app.get("/api/settings/ai-generation", async (request, response) => {
   if (!localSettingsOnly(request, response)) return;
-  response.json(getAiGenerationSettings(db));
+  response.json(getAiGenerationSettings(db, process.env, Date.now(), await getOpenCodeProviderStatus()));
 });
 
-app.put("/api/settings/ai-generation", (request, response) => {
+app.put("/api/settings/ai-generation", async (request, response) => {
   if (!localSettingsOnly(request, response)) return;
   const parsed = aiGenerationModeSchema.safeParse(request.body);
   if (!parsed.success) return apiError(response, 400, "AI Generation Mode harus Development atau Production.", { code: "invalid-ai-generation-mode", issues: parsed.error.issues });
@@ -245,7 +266,62 @@ app.put("/api/settings/ai-generation", (request, response) => {
     return apiError(response, 409, settings.providers.production.disabledReason ?? "Production belum dikonfigurasi.", { code: "ai-generation-unconfigured" });
   }
   writeAiGenerationMode(db, parsed.data.mode);
-  response.json(getAiGenerationSettings(db));
+  response.json(getAiGenerationSettings(db, process.env, Date.now(), await getOpenCodeProviderStatus()));
+});
+
+app.post("/api/ai-generation", async (request, response) => {
+  if (!localSettingsOnly(request, response)) return;
+  if (!sameOriginRequest(request, response)) return;
+  if (activeAiGeneration) return apiError(response, 409, "AI generation sedang berjalan. Tunggu sampai selesai.", { code: "generation-in-progress" });
+  const parsed = aiGenerationRequestSchema.safeParse(request.body);
+  if (!parsed.success) return apiError(response, 400, "Input topik atau URL sumber tidak valid.", { code: "invalid-ai-generation-input", issues: parsed.error.issues });
+  const mode = readAiGenerationMode(db);
+  let provider: GeminiTextGenerationProvider | OpenCodeTextGenerationProvider;
+  let production = null as ReturnType<typeof getAiGenerationSettings>["providers"]["production"] | null;
+  if (mode === "development") {
+    const openCode = new OpenCodeTextGenerationProvider(parsed.data.model ?? "");
+    const status = await openCode.status();
+    if (!status.configured) return apiError(response, 503, status.disabledReason ?? "OpenCode lokal belum tersedia.", { code: "opencode-unavailable" });
+    if (!parsed.data.model || !status.models.some((model) => model.id === parsed.data.model)) return apiError(response, 400, "Pilih model yang terhubung di OpenCode.", { code: "opencode-model-required" });
+    provider = openCode;
+  } else {
+    const settings = getAiGenerationSettings(db).providers.production;
+    if (!settings.configured || !settings.model) return apiError(response, 503, settings.disabledReason ?? "Gemini Text belum dikonfigurasi.", { code: "not-configured" });
+    production = settings;
+    provider = new GeminiTextGenerationProvider(settings.model, process.env.GEMINI_API_KEY?.trim() ?? "");
+  }
+
+  if (activeAiGeneration) return apiError(response, 409, "AI generation sedang berjalan. Tunggu sampai selesai.", { code: "generation-in-progress" });
+  activeAiGeneration = true;
+  activeAiGenerationPhase = "connecting";
+  const generationController = new AbortController();
+  const abortGeneration = () => generationController.abort();
+  request.once("aborted", abortGeneration);
+  response.once("close", () => { if (!response.writableEnded) abortGeneration(); });
+  try {
+    const draft = await generateAiResearchStoryboard(db, mode, production, parsed.data.input, provider, {
+      signal: generationController.signal,
+      onPhase: (phase) => { activeAiGenerationPhase = phase; },
+    });
+    response.json(draft);
+  } catch (error) {
+    if (error instanceof AiGenerationOutputError) return apiError(response, 422, error.message, { code: "ai-output-invalid", issues: error.issues });
+    if (error instanceof AiGenerationRequestError) return apiError(response, error.httpStatus, error.message, { code: error.code, nextAllowedAt: error.nextAllowedAt });
+    if (error instanceof GeminiTextGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+    if (error instanceof OpenCodeGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+    if (generationController.signal.aborted) return apiError(response, 499, "Generation dibatalkan.", { code: "cancelled" });
+    console.error("AI Generation failed:", error instanceof Error ? error.message : "Unknown provider error");
+    apiError(response, 502, "AI Research/Storyboard gagal dibuat. Periksa konfigurasi atau coba lagi.", { code: "ai-generation-failed" });
+  } finally {
+    request.off("aborted", abortGeneration);
+    activeAiGeneration = false;
+    activeAiGenerationPhase = "idle";
+  }
+});
+
+app.get("/api/ai-generation/status", (request, response) => {
+  if (!localSettingsOnly(request, response)) return;
+  response.json({ active: activeAiGeneration, phase: activeAiGenerationPhase });
 });
 
 app.get("/api/tts/status", (_request, response) => {
@@ -309,12 +385,28 @@ app.get("/api/projects/:id", (request, response) => {
 app.post("/api/projects", (request, response) => {
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
-  const id = randomUUID();
+  const rawRequestId = request.body?.requestId;
+  const requestIdResult = rawRequestId === undefined ? null : z.string().uuid().safeParse(rawRequestId);
+  if (requestIdResult && !requestIdResult.success) return apiError(response, 400, "Request ID idempotency tidak valid.", { code: "invalid-request-id" });
+  const requestId = requestIdResult?.success ? requestIdResult.data : null;
+  const researchSha256 = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
   const now = new Date().toISOString();
   const stored: StoredProject = { researchPackage: parsed.data, audio: null, pendingTts: null, researchReviewStatus: "needs-review" };
-  db.prepare("INSERT INTO projects (id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, parsed.data.title, JSON.stringify(stored), now, now);
-  response.status(201).json(getProject(id));
+  const create = () => {
+    const id = randomUUID();
+    db.prepare("INSERT INTO projects (id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, parsed.data.title, JSON.stringify(stored), now, now);
+    if (requestId) db.prepare("INSERT INTO project_create_requests (request_id, project_id, research_sha256, created_at) VALUES (?, ?, ?, ?)")
+      .run(requestId, id, researchSha256, now);
+    return { id, replay: false, conflict: false };
+  };
+  const created = requestId ? withTransaction(() => {
+    const existing = db.prepare("SELECT project_id, research_sha256 FROM project_create_requests WHERE request_id = ?").get(requestId) as { project_id: string; research_sha256: string } | undefined;
+    if (!existing) return create();
+    return { id: existing.project_id, replay: existing.research_sha256 === researchSha256, conflict: existing.research_sha256 !== researchSha256 };
+  }) : create();
+  if (created.conflict) return apiError(response, 409, "Request ID sudah dipakai untuk Research Package berbeda.", { code: "idempotency-conflict" });
+  response.status(created.replay ? 200 : 201).json(getProject(created.id));
 });
 
 app.put("/api/projects/:id", (request, response) => {

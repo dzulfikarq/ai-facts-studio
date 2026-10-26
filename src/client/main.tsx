@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { ArrowLeft, Clock3, Film, House, Save as SaveIcon, Search, Settings as SettingsIcon, Sparkles, Trash2 } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -21,12 +22,14 @@ import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
 import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
 import { VisualStoryboardReview } from "./VisualStoryboardReview";
+import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
 import "./styles.css";
 import "./tts.css";
 import "./workflow.css";
 import "./workspace-refinement.css";
 import "./visual-storyboard.css";
+import "./redesign.css";
 
 type Job = {
   id: string;
@@ -78,8 +81,8 @@ type TtsVoice = { id: string; name: string; locale: string; localeName: string; 
 type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; dailyLimit?: number; requestsUsed?: number; requestsRemaining?: number; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
 type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null; retryAt?: string | null; quotaType?: string | null };
-type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "danger" };
-type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void };
+type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "warning" | "danger"; onConfirm?: () => Promise<void> };
+type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void; pending?: boolean; error?: string };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -112,6 +115,7 @@ function friendlyError(error: unknown) {
 
 function App() {
   const [view, setView] = useState<"dashboard" | "create" | "workspace" | "settings">("dashboard");
+  const [theme, setTheme] = useThemePreference();
   const [createMode, setCreateMode] = useState<"import" | "ai">("ai");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -146,6 +150,7 @@ function App() {
   const confirmationRef = useRef<PendingConfirmation | null>(null);
   const createDraftUnsaved = useRef(false);
   const previewPlayer = useRef<PlayerRef>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const setCreateDraftUnsaved = useCallback((value: boolean) => { createDraftUnsaved.current = value; }, []);
 
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
@@ -172,6 +177,30 @@ function App() {
   const stepStatuses = workflowStatuses(workflowSignals);
   const renderMode = aiGenerationSettings?.mode ?? status?.generationMode ?? null;
 
+  useLayoutEffect(() => {
+    const shell = layoutRef.current;
+    if (!shell) return;
+    const syncPageBounds = () => {
+      const leftControl = shell.querySelector<HTMLElement>(".nav-home, .topbar-back");
+      const rightControl = shell.querySelector<HTMLElement>('.topbar-icon[aria-label="Pengaturan"]');
+      if (!leftControl || !rightControl) return;
+      const shellBounds = shell.getBoundingClientRect();
+      shell.style.setProperty("--page-inset-start", `${Math.max(0, leftControl.getBoundingClientRect().left - shellBounds.left)}px`);
+      shell.style.setProperty("--page-inset-end", `${Math.max(0, shellBounds.right - rightControl.getBoundingClientRect().right)}px`);
+    };
+    syncPageBounds();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", syncPageBounds);
+      return () => window.removeEventListener("resize", syncPageBounds);
+    }
+    const observer = new ResizeObserver(syncPageBounds);
+    [".topbar", ".topbar-left", ".topbar-context", ".topbar-actions"].forEach((selector) => {
+      const element = shell.querySelector(selector);
+      if (element) observer.observe(element);
+    });
+    return () => observer.disconnect();
+  }, [view]);
+
   async function refresh() {
     const [list, serverStatus] = await Promise.all([
       api<Project[]>("/api/projects"),
@@ -197,11 +226,24 @@ function App() {
     });
   }
 
-  function resolveConfirmation(confirmed: boolean) {
+  async function resolveConfirmation(confirmed: boolean) {
     const pending = confirmationRef.current;
+    if (!pending || pending.pending) return;
+    if (confirmed && pending.onConfirm) {
+      const resolving = { ...pending, pending: true, error: "" };
+      confirmationRef.current = resolving;
+      setConfirmation(resolving);
+      try { await pending.onConfirm(); }
+      catch (error) {
+        const failed = { ...resolving, pending: false, error: friendlyError(error) };
+        confirmationRef.current = failed;
+        setConfirmation(failed);
+        return;
+      }
+    }
     confirmationRef.current = null;
     setConfirmation(null);
-    pending?.resolve(confirmed);
+    pending.resolve(confirmed);
   }
 
   useEffect(() => {
@@ -234,13 +276,15 @@ function App() {
   async function saveBeforeLeavingWorkspace() {
     if (view !== "workspace" || saved) return true;
     if (busy || ttsBusy || ttsLoading) { setMessage("Tunggu proses aktif selesai sebelum berpindah halaman."); return false; }
-    const confirmed = await askConfirmation({
+    return await askConfirmation({
       title: "Simpan draft sebelum keluar?",
       message: "Perubahan storyboard belum tersimpan. Simpan sekarang agar bisa dilanjutkan nanti.",
       confirmLabel: "Simpan draft",
       cancelLabel: "Tetap di workspace",
+      onConfirm: async () => {
+        if (!await saveProject()) throw new Error("Draft belum tersimpan. Periksa pesan error, lalu coba lagi.");
+      },
     });
-    return confirmed && Boolean(await saveProject());
   }
 
   async function confirmLeaveCreate() {
@@ -482,6 +526,7 @@ function App() {
       message: "Composer akan mengganti komposisi saat ini. Hasil manual dan approval akan hilang; komposisi baru perlu ditinjau dan disetujui ulang.",
       confirmLabel: "Ganti ilustrasi",
       cancelLabel: "Pertahankan komposisi",
+      tone: "warning",
     })) return;
     setGeneratingVisualSceneId(sceneId);
     try {
@@ -546,6 +591,7 @@ function App() {
       message: "AI hanya menyusun semantic plan teks; composer lokal akan membuat ulang komposisi dan approval sebelumnya menjadi stale.",
       confirmLabel: "Plan dan recompose",
       cancelLabel: "Pertahankan ilustrasi",
+      tone: "warning",
     })) return;
     setBusy(true);
     setPlanningVisualSceneId(sceneId);
@@ -809,7 +855,7 @@ function App() {
       return;
     }
     let renderProject = project;
-    if (!renderProject.audio && !await askConfirmation({ title: "Render video tanpa narasi?", message: "Audio belum tersedia. MP4 akan berisi video tanpa voice-over; konfirmasi hanya jika memang diinginkan.", confirmLabel: "Render tanpa narasi", tone: "primary" })) return;
+    if (!renderProject.audio && !await askConfirmation({ title: "Render video tanpa narasi?", message: "Audio belum tersedia. MP4 akan berisi video tanpa voice-over; konfirmasi hanya jika memang diinginkan.", confirmLabel: "Render tanpa narasi", tone: "warning" })) return;
     setBusy(true);
     try {
       let job = renderProject.latestJobContentCurrent && renderProject.latestJob?.rendererVersion === RENDERER_VERSION ? renderProject.latestJob : null;
@@ -858,11 +904,7 @@ function App() {
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
-  async function deleteProject(id: string) {
-    const target = projects.find((item) => item.id === id);
-    if (!target || busy || ttsBusy || ttsLoading) return;
-    if (view === "create" && project?.id === id && !await confirmLeaveCreate()) return;
-    if (!await askConfirmation({ title: "Hapus video project?", message: `“${target.researchPackage.title}” beserta storyboard, job, dan hasil render akan dihapus permanen.`, confirmLabel: "Hapus video", tone: "danger" })) return;
+  async function performDeleteProject(id: string, title: string) {
     setBusy(true);
     try {
       const result = await api<{ deleted: boolean; cleanupPending: number | null }>(`/api/projects/${id}`, { method: "DELETE" });
@@ -878,59 +920,69 @@ function App() {
       }
       await refresh();
       setMessage(result.cleanupPending === null
-        ? `Project “${target.researchPackage.title}” dihapus. Cleanup file masih antre dan akan dicoba ulang otomatis.`
+        ? `Project “${title}” dihapus. Cleanup file masih antre dan akan dicoba ulang otomatis.`
         : result.cleanupPending > 0
-          ? `Project “${target.researchPackage.title}” dihapus. ${result.cleanupPending} cleanup file akan dicoba ulang otomatis.`
-          : `Project “${target.researchPackage.title}” dihapus.`);
-    } catch (error) { setMessage(friendlyError(error)); }
+          ? `Project “${title}” dihapus. ${result.cleanupPending} cleanup file akan dicoba ulang otomatis.`
+          : `Project “${title}” dihapus.`);
+    } catch (error) { setMessage(friendlyError(error)); throw error; }
     finally { setBusy(false); }
+  }
+
+  async function deleteProject(id: string) {
+    const target = projects.find((item) => item.id === id);
+    if (!target || busy || ttsBusy || ttsLoading) return;
+    if (view === "create" && project?.id === id && !await confirmLeaveCreate()) return;
+    await askConfirmation({
+      title: "Hapus video project?",
+      message: `“${target.researchPackage.title}” beserta storyboard, job, dan hasil render akan dihapus permanen.`,
+      confirmLabel: "Hapus video",
+      tone: "danger",
+      onConfirm: () => performDeleteProject(id, target.researchPackage.title),
+    });
   }
 
   const currentWorkspaceStep = workspaceSteps.find((step) => step.id === activeStep) ?? workspaceSteps[0];
   const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
 
-  return <div className="app-shell">
-    <aside className="sidebar">
-      <button className="brand" onClick={() => void goToDashboard()} aria-label="Kembali ke dashboard" disabled={busy || ttsBusy || ttsLoading}>
-        <span className="brand-mark">AF</span><span><strong>AI Facts</strong><small>STUDIO</small></span>
-      </button>
-      <div className="side-label">WORKSPACE</div>
-      <button className={`nav-item ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading}><span className="nav-glyph">⌂</span> Dashboard</button>
-      <button className={`nav-item ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading}><span className="nav-glyph">＋</span> Create video</button>
-      <button className={`nav-item ${view === "settings" ? "active" : ""}`} onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Settings AI Generation"><span className="nav-glyph">⚙</span> Settings</button>
-      <div className="side-label library-label">VIDEO LIBRARY <span>{projects.length}</span></div>
-      <div className="project-nav">
-        {projects.map((item) => <div className="project-nav-row" key={item.id}>
-           <button className={`project-link ${project?.id === item.id ? "selected" : ""}`} onClick={() => void openProject(item.id)} disabled={busy || ttsBusy || ttsLoading}>
-            <span className="project-dot" /> <span>{item.researchPackage.title}</span>
-          </button>
-           <button className="project-delete" onClick={() => void deleteProject(item.id)} disabled={busy || ttsBusy || ttsLoading} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project">×</button>
-        </div>)}
-        {!projects.length && <p className="empty-nav">Video yang dibuat muncul di sini.</p>}
-      </div>
-      <div className="sidebar-bottom">
-        <div className="local-pill"><i /> DATA TERSIMPAN LOKAL</div>
-        <div className="sidebar-note">Data disimpan lokal; AI Voice mengirim naskah ke provider saat diminta.</div>
-      </div>
-    </aside>
-
+  return <div className="app-shell" ref={layoutRef}>
     <main className="main-area">
-      <header className="topbar">
-        <div className="breadcrumb"><span>AI Facts Studio</span><b>/</b><strong>{view === "workspace" ? currentWorkspaceStep.title : view === "create" ? "Create video" : view === "settings" ? "Settings" : "Dashboard"}</strong></div>
-        <div className="topbar-right"><span className={`local-indicator ${aiGenerationSettings?.mode ?? ""}`}><i /> AI GEN · {aiGenerationSettings?.mode === "production" ? "PRODUCTION" : aiGenerationSettings?.mode === "development" ? "DEVELOPMENT" : "LOADING"}</span><button className="avatar" aria-label="Pengguna lokal">AF</button></div>
+      <header className={`topbar ${view === "workspace" ? "context-topbar" : ""}`}>
+        {view === "workspace" && project ? <div className="topbar-left context-topbar-left">
+          <button type="button" className="brand topbar-brand-placeholder" disabled aria-hidden="true" tabIndex={-1}>
+            <span className="brand-mark"><Sparkles aria-hidden="true" size={17} /></span><span><strong>AI Facts</strong><small>STUDIO</small></span>
+          </button>
+          <div className="topbar-context">
+            <button type="button" className="topbar-back" onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-label="Kembali ke Project Saya"><ArrowLeft aria-hidden="true" size={17} /><span>Project Saya</span></button>
+            <div className="topbar-project"><strong>{research?.title ?? project.researchPackage.title}</strong><span className={saved ? "is-saved" : "is-unsaved"}><i />{saved ? "Tersimpan" : "Perubahan belum disimpan"}</span></div>
+          </div>
+        </div> : <div className="topbar-left">
+          <button className="brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Beranda" disabled={busy || ttsBusy || ttsLoading}>
+            <span className="brand-mark"><Sparkles aria-hidden="true" size={17} /></span><span><strong>AI Facts</strong><small>STUDIO</small></span>
+          </button>
+          <button className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
+        </div>}
+        <div className="topbar-actions">
+          <ThemeSwitcher preference={theme} onChange={setTheme} />
+          <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>
+          <div className="topbar-primary-slot">
+            <button type="button" className="button button-primary topbar-create topbar-primary-anchor" disabled aria-hidden="true" tabIndex={-1}><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>
+            {view === "workspace" ? !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan" title="Simpan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>
+              : view !== "create" && <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-label="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>}
+          </div>
+        </div>
       </header>
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
-      {view === "dashboard" && <Dashboard status={status} mode={renderMode} projects={projects} busy={busy || ttsBusy || ttsLoading} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
-      {view === "create" && <section className="page create-page">
+      {view === "dashboard" && <Dashboard projects={projects} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
+      {view === "create" && <section className="page layout-container create-page">
         <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Generate draft dari topik bebas, impor Research Package v1.0/v1.1, atau gunakan sample. Versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung</button>
         </div>
         <div className="create-mode-switch" role="tablist" aria-label="Cara membuat video">
-          <button type="button" role="tab" aria-selected={createMode === "import"} className={createMode === "import" ? "selected" : ""} onClick={() => setCreateMode("import")}>Import Research Package</button>
           <button type="button" role="tab" aria-selected={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>Generate with AI</button>
+          <button type="button" role="tab" aria-selected={createMode === "import"} className={createMode === "import" ? "selected" : ""} onClick={() => setCreateMode("import")}>Import Research Package</button>
         </div>
         <div hidden={createMode !== "ai"}><AiGenerationPanel
           mode={aiGenerationSettings?.mode ?? null}
@@ -959,15 +1011,16 @@ function App() {
         busy={aiSettingsBusy}
         error={aiSettingsError}
         onMode={(mode) => void setAiGenerationMode(mode)}
+        theme={theme}
+        onTheme={setTheme}
       />}
 
-      {view === "workspace" && project && research && <section className="page workspace-page">
+      {view === "workspace" && project && research && <section className="page layout-container workspace-page">
         <div className="workspace-heading">
           <div><div className="eyebrow">VIDEO WORKSPACE <span className="crumb-dot">/</span> LANGKAH {currentStepIndex + 1} DARI {workspaceSteps.length}</div>
             <input className="title-input" aria-label="Judul video" value={research.title} onChange={(event) => updateResearch((current) => ({ ...current, title: event.target.value }))} />
             <div className="meta-line"><span>{research.scenes.length} scenes</span><i />{project.audio ? <span>Audio {project.audio.durationSec.toFixed(1)} dtk</span> : <span>Audio belum ditambahkan</span>}<i /><span>9:16 · 1080 × 1920</span></div>
           </div>
-          <div className="heading-actions"><button className={`button button-light save-button ${saved ? "saved" : ""}`} onClick={() => void saveProject()} disabled={busy || saved}>{saved ? "✓ Tersimpan" : "Simpan perubahan"}</button></div>
         </div>
 
         <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />
@@ -1138,11 +1191,13 @@ function App() {
   </div>;
 }
 
-function AiGenerationSettingsPage({ settings, busy, error, onMode }: {
+function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onTheme }: {
   settings: AiGenerationSettings | null;
   busy: boolean;
   error: string;
   onMode: (mode: AiGenerationMode) => void;
+  theme: ThemePreference;
+  onTheme: (theme: ThemePreference) => void;
 }) {
   const development = settings?.providers.development;
   const production = settings?.providers.production;
@@ -1166,8 +1221,9 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode }: {
     "model-unavailable": "Model Unavailable",
     connected: "Connected",
   } as const)[development.state] : "Checking";
-  return <section className="page ai-generation-settings">
+  return <section className="page layout-container ai-generation-settings">
     <div className="page-heading"><div><div className="eyebrow">KONFIGURASI PROVIDER</div><h1>Settings</h1><p>AI Generation Mode terpisah dari AI Voice, NODE_ENV, dan mode deployment.</p></div></div>
+    <AppearanceSettings preference={theme} onChange={onTheme} />
     {error && <div className="workflow-alert danger" role="alert">{error}</div>}
     {!settings ? <div className="workflow-empty" role={error ? undefined : "status"}>{error ? "Pengaturan gagal dimuat." : "Memuat pengaturan AI…"}</div> : <>
       <section className="ai-settings-panel">
@@ -1257,29 +1313,32 @@ function OpenCodeProviderModels({ group }: { group: OpenCodeModelGroup }) {
   </section>;
 }
 
-function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmation; onResolve: (confirmed: boolean) => void }) {
+function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmation; onResolve: (confirmed: boolean) => Promise<void> }) {
   const cancelButton = useRef<HTMLButtonElement>(null);
   const confirmButton = useRef<HTMLButtonElement>(null);
   const dialog = useRef<HTMLElement>(null);
+  const optionsRef = useRef(options);
+  const onResolveRef = useRef(onResolve);
+  optionsRef.current = options;
+  onResolveRef.current = onResolve;
 
   useEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     cancelButton.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (optionsRef.current.pending) return;
         event.preventDefault();
-        onResolve(false);
+        void onResolveRef.current(false);
       } else if (event.key === "Tab") {
         const active = document.activeElement;
-        if (!dialog.current?.contains(active)) {
+        const focusable = [...(dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (!first) { event.preventDefault(); dialog.current?.focus(); return; }
+        if (first && last && (!dialog.current?.contains(active) || (event.shiftKey && active === first) || (!event.shiftKey && active === last))) {
           event.preventDefault();
-          cancelButton.current?.focus();
-        } else if (event.shiftKey && active === cancelButton.current) {
-          event.preventDefault();
-          confirmButton.current?.focus();
-        } else if (!event.shiftKey && active === confirmButton.current) {
-          event.preventDefault();
-          cancelButton.current?.focus();
+          (event.shiftKey ? last : first).focus();
         }
       }
     };
@@ -1290,13 +1349,16 @@ function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmati
     };
   }, []);
 
-  return <div className="confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onResolve(false); }}>
-    <section ref={dialog} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
-      <div className={`confirm-symbol ${options.tone === "danger" ? "danger" : ""}`} aria-hidden="true">{options.tone === "danger" ? "!" : "?"}</div>
+  useEffect(() => { if (options.pending) dialog.current?.focus(); }, [options.pending]);
+
+  return <div className="confirm-backdrop" onMouseDown={(event) => { if (!options.pending && event.target === event.currentTarget) void onResolve(false); }}>
+    <section ref={dialog} tabIndex={-1} className="confirm-dialog" role={options.tone === "primary" || !options.tone ? "dialog" : "alertdialog"} aria-modal="true" aria-busy={options.pending || undefined} aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <div className={`confirm-symbol ${options.tone === "danger" ? "danger" : options.tone === "warning" ? "warning" : ""}`} aria-hidden="true">{options.tone === "primary" || !options.tone ? "?" : "!"}</div>
       <div className="confirm-copy"><span className="confirm-eyebrow">KONFIRMASI</span><h2 id="confirm-title">{options.title}</h2><p id="confirm-message">{options.message}</p></div>
+      {options.error && <p className="confirm-error" role="alert">{options.error}</p>}
       <div className="confirm-actions">
-        <button ref={cancelButton} className="confirm-cancel" onClick={() => onResolve(false)}>{options.cancelLabel ?? "Batal"}</button>
-        <button ref={confirmButton} className={`confirm-submit ${options.tone === "danger" ? "danger" : ""}`} onClick={() => onResolve(true)}>{options.confirmLabel}</button>
+        <button ref={cancelButton} className="confirm-cancel" onClick={() => void onResolve(false)} disabled={options.pending}>{options.cancelLabel ?? "Batal"}</button>
+        <button ref={confirmButton} className={`confirm-submit ${options.tone === "danger" ? "danger" : ""}`} onClick={() => void onResolve(true)} disabled={options.pending}>{options.pending && <span className="confirm-spinner" aria-hidden="true" />}{options.pending ? "Memproses…" : options.confirmLabel}</button>
       </div>
     </section>
   </div>;
@@ -1315,29 +1377,31 @@ function renderQuotaNote(status: Status | null, mode: AiGenerationMode | null) {
     : "Kuota 24 jam bergulir; job Development tetap dihitung.";
 }
 
-function Dashboard({ status, mode, projects, busy, onCreate, onSample, onOpen, onDelete }: { status: Status | null; mode: AiGenerationMode | null; projects: Project[]; busy: boolean; onCreate: () => void; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
-  const latest = projects[0];
-  return <section className="page dashboard-page">
-    <div className="dashboard-heading"><div><div className="eyebrow">LOCAL CREATOR WORKSPACE</div><h1>Selamat datang di<br /><em>AI Facts Studio.</em></h1><p>Ubah riset terverifikasi menjadi animasi edukasi 2D, satu cerita dalam satu waktu.</p></div><button className="button button-primary create-cta" onClick={onCreate}>＋ Create video</button></div>
-
-    <div className="hero-card">
-      <div className="hero-copy"><span className="hero-kicker"><i /> ZERO AI CALLS · TEMPLATE-BASED</span><h2>Fakta bagus layak<br />diceritakan bergerak.</h2><p>Mulai dari package sample. Edit storyboard, tinjau sumber, lalu render MP4 9:16.</p><div className="hero-buttons"><button className="button button-primary" onClick={onSample} disabled={busy}>Buka sample gunung <span>→</span></button><button className="hero-link" onClick={onCreate}>Impor riset sendiri <span>↗</span></button></div></div>
-      <div className="hero-art" aria-hidden="true"><div className="sun"/><div className="hill hill-back"/><div className="hill hill-front"/><div className="hero-stamp"><span>01</span><small>2D MOTION<br />TEMPLATE</small></div><div className="hero-caption">BUMI SELALU BERGERAK <span>▰ ▰ ▰</span></div></div>
+function Dashboard({ projects, busy, onSample, onOpen, onDelete }: { projects: Project[]; busy: boolean; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+  const [search, setSearch] = useState("");
+  const visibleProjects = projects.filter((item) => item.researchPackage.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  return <section className="page layout-container dashboard-page">
+    <div className="dashboard-heading"><div><div className="eyebrow">AI FACTS STUDIO · CREATIVE WORKSPACE</div><h1>Project Saya</h1><p>Buat video baru atau lanjutkan storyboard yang tersimpan.</p></div><span className="project-total">{projects.length} {projects.length === 1 ? "project" : "projects"}</span></div>
+    <div className="project-toolbar">
+      <label className="project-search"><Search aria-hidden="true" size={17} /><input type="search" aria-label="Cari project" placeholder="Cari project…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      {!projects.length && <button type="button" className="button button-light" onClick={onSample} disabled={busy}><Film aria-hidden="true" size={16} />Coba sample</button>}
     </div>
-
-    <div className="stat-grid">
-      <div className="stat-card"><span className="stat-icon teal">◷</span><div><small>RENDER QUOTA</small><strong className="render-quota-value">{renderQuotaValue(status, mode)}</strong><p>{renderQuotaNote(status, mode)}</p></div></div>
-      <div className="stat-card"><span className="stat-icon orange">▣</span><div><small>VIDEO PROJECTS</small><strong>{projects.length.toString().padStart(2, "0")}</strong><p>Draft tersimpan di perangkat</p></div></div>
-      <div className="stat-card"><span className={`stat-icon ${status?.ffmpegAvailable ? "teal" : "orange"}`}>⌘</span><div><small>LOCAL RENDER ENGINE</small><strong className="engine-status">{status?.ffmpegAvailable ? "Ready" : "Setup needed"}</strong><p>{status?.ffmpegAvailable ? "FFmpeg tersedia" : "Install FFmpeg untuk render"}</p></div></div>
-    </div>
-
-    <div className="section-title recent-title"><div><h2>Recent projects</h2><p>Storyboard dan hasil render terbaru.</p></div><span className="recent-count">{projects.length} TOTAL</span></div>
-    {projects.length ? <div className="recent-list">{projects.slice(0, 5).map((item, index) => <div className="recent-row" key={item.id}>
-      <button className="recent-item" onClick={() => onOpen(item.id)} disabled={busy}><span className={`recent-thumb thumb-${index % 3}`}><i>✦</i></span><span className="recent-copy"><strong>{item.researchPackage.title}</strong><small>{item.researchPackage.category} <i /> {item.researchPackage.scenes.length} scenes <i /> {new Date(item.updatedAt).toLocaleDateString("id-ID")}</small></span><span className={`status-chip ${item.latestJob?.state ?? "idle"}`}>{jobLabel(item.latestJob?.state)}</span><span className="recent-arrow">→</span></button>
-      <button className="recent-delete" onClick={() => onDelete(item.id)} disabled={busy} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project">×</button>
-    </div>)}</div> : <button className="empty-projects" onClick={onSample}><span className="empty-plus">＋</span><strong>Belum ada project</strong><small>Mulai dengan sample animasi gunung 7 scene.</small></button>}
-    <div className="setup-strip"><div className="setup-mark">GH</div><div><strong>GitHub Actions render</strong><small>{status?.githubWorkflowAvailable ? "Workflow tersedia · setup manual dibutuhkan untuk cloud render." : "Workflow belum ditemukan."}</small></div><a href="/api/docs/github-actions" target="_blank" rel="noreferrer">Setup guide ↗</a></div>
-    {latest && <span className="sr-only">Latest project: {latest.researchPackage.title}</span>}
+    {visibleProjects.length ? <div className="project-grid">
+      {visibleProjects.map((item) => <article className="project-card" key={item.id}>
+        <button type="button" className="project-card-open" onClick={() => onOpen(item.id)} disabled={busy} aria-label={`Buka project ${item.researchPackage.title}`}>
+          <span className="project-card-art" aria-hidden="true"><span className="project-art-orbit" /><Film size={27} strokeWidth={1.5} /><small>9:16 · VIDEO</small></span>
+          <span className="project-card-info">
+            <span className="project-card-status"><span className={`status-chip ${item.latestJob && !item.latestJobContentCurrent ? "failed" : item.latestJob?.state ?? "idle"}`}>{item.latestJob && !item.latestJobContentCurrent ? "SNAPSHOT LAMA" : jobLabel(item.latestJob?.state)}</span><span>{item.researchPackage.category}</span></span>
+            <strong>{item.researchPackage.title}</strong>
+            <span className="project-card-meta"><span><Film size={14} aria-hidden="true" />{item.researchPackage.scenes.length} scene</span><span><Clock3 size={14} aria-hidden="true" />{(item.latestJob?.manifest?.durationSec ?? item.researchPackage.targetDurationSec).toFixed(0)} dtk</span></span>
+            <small>Diperbarui {new Date(item.updatedAt).toLocaleDateString("id-ID")}</small>
+          </span>
+          <span className="project-card-arrow" aria-hidden="true">→</span>
+        </button>
+        <button type="button" className="project-card-delete" onClick={() => onDelete(item.id)} disabled={busy} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project"><Trash2 size={16} aria-hidden="true" /></button>
+      </article>)}
+    </div> : projects.length ? <div className="project-empty filtered-empty"><Search size={22} aria-hidden="true" /><strong>Tidak ada project yang cocok</strong><span>Coba kata kunci lain.</span></div>
+      : <div className="project-empty"><span className="project-empty-icon"><Sparkles size={22} aria-hidden="true" /></span><strong>Belum ada project</strong><span>Project video akan muncul di sini setelah Anda membuatnya.</span><button type="button" className="button button-light" onClick={onSample} disabled={busy}><Film size={16} aria-hidden="true" />Buka sample video</button></div>}
   </section>;
 }
 

@@ -3,11 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f7f4" />
+    <meta name="theme-color" content="#F8F7FC" />
     <meta name="description" content="Studio lokal untuk membuat video edukasi animasi 2D." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <script>
+      try {
+        const saved = localStorage.getItem("ai-facts-studio:theme");
+        const preference = saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
+        const theme = preference === "system" ? matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light" : preference;
+        document.documentElement.dataset.themePreference = preference;
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#13111C" : "#F8F7FC");
+      } catch { document.documentElement.dataset.theme = "light"; }
+    </script>
     <title>AI Facts Studio</title>
   </head>
   <body>

@@ -25,12 +25,13 @@
     "test:visual": "tsx scripts/visual-regression.ts"
   },
   "dependencies": {
+    "@google/genai": "2.31.0",
     "@remotion/bundler": "4.0.466",
     "@remotion/player": "4.0.466",
     "@remotion/renderer": "4.0.466",
-    "@google/genai": "2.31.0",
     "dotenv": "16.6.1",
     "express": "5.3.0",
+    "lucide-react": "^1.61.0",
     "multer": "2.5.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",

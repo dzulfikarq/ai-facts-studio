@@ -1,0 +1,14 @@
+{
+  "seaSalt": {
+    "status": "ready_for_review",
+    "issues": [],
+    "reviewNotes": [],
+    "approvedScenes": 0
+  },
+  "earthProtection": {
+    "status": "ready_for_review",
+    "issues": [],
+    "reviewNotes": [],
+    "approvedScenes": 0
+  }
+}

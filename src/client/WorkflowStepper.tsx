@@ -8,15 +8,18 @@ const statusLabel: Record<WorkflowStatus, string> = {
   attention: "Perlu perhatian",
 };
 
-export function WorkflowStepper({ activeStep, statuses, onSelect }: { activeStep: WorkspaceStep; statuses: Record<WorkspaceStep, WorkflowStatus>; onSelect: (step: WorkspaceStep) => void }) {
+export function WorkflowStepper({ activeStep, statuses, signals, onSelect }: { activeStep: WorkspaceStep; statuses: Record<WorkspaceStep, WorkflowStatus>; signals: import("./workflow").WorkflowSignals; onSelect: (step: WorkspaceStep) => void }) {
   return <nav className="workflow-stepper" aria-label="Langkah pembuatan video">
     <ol>
       {workspaceSteps.map((step, index) => {
         const status = statuses[step.id];
+        const label = step.id === "materials" ? signals.hasResearch ? "Draft Storyboard" : "Draft Research"
+          : step.id === "visual" ? !signals.visualStoryboardReady ? "Needs Visual Review" : signals.visualStoryboardApproved ? "Approved for Motion" : "Visual Storyboard Ready"
+          : step.id === "render" && signals.saved && signals.visualStoryboardApproved && signals.audioMatchesNarration && !signals.hasPendingAudio && signals.reviewVerified && signals.previewReviewed ? "Ready to Render" : statusLabel[status];
         return <li key={step.id}>
           <button type="button" className={`workflow-step ${status} ${activeStep === step.id ? "selected" : ""}`} data-step-id={step.id} aria-current={activeStep === step.id ? "step" : undefined} aria-label={`${index + 1}. ${step.title}: ${statusLabel[status]}`} onClick={() => onSelect(step.id)}>
             <span className="workflow-step-index" aria-hidden="true">{status === "complete" ? "✓" : index + 1}</span>
-            <span className="workflow-step-copy"><strong>{step.title}</strong><small>{step.description}</small><em>{statusLabel[status]}</em></span>
+            <span className="workflow-step-copy"><strong>{step.title}</strong><small>{step.description}</small><em>{label}</em></span>
           </button>
         </li>;
       })}

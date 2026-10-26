@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { FREE_TIER_TEXT_MODELS, type AiGenerationMode, type AiGenerationSettings, type AiGenerationTask } from "./provider";
+import { FREE_TIER_TEXT_MODELS, getGeminiTextQuotaMonitoring, type AiGenerationMode, type AiGenerationSettings, type AiGenerationTask, type GeminiQuotaType } from "./provider";
 
 type QuotaDatabase = Pick<DatabaseSync, "exec" | "prepare">;
 
 export class AiGenerationRequestError extends Error {
-  constructor(message: string, public readonly code: string, public readonly httpStatus: number, public readonly nextAllowedAt: string | null = null) {
+  constructor(message: string, public readonly code: string, public readonly httpStatus: number, public readonly nextAllowedAt: string | null = null, public readonly quotaType: GeminiQuotaType | null = null) {
     super(message);
     this.name = "AiGenerationRequestError";
   }
@@ -24,7 +24,14 @@ export function reserveAiGenerationRequest(db: QuotaDatabase, mode: AiGeneration
     if (used >= settings.dailyLimit) {
       const oldest = db.prepare("SELECT requested_at FROM ai_generation_attempts WHERE requested_at > ? ORDER BY requested_at LIMIT 1").get(since) as { requested_at: string } | undefined;
       const nextAllowedAt = oldest ? new Date(Date.parse(oldest.requested_at) + 24 * 60 * 60 * 1000).toISOString() : null;
-      throw new AiGenerationRequestError(`Batas ${settings.dailyLimit} request AI Text per 24 jam tercapai. Tidak ada retry atau paid-model fallback otomatis.`, "daily-limit", 429, nextAllowedAt);
+      throw new AiGenerationRequestError(`Batas lokal aplikasi ${settings.dailyLimit} request AI Text per 24 jam tercapai. Tidak ada fallback otomatis.`, "daily-limit", 429, nextAllowedAt, "APP_RPD");
+    }
+    const usage = getGeminiTextQuotaMonitoring(db, settings.model, settings.projectLimits, now);
+    for (const [quotaType, metric] of [["RPM", usage.rpm], ["RPD", usage.rpd], ["TPM", usage.tpm]] as const) {
+      if (metric.limit !== null && metric.used !== null && metric.used >= metric.limit) {
+        const interval = quotaType === "RPD" ? "24 jam" : "60 detik";
+        throw new AiGenerationRequestError(`Batas lokal Gemini ${quotaType} ${metric.limit} tercapai dalam ${interval}.`, "local-rate-limit", 429, metric.cooldownUntil, quotaType);
+      }
     }
     const id = randomUUID();
     const requestedAt = new Date(now).toISOString();
@@ -38,7 +45,7 @@ export function reserveAiGenerationRequest(db: QuotaDatabase, mode: AiGeneration
   }
 }
 
-export function finishAiGenerationRequest(db: QuotaDatabase, id: string, result: { state: "succeeded" | "failed"; errorCode?: string }) {
-  db.prepare("UPDATE ai_generation_attempts SET state = ?, error_code = ? WHERE id = ? AND state = 'started'")
-    .run(result.state, result.errorCode ?? null, id);
+export function finishAiGenerationRequest(db: QuotaDatabase, id: string, result: { state: "succeeded" | "failed"; errorCode?: string; inputTokens?: number; outputTokens?: number; totalTokens?: number }) {
+  db.prepare("UPDATE ai_generation_attempts SET state = ?, error_code = ?, input_tokens = ?, output_tokens = ?, total_tokens = ? WHERE id = ? AND state = 'started'")
+    .run(result.state, result.errorCode ?? null, result.inputTokens ?? null, result.outputTokens ?? null, result.totalTokens ?? null, id);
 }

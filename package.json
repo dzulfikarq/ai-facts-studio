@@ -17,6 +17,8 @@
     "smoke:gemini-live": "tsx scripts/gemini-live-smoke.ts",
     "render": "tsx scripts/render.ts",
     "smoke:render": "tsx scripts/render-smoke.ts",
+    "smoke:visual-storyboard": "tsx scripts/visual-storyboard-smoke.ts",
+    "poc:illustrations": "tsx scripts/illustration-poc.ts",
     "smoke:samples": "tsx scripts/sample-render-smoke.ts",
     "smoke:samples-audio": "tsx scripts/sample-audio-smoke.ts",
     "smoke:gemini-e2e": "tsx scripts/gemini-live-e2e.ts",

@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "1.0",
+  "id": "earth-solar-protection-id",
+  "title": "Bagaimana Bumi Melindungi Kita dari Sinar Matahari?",
+  "category": "Sains & Antariksa",
+  "visualPreset": "animated-infographic",
+  "language": "id-ID",
+  "targetDurationSec": 32,
+  "aspectRatio": "9:16",
+  "narration": "Matahari menyinari Bumi. Atmosfer menyelimuti planet, lapisan ozon menyerap sebagian besar UV-B dan hampir seluruh UV-C, sementara magnetosfer membelokkan banyak partikel bermuatan. Keduanya memberi perlindungan berbeda.",
+  "references": [
+    {
+      "id": "nasa-ozone-layer",
+      "title": "Ozone: What is it, and why do we care?",
+      "publisher": "NASA",
+      "url": "https://science.nasa.gov/earth/earth-observatory/ozone/",
+      "checkedAt": "2026-10-26"
+    },
+    {
+      "id": "nasa-magnetosphere",
+      "title": "Earth's Magnetosphere",
+      "publisher": "NASA",
+      "url": "https://science.nasa.gov/heliophysics/focus-areas/magnetosphere-ionosphere/",
+      "checkedAt": "2026-10-26"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "earth-01-sunlight",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 6.4,
+      "narrationText": "Matahari memancarkan cahaya ke ruang angkasa. Bumi menerima energi dari Matahari.",
+      "onScreenText": "MATAHARI MENYINARI BUMI",
+      "templateId": "space-orbit",
+      "visualDescription": "Matahari dan Bumi berbagi satu bentang ruang angkasa; berkas cahaya menghubungkan keduanya.",
+      "motionCues": ["fadeIn", "reveal"],
+      "sfxCues": [],
+      "referenceIds": ["nasa-ozone-layer"]
+    },
+    {
+      "id": "earth-02-atmosphere",
+      "order": 2,
+      "startSec": 6.4,
+      "endSec": 12.8,
+      "narrationText": "Bumi diselimuti atmosfer, campuran gas yang membentuk lapisan di sekeliling planet.",
+      "onScreenText": "ATMOSFER MENYELIMUTI BUMI",
+      "templateId": "infographic",
+      "visualDescription": "Bumi tampak sebagai bola planet dengan atmosfer gas sebagai lapisan tipis tersendiri di sekelilingnya.",
+      "motionCues": ["fadeIn", "pulse"],
+      "sfxCues": [],
+      "referenceIds": ["nasa-ozone-layer"]
+    },
+    {
+      "id": "earth-03-ozone",
+      "order": 3,
+      "startSec": 12.8,
+      "endSec": 19.2,
+      "narrationText": "Di stratosfer, lapisan ozon menyerap sebagian besar UV-B dan hampir seluruh UV-C. Sebagian UV-A tetap menembus atmosfer.",
+      "onScreenText": "OZON MENYERAP UV-B DAN UV-C",
+      "templateId": "infographic",
+      "visualDescription": "Pita ozon di atmosfer memotong sebagian jalur UV-B dan UV-C menuju permukaan; jalur UV-A lebih banyak menembus.",
+      "motionCues": ["fadeIn", "reveal"],
+      "sfxCues": [],
+      "referenceIds": ["nasa-ozone-layer"]
+    },
+    {
+      "id": "earth-04-magnetosphere",
+      "order": 4,
+      "startSec": 19.2,
+      "endSec": 25.6,
+      "narrationText": "Matahari juga mengirim partikel bermuatan. Medan magnet Bumi membentuk magnetosfer yang membelokkan banyak partikel ke wilayah kutub.",
+      "onScreenText": "MAGNETOSFER MEMBELOKKAN PARTIKEL",
+      "templateId": "space-orbit",
+      "visualDescription": "Partikel bermuatan Matahari dibelokkan oleh medan magnet di sekitar Bumi.",
+      "motionCues": ["slide", "reveal"],
+      "sfxCues": [],
+      "referenceIds": ["nasa-magnetosphere"]
+    },
+    {
+      "id": "earth-05-two-shields",
+      "order": 5,
+      "startSec": 25.6,
+      "endSec": 32,
+      "narrationText": "Atmosfer dan ozon membantu menyaring ultraviolet, sementara magnetosfer mengarahkan partikel bermuatan. Dua sistem ini memberi perlindungan berbeda.",
+      "onScreenText": "DUA PERISAI, DUA TUGAS",
+      "templateId": "infographic",
+      "visualDescription": "Matahari, Bumi, atmosfer, lapisan ozon, sinar UV, partikel bermuatan, dan magnetosfer tampil sebagai dua sistem perlindungan berbeda.",
+      "motionCues": ["fadeIn", "zoom"],
+      "sfxCues": [],
+      "referenceIds": ["nasa-ozone-layer", "nasa-magnetosphere"]
+    }
+  ]
+}

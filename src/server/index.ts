@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env";
 import express from "express";
 import multer from "multer";
 import { createHash, randomUUID } from "node:crypto";
@@ -12,11 +12,14 @@ import { z } from "zod";
 import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
+import { applyVisualStoryboard, buildVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema } from "../domain/visual-storyboard";
+import { validateRasterImage, visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
 import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import { dataDir, db, jobForClient, projectFromRow, type JobRow, type StoredAudio, type StoredProject } from "./database";
 import { generateAiResearchStoryboard, AiGenerationOutputError } from "./ai-generation/generate";
+import { generateVisualSemanticPlan, visualPlannerInputSchema } from "./ai-generation/visual-planner";
 import { GeminiTextGenerationError, GeminiTextGenerationProvider } from "./ai-generation/gemini-text-provider";
 import { getOpenCodeProviderStatus, OpenCodeGenerationError, OpenCodeTextGenerationProvider } from "./ai-generation/opencode-provider";
 import { AiGenerationRequestError } from "./ai-generation/quota";
@@ -27,10 +30,11 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const root = process.cwd();
 const audioDir = path.resolve(root, "public/audio");
+const visualAssetDir = path.resolve(root, "public/visual-assets");
 const jobDir = path.join(dataDir, "jobs");
 const renderDir = path.resolve(root, "renders");
 const samplePath = path.resolve(root, "samples/mountain-formation.json");
-const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir };
+const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir, "visual-assets": visualAssetDir };
 type CleanupRoot = keyof typeof cleanupRoots;
 const maxUploadMb = Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 100));
 const dailyLimit = Math.max(1, Number(process.env.DAILY_JOB_LIMIT ?? 1));
@@ -58,8 +62,17 @@ const audioUpload = multer({
     done(null, true);
   },
 });
+const illustrationUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, done) => {
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.mimetype)) return done(new Error("Unggah PNG, JPEG, atau WebP. SVG tidak didukung."));
+    done(null, true);
+  },
+});
 
 await mkdir(audioDir, { recursive: true });
+await mkdir(visualAssetDir, { recursive: true });
 await mkdir(jobDir, { recursive: true });
 await mkdir(renderDir, { recursive: true });
 app.use(express.json({ limit: "1mb" }));
@@ -71,7 +84,8 @@ function projectRow(id: string) {
 function snapshotForProject(project: StoredProject): RenderSnapshot {
   const extension = project.audio ? path.extname(project.audio.file) : "";
   return {
-    research: project.researchPackage,
+    research: applyVisualStoryboard(project.researchPackage, project.visualStoryboard),
+    visualAssets: project.visualAssets,
     rendererVersion: RENDERER_VERSION,
     audio: project.audio ? {
       file: `audio/jobs/${project.audio.sha256}${extension}`,
@@ -96,6 +110,16 @@ function snapshotForProject(project: StoredProject): RenderSnapshot {
   };
 }
 
+function factReviewContent(research: StoredProject["researchPackage"]) {
+  return JSON.stringify({
+    title: research.title,
+    category: research.category,
+    narration: research.narration,
+    references: research.references,
+    scenes: research.scenes.map((scene) => ({ narrationText: scene.narrationText, onScreenText: scene.onScreenText, referenceIds: scene.referenceIds })),
+  });
+}
+
 function snapshotContentMatchesProject(snapshotPath: string, project: StoredProject) {
   const resolved = path.resolve(snapshotPath);
   if (!resolved.startsWith(`${jobDir}${path.sep}`)) return false;
@@ -103,11 +127,13 @@ function snapshotContentMatchesProject(snapshotPath: string, project: StoredProj
     const snapshot = JSON.parse(readFileSync(resolved, "utf8")) as RenderSnapshot;
     const oldResearch = parseResearchPackage(snapshot.research);
     const currentResearch = parseResearchPackage(project.researchPackage);
-    if (!oldResearch.success || !currentResearch.success) return false;
+    const currentVisualResearch = parseResearchPackage(applyVisualStoryboard(project.researchPackage, project.visualStoryboard));
+    if (!oldResearch.success || !currentResearch.success || !currentVisualResearch.success) return false;
     const audioContent = (audio: RenderSnapshot["audio"]) => audio ? { file: audio.file, durationSec: audio.durationSec, timingMode: audio.timingMode ?? "scaled" } : null;
-    const oldContent = { research: oldResearch.data, audio: audioContent(snapshot.audio) };
-    const currentContent = { research: currentResearch.data, audio: audioContent(snapshotForProject(project).audio) };
-    return JSON.stringify(oldContent) === JSON.stringify(currentContent);
+     const oldContent = { research: oldResearch.data, audio: audioContent(snapshot.audio), assets: (snapshot.visualAssets ?? []).map((asset) => [asset.file, asset.sha256]) };
+     const audio = audioContent(snapshotForProject(project).audio);
+     const assets = project.visualAssets.map((asset) => [asset.file, asset.sha256]);
+     return [currentResearch.data, currentVisualResearch.data].some((research) => JSON.stringify(oldContent) === JSON.stringify({ research, audio, assets }));
   } catch { return false; }
 }
 
@@ -156,6 +182,22 @@ function apiError(response: express.Response, status: number, message: string, e
   response.status(status).json({ error: message, ...extra });
 }
 
+function missingVisualAssetReferences(storyboard: ReturnType<typeof buildVisualStoryboard>, assets: readonly VisualAsset[]) {
+  const available = new Set(assets.map((asset) => asset.id));
+  return storyboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => {
+    const candidates = node.type === "group" ? node.children : [node];
+    return candidates.flatMap((candidate) => candidate.type === "image" && candidate.asset.startsWith("upload-") && !available.has(candidate.asset) ? [candidate.asset] : []);
+  })));
+}
+
+function illustrationUploadMiddleware(request: express.Request, response: express.Response, next: express.NextFunction) {
+  illustrationUpload.single("illustration")(request, response, (error) => {
+    if (!error) return next();
+    const status = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    apiError(response, status, error instanceof Error ? error.message : "Ilustrasi gagal diunggah.", { code: "invalid-illustration-upload" });
+  });
+}
+
 async function sha256File(filePath: string) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
@@ -166,11 +208,22 @@ function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
   const base = cleanupRoots[rootName];
   const target = path.resolve(targetPath);
   const relativePath = path.relative(base, target);
-  if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath) || rootName === "audio" && path.dirname(target) !== audioDir) {
+  if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)
+    || rootName === "audio" && path.dirname(target) !== audioDir
+    || rootName === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp)$/.test(path.basename(target)))) {
     throw new Error("Cleanup path keluar dari direktori yang diizinkan.");
   }
   db.prepare("INSERT OR IGNORE INTO file_cleanup_queue (root, relative_path, created_at) VALUES (?, ?, ?)")
     .run(rootName, relativePath, new Date().toISOString());
+}
+
+function projectReferencesVisualAsset(file: string, excludingProjectId?: string) {
+  const rows = db.prepare(excludingProjectId ? "SELECT id, data_json FROM projects WHERE id <> ?" : "SELECT id, data_json FROM projects")
+    .all(...(excludingProjectId ? [excludingProjectId] : [])) as Array<{ id: string; data_json: string }>;
+  return rows.some((row) => {
+    try { return (JSON.parse(row.data_json) as StoredProject).visualAssets?.some((asset) => asset.file === file); }
+    catch { return false; }
+  });
 }
 
 let cleanupRun: Promise<number> | null = null;
@@ -187,12 +240,18 @@ async function runFileCleanupQueue() {
     const base = cleanupRoots[item.root as CleanupRoot];
     const target = base ? path.resolve(base, item.relative_path) : "";
     const relative = base ? path.relative(base, target) : "";
-    if (!base || !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || item.root === "audio" && path.dirname(target) !== audioDir) {
+    if (!base || !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+      || item.root === "audio" && path.dirname(target) !== audioDir
+      || item.root === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp)$/.test(path.basename(target)))) {
       db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
         .run("Cleanup path invalid/outside allowed root.", item.root, item.relative_path);
       continue;
     }
     try {
+      if (item.root === "visual-assets" && projectReferencesVisualAsset(path.basename(target))) {
+        db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
+        continue;
+      }
       await rm(target, { recursive: true, force: true });
       db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
     } catch (error) {
@@ -225,14 +284,16 @@ app.get("/api/status", async (_request, response) => {
     await execFileAsync("ffmpeg", ["-version"], { timeout: 5000 });
     ffmpegAvailable = true;
   } catch { /* status only; render reports actionable error */ }
+  const generationMode = readAiGenerationMode(db);
   const recent = db.prepare("SELECT created_at FROM video_job_requests WHERE created_at > ? ORDER BY created_at ASC")
     .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
   const allowance = canStartNewJob(recent.map((row) => row.created_at), Date.now(), dailyLimit);
-  response.json({ ffmpegAvailable, githubWorkflowAvailable: existsSync(path.resolve(root, ".github/workflows/render-video.yml")), dailyLimit, jobsUsed: recent.length, nextAllowedAt: allowance.nextAllowedAt });
+  response.json({ ffmpegAvailable, githubWorkflowAvailable: existsSync(path.resolve(root, ".github/workflows/render-video.yml")), generationMode, dailyLimit, jobsUsed: recent.length, nextAllowedAt: generationMode === "production" ? allowance.nextAllowedAt : null });
 });
 
 const aiGenerationModeSchema = z.object({ mode: z.enum(["development", "production"]) }).strict();
 const aiGenerationRequestSchema = z.object({ input: aiGenerationInputSchema, model: z.string().trim().min(1).max(300).optional() }).strict();
+const visualPlannerRequestSchema = z.object({ model: z.string().trim().min(1).max(300).optional() }).strict();
 const localSettingsOnly = (request: express.Request, response: express.Response) => {
   if (isLoopbackAddress(request.socket.remoteAddress)) return true;
   apiError(response, 403, "AI Generation Settings hanya bisa dibaca dan diubah dari perangkat lokal.", { code: "local-only" });
@@ -245,7 +306,18 @@ const sameOriginRequest = (request: express.Request, response: express.Response)
   try { parsedOrigin = new URL(origin ?? ""); }
   catch { apiError(response, 403, "Request AI harus berasal dari origin aplikasi lokal.", { code: "invalid-origin" }); return false; }
   const originHost = parsedOrigin.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!["http:", "https:"].includes(parsedOrigin.protocol) || !["127.0.0.1", "::1", "localhost"].includes(originHost) || parsedOrigin.host !== request.get("host")) {
+  const requestHost = request.get("host")?.toLowerCase();
+  const frontendPort = Number(process.env.VITE_PORT ?? 5173);
+  const originPort = Number(parsedOrigin.port || (parsedOrigin.protocol === "https:" ? 443 : 80));
+  const backendHost = process.env.HOST ?? "127.0.0.1";
+  const backendAuthorityHost = backendHost.includes(":") && !backendHost.startsWith("[") ? `[${backendHost}]` : backendHost;
+  const backendPort = Number(process.env.PORT ?? 3001);
+  const viteProxyRequest = request.get("x-ai-facts-studio-vite-proxy") === "vite"
+    && Number.isInteger(frontendPort) && frontendPort > 0 && frontendPort <= 65535
+    && originPort === frontendPort
+    && requestHost === `${backendAuthorityHost}:${backendPort}`.toLowerCase();
+  const sameHost = parsedOrigin.host.toLowerCase() === requestHost;
+  if (!["http:", "https:"].includes(parsedOrigin.protocol) || !["127.0.0.1", "::1", "localhost"].includes(originHost) || (!sameHost && !viteProxyRequest)) {
     apiError(response, 403, "Request AI harus berasal dari origin aplikasi lokal.", { code: "invalid-origin" });
     return false;
   }
@@ -306,14 +378,68 @@ app.post("/api/ai-generation", async (request, response) => {
     response.json(draft);
   } catch (error) {
     if (error instanceof AiGenerationOutputError) return apiError(response, 422, error.message, { code: "ai-output-invalid", issues: error.issues });
-    if (error instanceof AiGenerationRequestError) return apiError(response, error.httpStatus, error.message, { code: error.code, nextAllowedAt: error.nextAllowedAt });
-    if (error instanceof GeminiTextGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+     if (error instanceof AiGenerationRequestError) return apiError(response, error.httpStatus, error.message, { code: error.code, nextAllowedAt: error.nextAllowedAt, quotaType: error.quotaType });
+     if (error instanceof GeminiTextGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code, quotaType: error.quotaType, retryAt: error.retryAt });
     if (error instanceof OpenCodeGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
     if (generationController.signal.aborted) return apiError(response, 499, "Generation dibatalkan.", { code: "cancelled" });
     console.error("AI Generation failed:", error instanceof Error ? error.message : "Unknown provider error");
     apiError(response, 502, "AI Research/Storyboard gagal dibuat. Periksa konfigurasi atau coba lagi.", { code: "ai-generation-failed" });
   } finally {
     request.off("aborted", abortGeneration);
+    activeAiGeneration = false;
+    activeAiGenerationPhase = "idle";
+  }
+});
+
+app.post("/api/projects/:id/scenes/:sceneId/visual-plan", async (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  if (activeAiGeneration) return apiError(response, 409, "AI generation sedang berjalan. Tunggu sampai selesai.", { code: "generation-in-progress" });
+  const requestData = visualPlannerRequestSchema.safeParse(request.body ?? {});
+  if (!requestData.success) return apiError(response, 400, "Pilihan model visual planner tidak valid.", { code: "invalid-visual-planner-input", issues: requestData.error.issues });
+  const row = projectRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  const project = projectFromRow(row);
+  const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === String(request.params.sceneId));
+  if (!scene) return apiError(response, 404, "Scene Visual Storyboard tidak ditemukan.");
+  const inputResult = visualPlannerInputSchema.safeParse({ headline: scene.headline, narration: scene.narrationText, visualDescription: scene.visualSummary });
+  if (!inputResult.success) return apiError(response, 400, "Copy scene belum memenuhi kontrak visual planner.", { issues: inputResult.error.issues });
+
+  const mode = readAiGenerationMode(db);
+  let provider: GeminiTextGenerationProvider | OpenCodeTextGenerationProvider;
+  let production = null as ReturnType<typeof getAiGenerationSettings>["providers"]["production"] | null;
+  if (mode === "development") {
+    const openCode = new OpenCodeTextGenerationProvider(requestData.data.model ?? "");
+    const status = await openCode.status();
+    if (!status.configured) return apiError(response, 503, status.disabledReason ?? "OpenCode lokal belum tersedia.", { code: "opencode-unavailable" });
+    if (!requestData.data.model || !status.models.some((item) => item.id === requestData.data.model)) return apiError(response, 400, "Pilih model OpenCode terhubung untuk visual planning.", { code: "opencode-model-required" });
+    provider = openCode;
+  } else {
+    const settings = getAiGenerationSettings(db).providers.production;
+    if (!settings.configured || !settings.model) return apiError(response, 503, settings.disabledReason ?? "Gemini Text belum dikonfigurasi.", { code: "not-configured" });
+    production = settings;
+    provider = new GeminiTextGenerationProvider(settings.model, process.env.GEMINI_API_KEY?.trim() ?? "");
+  }
+
+  activeAiGeneration = true;
+  activeAiGenerationPhase = "connecting";
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.once("aborted", abort);
+  response.once("close", () => { if (!response.writableEnded) abort(); });
+  try {
+    const result = await generateVisualSemanticPlan(db, mode, production, provider, inputResult.data, {
+      signal: controller.signal,
+      onPhase: (phase) => { activeAiGenerationPhase = phase; },
+    });
+    response.json(result);
+  } catch (error) {
+    if (error instanceof AiGenerationRequestError) return apiError(response, error.httpStatus, error.message, { code: error.code, nextAllowedAt: error.nextAllowedAt, quotaType: error.quotaType });
+    if (error instanceof GeminiTextGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code, quotaType: error.quotaType, retryAt: error.retryAt });
+    if (error instanceof OpenCodeGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+    if (controller.signal.aborted) return apiError(response, 499, "Visual planning dibatalkan.", { code: "cancelled" });
+    apiError(response, 422, error instanceof Error ? error.message : "Visual planner output tidak valid.", { code: "visual-plan-invalid" });
+  } finally {
+    request.off("aborted", abort);
     activeAiGeneration = false;
     activeAiGenerationPhase = "idle";
   }
@@ -391,7 +517,7 @@ app.post("/api/projects", (request, response) => {
   const requestId = requestIdResult?.success ? requestIdResult.data : null;
   const researchSha256 = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
   const now = new Date().toISOString();
-  const stored: StoredProject = { researchPackage: parsed.data, audio: null, pendingTts: null, researchReviewStatus: "needs-review" };
+  const stored: StoredProject = { researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null, researchReviewStatus: "needs-review" };
   const create = () => {
     const id = randomUUID();
     db.prepare("INSERT INTO projects (id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -415,11 +541,72 @@ app.put("/api/projects/:id", (request, response) => {
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
   const project = projectFromRow(row);
-  project.researchPackage = parsed.data;
-  project.researchReviewStatus = "needs-review";
+  const storyboardResult = request.body?.visualStoryboard === undefined
+    ? { success: true as const, data: buildVisualStoryboard(parsed.data, project.visualStoryboard) }
+    : visualStoryboardSchema.safeParse(request.body.visualStoryboard);
+  if (!storyboardResult.success) return apiError(response, 400, "Visual Storyboard tidak valid.", { code: "invalid-visual-storyboard", issues: storyboardResult.error.issues });
+  if (storyboardResult.data.scenes.length !== parsed.data.scenes.length || storyboardResult.data.scenes.some((scene, index) => scene.sceneId !== parsed.data.scenes[index]?.id || scene.durationSec !== Math.round(((parsed.data.scenes[index]?.endSec ?? 0) - (parsed.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)) {
+    return apiError(response, 400, "Scene Visual Storyboard harus cocok dengan Research Package.", { code: "visual-storyboard-scene-mismatch" });
+  }
+  const missingAssets = missingVisualAssetReferences(storyboardResult.data, project.visualAssets);
+  if (missingAssets.length) return apiError(response, 400, "Visual Storyboard merujuk aset yang tidak dimiliki project ini.", { code: "visual-asset-not-found", assets: [...new Set(missingAssets)] });
+  const storyboardResearch = parseResearchPackage(applyVisualStoryboard(parsed.data, storyboardResult.data));
+  if (!storyboardResearch.success) return apiError(response, 400, "Visual Storyboard menghasilkan Research Package tidak valid.", { code: "invalid-visual-storyboard-research", issues: storyboardResearch.error.issues });
+  const factsChanged = factReviewContent(project.researchPackage) !== factReviewContent(storyboardResearch.data);
+  project.researchPackage = storyboardResearch.data;
+  project.visualStoryboard = storyboardResult.data;
+  if (factsChanged) project.researchReviewStatus = "needs-review";
   if (project.pendingTts && project.pendingTts.scriptSha256 !== createHash("sha256").update(narrationScript(parsed.data)).digest("hex")) project.pendingTts = null;
   saveProject(row.id, project);
   response.json(getProject(row.id));
+});
+
+app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async (request, response) => {
+  const id = String(request.params.id);
+  const row = projectRow(id);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (!request.file) return apiError(response, 400, "File ilustrasi tidak ditemukan.", { code: "missing-illustration" });
+  if (activeRenderJob || activeProjectTasks.has(id)) return apiError(response, 409, "Aset tidak dapat diubah saat render atau snapshot berjalan.");
+  activeProjectTasks.add(id);
+  let createdFile = false;
+  let asset: VisualAsset | undefined;
+  try {
+    const image = validateRasterImage(request.file.buffer);
+    const expectedMime = image.format === "jpeg" ? "image/jpeg" : `image/${image.format}`;
+    if (request.file.mimetype !== expectedMime) return apiError(response, 400, "MIME type dan signature gambar tidak cocok.", { code: "image-mime-mismatch" });
+    const sha256 = createHash("sha256").update(request.file.buffer).digest("hex");
+    const file = `${sha256}.${image.extension}`;
+    const name = typeof request.body?.name === "string" && request.body.name.trim()
+      ? request.body.name.trim().slice(0, 120)
+      : path.basename(request.file.originalname, path.extname(request.file.originalname)).slice(0, 120) || "Ilustrasi pengguna";
+    const listField = (value: unknown, max: number) => typeof value === "string" ? [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 80)))].slice(0, max) : [];
+    asset = visualAssetSchema.parse({
+      id: `upload-${file}`, name, visualCategory: "user-illustration",
+      semanticTags: listField(request.body?.semanticTags, 20), supportedConcepts: listField(request.body?.supportedConcepts, 12),
+      role: "Ilustrasi pengguna; kecocokan menunggu review manusia.",
+      format: image.format, aspectRatio: image.width / image.height, source: "user-upload",
+      license: typeof request.body?.license === "string" && request.body.license.trim() ? request.body.license.trim().slice(0, 160) : "unspecified",
+      sha256, bytes: request.file.size, width: image.width, height: image.height, file,
+    });
+    const destination = path.join(visualAssetDir, file);
+    try { await writeFile(destination, request.file.buffer, { flag: "wx" }); createdFile = true; }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== sha256) throw error;
+    }
+    const current = projectFromRow(row);
+    if (!current.visualAssets.some((item) => item.id === asset!.id)) current.visualAssets.push(asset);
+    saveProject(id, current);
+    invalidateBundleCache();
+    response.status(201).json({ project: getProject(id), asset });
+  } catch (error) {
+    if (createdFile && asset) {
+      const referenced = (db.prepare("SELECT data_json FROM projects").all() as Array<{ data_json: string }>).some((item) => {
+        try { return (JSON.parse(item.data_json) as StoredProject).visualAssets?.some((candidate) => candidate.id === asset!.id); } catch { return false; }
+      });
+      if (!referenced) await rm(path.join(visualAssetDir, asset.file), { force: true });
+    }
+    apiError(response, 400, error instanceof Error ? error.message : "Ilustrasi gagal divalidasi.", { code: "invalid-illustration" });
+  } finally { activeProjectTasks.delete(id); }
 });
 
 app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request, response) => {
@@ -528,6 +715,7 @@ app.delete("/api/projects/:id", async (request, response) => {
   const safeUploadPath = uploadPath && path.dirname(uploadPath) === audioDir ? uploadPath : null;
   withTransaction(() => {
     if (safeUploadPath) queueFileCleanup("audio", safeUploadPath);
+    for (const asset of project.visualAssets) if (!projectReferencesVisualAsset(asset.file, id)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
     for (const job of jobs) {
       queueFileCleanup("jobs", path.join(jobDir, job.id));
       queueFileCleanup("renders", path.join(renderDir, job.id));
@@ -824,6 +1012,13 @@ app.post("/api/projects/:id/generate", async (request, response) => {
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   if (activeProjectTasks.has(projectId)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
   const project = projectFromRow(row);
+  const visualGate = visualStoryboardQualityGate(project.researchPackage, project.visualStoryboard, project.visualAssets.map((asset) => asset.id));
+  if (!visualGate.ready || project.visualStoryboard.scenes.some((scene) => !scene.approved)) {
+    return apiError(response, 409, "Visual Storyboard perlu lolos review dan approval sebelum motion/render.", {
+      code: "visual-storyboard-not-approved", issues: visualGate.issues,
+      unapprovedScenes: project.visualStoryboard.scenes.filter((scene) => !scene.approved).map((scene) => scene.sceneNumber),
+    });
+  }
   if (project.audio?.source === "tts" && project.audio.tts?.scriptSha256 !== createHash("sha256").update(narrationScript(project.researchPackage)).digest("hex")) {
     return apiError(response, 409, "Naskah berubah setelah AI Voice dibuat. Generate ulang audio atau pilih upload manual.", { code: "tts-audio-stale" });
   }
@@ -839,10 +1034,12 @@ app.post("/api/projects/:id/generate", async (request, response) => {
     }
   }
 
-  const recent = db.prepare("SELECT created_at FROM video_job_requests WHERE created_at > ? ORDER BY created_at ASC")
-    .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
-  const allowance = canStartNewJob(recent.map((item) => item.created_at), Date.now(), dailyLimit);
-  if (!allowance.allowed) return apiError(response, 429, "Batas job video baru untuk 24 jam tercapai.", { nextAllowedAt: allowance.nextAllowedAt });
+  if (readAiGenerationMode(db) === "production") {
+    const recent = db.prepare("SELECT created_at FROM video_job_requests WHERE created_at > ? ORDER BY created_at ASC")
+      .all(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) as Array<{ created_at: string }>;
+    const allowance = canStartNewJob(recent.map((item) => item.created_at), Date.now(), dailyLimit);
+    if (!allowance.allowed) return apiError(response, 429, "Batas job video baru untuk 24 jam tercapai.", { nextAllowedAt: allowance.nextAllowedAt });
+  }
   if (activeJobCreation) return apiError(response, 409, "Pembuatan snapshot lain sedang berjalan.");
 
   const id = randomUUID();
@@ -969,6 +1166,7 @@ app.post("/api/projects/:id/review", (request, response) => {
 
 // Serve uploads created after `vite build` too, not only assets copied at build time.
 app.use("/audio", express.static(audioDir));
+app.use("/visual-assets", express.static(visualAssetDir, { immutable: true, maxAge: "1y" }));
 
 if (existsSync(path.resolve(root, "dist/index.html"))) {
   app.use(express.static(path.resolve(root, "dist")));

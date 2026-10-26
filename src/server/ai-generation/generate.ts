@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { aiGeneratedContentSchema, buildAiGenerationDraft, buildDevelopmentPrompt, buildProductionResearchPrompt, type AiGenerationDraft, type AiGenerationInput } from "../../domain/ai-generation";
 import { finishAiGenerationRequest, reserveAiGenerationRequest } from "./quota";
-import type { AiGenerationMode, AiGenerationProvider, ProductionProviderStatus } from "./provider";
+import type { AiGenerationMode, AiGenerationProvider, AiGenerationResult, ProductionProviderStatus } from "./provider";
 
 type GenerationDatabase = Pick<DatabaseSync, "exec" | "prepare">;
 type ValidationIssue = { path: string; message: string };
@@ -41,7 +41,7 @@ export async function generateAiResearchStoryboard(
     const reservation = mode === "production"
       ? reserveAiGenerationRequest(db, mode, production!, "research", Date.now())
       : null;
-    let generated;
+    let generated: AiGenerationResult;
     try {
       options.onPhase?.("connecting");
       generated = await provider.generate({
@@ -60,15 +60,16 @@ export async function generateAiResearchStoryboard(
       throw error;
     }
 
+    const tokenUsage = { inputTokens: generated.inputTokens, outputTokens: generated.outputTokens, totalTokens: generated.totalTokens };
     if (options.signal?.aborted) {
-      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "failed", errorCode: "cancelled" });
+      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "failed", errorCode: "cancelled", ...tokenUsage });
       throw options.signal.reason;
     }
     options.onPhase?.("validating");
     const parsed = parseGeneratedContent(generated.text);
     if (!parsed.success) {
       previousIssues = parsed.issues;
-      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "failed", errorCode: "invalid-structured-output" });
+      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "failed", errorCode: "invalid-structured-output", ...tokenUsage });
       if (attempt === 0) { options.onPhase?.("repairing"); continue; }
       throw new AiGenerationOutputError("Output AI belum memenuhi schema setelah satu perbaikan.", previousIssues);
     }
@@ -76,11 +77,11 @@ export async function generateAiResearchStoryboard(
     try {
       const providerId = mode === "production" ? "gemini-developer-api" : provider.id === "opencode-local" ? "opencode-local" : "manual-prompt";
       const draft = buildAiGenerationDraft(input, parsed.content, randomUUID(), mode, providerId, generated.model);
-      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "succeeded" });
+      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "succeeded", ...tokenUsage });
       return draft;
     } catch (error) {
       previousIssues = [{ path: "researchPackage", message: error instanceof Error ? error.message : "Research Package tidak valid." }];
-      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "failed", errorCode: "invalid-research-package" });
+      if (reservation) finishAiGenerationRequest(db, reservation.id, { state: "failed", errorCode: "invalid-research-package", ...tokenUsage });
       if (attempt === 0) { options.onPhase?.("repairing"); continue; }
       throw new AiGenerationOutputError("Research Package hasil AI belum valid setelah satu perbaikan.", previousIssues);
     }

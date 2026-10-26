@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 export const visualColorTokens = ["canvas", "surface", "primary", "accent", "text", "muted", "snow", "danger"] as const;
-export const visualIconIds = ["sun", "cloud", "lightning", "arrow", "mountain", "planet", "water-drop", "leaf", "bear", "wave", "rock", "river", "crystal"] as const;
+export const visualIconIds = ["sun", "cloud", "lightning", "arrow", "mountain", "planet", "water-drop", "leaf", "bear", "wave", "rock", "river", "crystal", "earth", "atmosphere", "ozone-layer", "uv-ray", "charged-particle", "magnetosphere", "rain", "ocean", "evaporation", "salt-crystal", "volcano", "magma", "tectonic-plates"] as const;
 export const trustedImageAssets = ["cloud", "lightning", "sun"] as const;
 export const diagramKinds = ["charge-separation", "orbit", "geological-layers", "volcano-cross-section", "water-cycle", "process-flow"] as const;
+export const nodeMotions = ["drift", "fall", "flow", "rise", "draw"] as const;
 
 const colorSchema = z.union([
   z.literal("none"),
@@ -19,6 +20,7 @@ const nodeFrame = {
   rotation: z.number().min(-360).max(360).optional(),
   opacity: z.number().min(0).max(1).optional(),
   zIndex: z.number().int().min(-10).max(10).optional(),
+  motion: z.enum(nodeMotions).optional(),
 };
 
 function validateNodeFrame(node: { x: number; y: number; width: number; height: number; rotation?: number }, ctx: z.RefinementCtx) {
@@ -73,7 +75,7 @@ export const iconNodeSchema = z.object({
 
 export const imageNodeSchema = z.object({
   type: z.literal("image"), ...nodeFrame,
-  asset: z.enum(trustedImageAssets),
+  asset: z.union([z.enum(trustedImageAssets), z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp)$/)]),
 }).strict().superRefine(validateNodeFrame);
 
 export const diagramNodeSchema = z.object({

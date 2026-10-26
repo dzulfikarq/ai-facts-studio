@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
 import type { ResearchPackage } from "../src/domain/research";
+import type { VisualAsset } from "../src/domain/visual-assets";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { durationInFrames } from "../src/domain/timeline";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
@@ -22,6 +23,7 @@ export function invalidateBundleCache() {
 
 export type RenderSnapshot = {
   research: ResearchPackage;
+  visualAssets?: VisualAsset[];
   audio?: {
     file: string; durationSec: number; timingMode?: "scaled" | "estimated"; source?: "upload" | "tts" | "mock-fixture"; sha256?: string;
     tts?: { provider: string; model: string; cacheKey?: string; scriptSha256: string; locale: string; voiceId: string; voiceName: string; style: string; speakingRate: number; approvedAt?: string; alignment: "estimated" };
@@ -80,6 +82,18 @@ async function verifySnapshotAudio(audio: NonNullable<RenderSnapshot["audio"]>) 
   if (hash.digest("hex") !== audio.sha256) throw new Error("Audio snapshot SHA-256 tidak cocok; audio tidak akan dirender.");
 }
 
+async function verifySnapshotVisualAssets(assets: readonly VisualAsset[] = []) {
+  const allowedRoot = path.resolve(root, "public/visual-assets");
+  for (const asset of assets) {
+    if (!/^[a-f0-9]{64}\.(png|jpg|webp)$/.test(asset.file) || asset.sha256 !== asset.file.slice(0, 64)) throw new Error("Aset visual snapshot tidak valid.");
+    const filePath = path.resolve(allowedRoot, asset.file);
+    if (path.dirname(filePath) !== allowedRoot) throw new Error("Aset visual snapshot keluar dari direktori yang diizinkan.");
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+    if (hash.digest("hex") !== asset.sha256) throw new Error(`Hash aset visual snapshot tidak cocok: ${asset.file}.`);
+  }
+}
+
 export async function renderSnapshot(
   snapshot: RenderSnapshot,
   outputLocation: string,
@@ -89,6 +103,7 @@ export async function renderSnapshot(
   const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
   if (![LEGACY_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
   if (snapshot.audio) await verifySnapshotAudio(snapshot.audio);
+  await verifySnapshotVisualAssets(snapshot.visualAssets);
   await mkdir(path.dirname(outputLocation), { recursive: true });
   bundlePromise ??= bundle({
     entryPoint: path.resolve(root, "src/video/entry.tsx"),

@@ -1,8 +1,9 @@
 export const workspaceSteps = [
   { id: "materials", title: "Materi & Storyboard", description: "Riset, scene, teks, dan visual" },
+  { id: "visual", title: "Visual Storyboard", description: "Review thumbnail dan approve tiap scene" },
   { id: "narration", title: "Narasi", description: "Audio aktif atau kandidat AI Voice" },
   { id: "review", title: "Review & Subtitle", description: "Timeline, frasa, dan fakta" },
-  { id: "preview", title: "Preview Video", description: "Putar draft tanpa job render" },
+  { id: "preview", title: "Preview Motion", description: "Tinjau gerak 2D sebelum render" },
   { id: "render", title: "Render & Download", description: "Buat MP4 final" },
 ] as const;
 
@@ -12,6 +13,8 @@ export type WorkflowSignals = {
   activeStep: WorkspaceStep;
   hasResearch: boolean;
   saved: boolean;
+  visualStoryboardReady: boolean;
+  visualStoryboardApproved: boolean;
   hasAudio: boolean;
   audioMatchesNarration: boolean;
   hasPendingAudio: boolean;
@@ -26,6 +29,7 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
   const activeIndex = workspaceSteps.findIndex((step) => step.id === signals.activeStep);
   const completed: Record<WorkspaceStep, boolean> = {
     materials: signals.hasResearch && signals.saved,
+    visual: signals.visualStoryboardReady && signals.visualStoryboardApproved,
     narration: signals.hasAudio && signals.audioMatchesNarration && !signals.hasPendingAudio,
     review: signals.reviewVerified,
     preview: signals.previewReviewed,
@@ -33,6 +37,7 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
   };
   const attention: Record<WorkspaceStep, boolean> = {
     materials: !signals.hasResearch || !signals.saved,
+    visual: !signals.visualStoryboardReady || (!signals.visualStoryboardApproved && activeIndex > 1),
     narration: !signals.audioMatchesNarration || signals.hasPendingAudio || (!signals.hasAudio && activeIndex > 1),
     review: signals.hasWarnings || (!signals.reviewVerified && activeIndex > 2),
     preview: !signals.previewReviewed && activeIndex > 3,
@@ -48,6 +53,7 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
 
 export function canAdvanceWorkspaceStep(step: WorkspaceStep, signals: WorkflowSignals) {
   if (step === "materials") return signals.hasResearch && signals.saved;
+  if (step === "visual") return signals.visualStoryboardReady && signals.visualStoryboardApproved;
   if (step === "narration") return signals.audioMatchesNarration;
   if (step === "review") return signals.reviewVerified;
   if (step === "preview") return signals.previewReviewed;

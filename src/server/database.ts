@@ -2,7 +2,9 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { parseResearchPackage } from "../domain/research";
+import { buildVisualStoryboard, visualApprovalFingerprint, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { aiGenerationSchema } from "./ai-generation/provider";
+import { visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
 
 export const dataDir = path.resolve(process.env.DATA_DIR ?? "data");
 mkdirSync(dataDir, { recursive: true });
@@ -83,7 +85,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS video_job_requests_created_at_idx ON video_job_requests(created_at);
   CREATE TABLE IF NOT EXISTS file_cleanup_queue (
-    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders')),
+    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets')),
     relative_path TEXT NOT NULL,
     created_at TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -92,8 +94,33 @@ db.exec(`
   );
 `);
 
+const cleanupTable = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_cleanup_queue'").get() as { sql?: string } | undefined;
+if (cleanupTable?.sql && !cleanupTable.sql.includes("'visual-assets'")) {
+  db.exec(`
+    BEGIN IMMEDIATE;
+    ALTER TABLE file_cleanup_queue RENAME TO file_cleanup_queue_legacy;
+    CREATE TABLE file_cleanup_queue (
+      root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets')),
+      relative_path TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      PRIMARY KEY (root, relative_path)
+    );
+    INSERT INTO file_cleanup_queue SELECT * FROM file_cleanup_queue_legacy;
+    DROP TABLE file_cleanup_queue_legacy;
+    COMMIT;
+  `);
+}
+
 db.exec("INSERT OR IGNORE INTO video_job_requests (id, created_at) SELECT id, created_at FROM jobs");
 db.exec(aiGenerationSchema);
+
+const aiGenerationColumns = db.prepare("PRAGMA table_info(ai_generation_attempts)").all() as Array<{ name: string }>;
+if (!aiGenerationColumns.some((column) => column.name === "input_tokens")) db.exec("ALTER TABLE ai_generation_attempts ADD COLUMN input_tokens INTEGER");
+if (!aiGenerationColumns.some((column) => column.name === "output_tokens")) db.exec("ALTER TABLE ai_generation_attempts ADD COLUMN output_tokens INTEGER");
+if (!aiGenerationColumns.some((column) => column.name === "total_tokens")) db.exec("ALTER TABLE ai_generation_attempts ADD COLUMN total_tokens INTEGER");
+db.exec("CREATE INDEX IF NOT EXISTS ai_generation_attempts_provider_model_requested_idx ON ai_generation_attempts(provider, model, requested_at)");
 
 const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
 if (!jobColumns.some((column) => column.name === "renderer_version")) db.exec("ALTER TABLE jobs ADD COLUMN renderer_version INTEGER NOT NULL DEFAULT 1");
@@ -133,6 +160,8 @@ export type StoredAudio = {
 
 export type StoredProject = {
   researchPackage: import("../domain/research").ResearchPackage;
+  visualStoryboard: VisualStoryboard;
+  visualAssets: VisualAsset[];
   audio: StoredAudio | null;
   pendingTts: { cacheKey: string; scriptSha256: string } | null;
   researchReviewStatus: "needs-review" | "verified-by-author";
@@ -158,7 +187,32 @@ export function projectFromRow(row: { id: string; data_json: string; created_at:
   const project = JSON.parse(row.data_json) as StoredProject;
   const normalizedResearch = parseResearchPackage(project.researchPackage);
   if (normalizedResearch.success) project.researchPackage = normalizedResearch.data;
+  const rawStoryboard = project.visualStoryboard as unknown as { scenes?: Array<Record<string, unknown>> };
+  if (Array.isArray(rawStoryboard?.scenes)) project.visualStoryboard = {
+    ...(project.visualStoryboard as unknown as Record<string, unknown>),
+    scenes: rawStoryboard.scenes.map((scene) => {
+      if (scene.authoringStatus !== "ready") return scene;
+      const migrated = { ...scene, authoringStatus: "ready_for_review" };
+      if (scene.approved === true && typeof scene.approvedFingerprint === "string") {
+        const old = { ...migrated, authoringStatus: "ready" } as unknown as VisualStoryboardScene;
+        if (visualApprovalFingerprint(old) === scene.approvedFingerprint) {
+          (migrated as Record<string, unknown>).approvedFingerprint = visualApprovalFingerprint(migrated as unknown as VisualStoryboardScene);
+        }
+      }
+      return migrated;
+    }),
+  } as unknown as VisualStoryboard;
+  const savedStoryboard = visualStoryboardSchema.safeParse(project.visualStoryboard);
+  project.visualStoryboard = normalizedResearch.success && savedStoryboard.success
+    && savedStoryboard.data.scenes.length === normalizedResearch.data.scenes.length
+    && savedStoryboard.data.scenes.every((scene, index) => scene.sceneId === normalizedResearch.data.scenes[index]?.id && scene.durationSec === Math.round(((normalizedResearch.data.scenes[index]?.endSec ?? 0) - (normalizedResearch.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)
+    ? savedStoryboard.data
+    : normalizedResearch.success ? buildVisualStoryboard(normalizedResearch.data) : project.visualStoryboard;
   project.pendingTts ??= null;
+  project.visualAssets = Array.isArray(project.visualAssets) ? project.visualAssets.flatMap((asset) => {
+    const parsed = visualAssetSchema.safeParse(asset);
+    return parsed.success ? [parsed.data] : [];
+  }) : [];
   if (project.audio) {
     project.audio.source ??= "upload";
     project.audio.timingMode ??= "scaled";

@@ -1,9 +1,10 @@
 import React from "react";
 import { staticFile } from "remotion";
 import type { VisualComposition, VisualNode } from "../domain/visual-composition";
-import type { Scene } from "../domain/research";
+import type { Scene, VisualPreset } from "../domain/research";
 import { layerMotion } from "./motion";
 import { resolveVisualColor, type VisualStyle } from "./style-config";
+import { visualBackdropLayerOffset, visualCompositionCamera, visualCompositionFrame } from "../domain/visual-geometry";
 
 const assetFiles = { cloud: "cloud.svg", lightning: "lightning.svg", sun: "sun.svg" } as const;
 const safeId = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "-");
@@ -42,6 +43,19 @@ function IconShape({ icon, color }: { icon: string; color: string }) {
     case "rock": return <><path d="m8 78 8-36 18-8 8-22 24 8 9 19 17 11 1 28Z" fill={color}/><path d="m17 48 21-5 13 9 23-3 18 11M24 68l22-6 18 7 20-4" fill="none" stroke="#fff7e7" strokeOpacity=".55" strokeWidth="5" strokeLinecap="round"/><path d="m34 34 10 18 12 5" fill="none" stroke="#17323a" strokeOpacity=".35" strokeWidth="4"/></>;
     case "river": return <><path d="M6 20c34 0 15 23 49 24s16 31 40 32v12c-40 0-22-29-48-30S62 46 6 47Z" fill={color}/><path d="M12 28c20 0 14 12 32 13" fill="none" stroke="#fff7e7" strokeOpacity=".65" strokeWidth="4" strokeLinecap="round"/></>;
     case "crystal": return <><path d="m50 7 19 20 7 40-26 26-26-26 7-40Z" fill={color}/><path d="m50 7 1 86m18-66L33 27M76 67 50 48 24 67" fill="none" stroke="#fff7e7" strokeOpacity=".7" strokeWidth="4" strokeLinejoin="round"/></>;
+    case "earth": return <><circle cx="50" cy="50" r="43" fill={color}/><path d="m20 31 13-10 10 6 2 11-10 5-2 12-11 3-7-12Zm34-15 13 5 5 10-8 8-8-5-7-8Zm-5 37 14-7 14 7 4 11-10 8-2 12-13-2-5-12-9-5Z" fill="#7fb68e"/><path d="M10 51a40 40 0 0 0 80 0" fill="none" stroke="#fff" strokeOpacity=".42" strokeWidth="3"/></>;
+    case "atmosphere": return <><circle cx="50" cy="50" r="26" fill={color}/><circle cx="50" cy="50" r="36" fill="none" stroke={color} strokeWidth="7" strokeOpacity=".5"/><circle cx="50" cy="50" r="46" fill="none" stroke={color} strokeWidth="3" strokeDasharray="5 5"/></>;
+    case "ozone-layer": return <><circle cx="50" cy="50" r="38" fill="none" stroke={color} strokeWidth="10" strokeOpacity=".25"/><circle cx="50" cy="50" r="28" fill="none" stroke={color} strokeWidth="5" strokeDasharray="7 5"/><circle cx="50" cy="50" r="18" fill={color}/></>;
+    case "uv-ray": return <><circle cx="22" cy="50" r="13" fill={color}/><path d="M40 30 84 16M42 50h46M40 70l44 14" fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"/><path d="m73 8 13 8-15 7m12 19 13 8-13 8m-2 19 13 8-15 7" fill="none" stroke={color} strokeWidth="5" strokeLinejoin="round"/></>;
+    case "charged-particle": return <><path d="M13 29c16-23 29 16 44-2s20-15 30-4M12 70c16 20 29-15 43 2s25 15 32 4" fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"/><g fill={color} fontFamily="Arial,sans-serif" fontSize="24" fontWeight="800"><text x="18" y="28">+</text><text x="48" y="70">−</text><text x="70" y="34">+</text></g></>;
+    case "magnetosphere": return <><circle cx="50" cy="50" r="15" fill={color}/><path d="M50 6C12 8 7 33 16 50 7 67 12 92 50 94M50 6c38 2 43 27 34 44 9 17 4 42-34 44M50 14C25 19 22 35 29 50c-7 15-4 31 21 36m0-72c25 5 28 21 21 36 7 15 4 31-21 36" fill="none" stroke={color} strokeWidth="4" strokeOpacity=".72"/></>;
+    case "rain": return <><path d="M20 55a17 17 0 0 1 2-34 26 26 0 0 1 51-4 19 19 0 0 1 4 38H20Z" fill={color}/><path d="m29 67-7 14m28-14-7 14m28-14-7 14" stroke={color} strokeWidth="7" strokeLinecap="round"/></>;
+    case "ocean": return <><path d="M6 39q22-25 44 0t44 0v49H6Z" fill={color} opacity=".82"/><path d="M6 42q22-25 44 0t44 0M6 60q22-25 44 0t44 0" fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"/></>;
+    case "evaporation": return <><path d="M8 72q21-18 42 0t42 0" fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"/><path d="M28 57V27m-8 9 8-10 8 10M52 57V15m-8 9 8-10 8 10M76 57V31m-8 9 8-10 8 10" fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"/></>;
+    case "salt-crystal": return <><path d="m50 6 20 19 9 40-29 29-29-29 9-40Z" fill={color}/><path d="m50 6 1 88m19-69L31 25m48 40L50 46 21 65" fill="none" stroke="#fff" strokeOpacity=".82" strokeWidth="5" strokeLinejoin="round"/><path d="M8 84h16m52 0h16" stroke={color} strokeWidth="5" strokeLinecap="round"/></>;
+    case "volcano": return <><path d="M6 87 34 34l13 13 8-19 11 17 28 42Z" fill={color}/><path d="M45 47h14l-5 40" fill="none" stroke="#f0aa62" strokeWidth="8" strokeLinecap="round"/><path d="M29 31 24 17m45 14 6-14" stroke={color} strokeWidth="5" strokeLinecap="round"/></>;
+    case "magma": return <><path d="M11 76 31 34l13 17 10-30 14 28 21 27Z" fill={color}/><path d="M47 43h14l-6 44H45Z" fill="#ed8653"/><path d="M25 75q25-12 50 0" fill="none" stroke="#ffd27a" strokeWidth="6" strokeLinecap="round"/></>;
+    case "tectonic-plates": return <><path d="M7 34 47 43l-4 46L7 83Zm86 0-40 9 4 46 36-6Z" fill={color}/><path d="M50 12v31m-8-8 8 9 8-9" fill="none" stroke={color} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/><path d="M8 32q20-13 40 0m-36 4 35 8m36-12Q63 19 51 32m38 4-35 8" fill="none" stroke="#fff7e7" strokeWidth="3" opacity=".8"/></>;
     default: return null;
   }
 }
@@ -105,11 +119,15 @@ function Diagram({ kind, labels, color, accent }: { kind: string; labels: string
   </>;
 }
 
-function LeafNode({ node, style }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle }) {
+function LeafNode({ node, style, frame, progress }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number }) {
   const color = "color" in node ? resolveVisualColor(node.color, style) : resolveVisualColor("text", style);
   const fill = "fill" in node ? resolveVisualColor(node.fill, style, "none") : "none";
   const stroke = "stroke" in node ? resolveVisualColor(node.stroke, style, "none") : "none";
-  const transform = `translate(${node.x} ${node.y}) rotate(${node.rotation ?? 0} ${node.width/2} ${node.height/2})`;
+  const motionOffset = node.motion === "fall" ? { x: 0, y: progress * 220 }
+    : node.motion === "rise" ? { x: 0, y: -progress * 180 }
+      : node.motion === "flow" ? { x: progress * 96, y: progress * 56 }
+        : node.motion === "drift" ? { x: Math.sin(frame / 22) * 9, y: Math.cos(frame / 26) * 7 } : { x: 0, y: 0 };
+  const transform = `translate(${node.x + motionOffset.x} ${node.y + motionOffset.y}) rotate(${node.rotation ?? 0} ${node.width/2} ${node.height/2})`;
   const wrapperProps = { transform, opacity: node.opacity ?? 1 };
   switch (node.type) {
     case "shape":
@@ -117,7 +135,7 @@ function LeafNode({ node, style }: { node: Exclude<VisualNode, { type: "group" }
       if (node.shape === "line") return <g {...wrapperProps}><line x1="0" y1={node.height/2} x2={node.width} y2={node.height/2} stroke={stroke === "none" ? fill : stroke} strokeWidth={node.strokeWidth ?? 4}/></g>;
       if (node.shape === "polygon") return <g {...wrapperProps}><polygon points={node.points!.map(point=>`${point.x*node.width},${point.y*node.height}`).join(" ")} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
       return <g {...wrapperProps}><rect width={node.width} height={node.height} rx={node.radius ?? 0} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
-    case "path": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={node.d} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth} fillRule={node.fillRule}/></svg></g>;
+    case "path": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={node.d} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth} fillRule={node.fillRule} pathLength={node.motion === "draw" ? 1 : undefined} strokeDasharray={node.motion === "draw" ? 1 : undefined} strokeDashoffset={node.motion === "draw" ? 1 - progress : undefined}/></svg></g>;
     case "text": {
       const lines = textLines(node.text, node.width, node.height, node.fontSize);
       const anchor = node.align === "start" ? "start" : node.align === "end" ? "end" : "middle";
@@ -125,35 +143,30 @@ function LeafNode({ node, style }: { node: Exclude<VisualNode, { type: "group" }
       return <g {...wrapperProps}>{lines.map((line,index)=><text key={index} x={x} y={node.fontSize*(index+1)} textAnchor={anchor} fontFamily={node.font === "mono" ? "monospace" : node.font === "heading" ? style.headingFont : style.bodyFont} fontSize={node.fontSize} fontWeight={node.weight} fill={color}>{line}</text>)}</g>;
     }
     case "icon": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100"><IconShape icon={node.icon} color={color}/></svg></g>;
-    case "image": return <g {...wrapperProps}><image href={staticFile(`assets/${assetFiles[node.asset]}`)} width={node.width} height={node.height} preserveAspectRatio="xMidYMid meet"/></g>;
+    case "image": {
+      const file = node.asset.startsWith("upload-") ? `visual-assets/${node.asset.slice(7)}` : `assets/${assetFiles[node.asset as keyof typeof assetFiles]}`;
+      return <g {...wrapperProps}><image href={staticFile(file)} width={node.width} height={node.height} preserveAspectRatio="xMidYMid meet"/></g>;
+    }
     case "diagram": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100"><Diagram kind={node.kind} labels={node.labels} color={color} accent={resolveVisualColor(node.accent, style, resolveVisualColor("accent", style))}/></svg></g>;
   }
 }
 
-export function VisualCompositionView({ scene, composition, style, frame, progress }: { scene: Scene; composition: VisualComposition; style: VisualStyle; frame: number; progress: number }) {
+export function VisualCompositionView({ scene, composition, style, preset, frame, progress }: { scene: Scene; composition: VisualComposition; style: VisualStyle; preset: VisualPreset; frame: number; progress: number }) {
   const layers = [...composition.layers].sort((a,b)=>a.depth-b.depth);
   const foregroundLayers = layers.filter((layer) => layer.depth > 0.1);
   const contentLayers = foregroundLayers.length ? foregroundLayers : layers;
   const backdropLayers = foregroundLayers.length ? layers.filter((layer) => layer.depth <= 0.1) : [];
   const framing = visualCompositionFrame(composition);
-  const camera = style.backdrop === "cinematic"
-    ? { x: -24 + 48 * progress, y: Math.sin(progress * Math.PI) * 16, scale: 1 + 0.055 * progress }
-    : style.backdrop === "grid"
-      ? { x: Math.sin(progress * Math.PI * 2) * 8, y: Math.sin(progress * Math.PI) * 8, scale: 1 + 0.035 * progress }
-      : { x: Math.sin(progress * Math.PI) * 10, y: -Math.sin(progress * Math.PI) * 4, scale: 1 + 0.018 * progress };
+  const camera = visualCompositionCamera(preset, progress);
   const renderLayer = (layer: VisualComposition["layers"][number]) => {
     const motion = layerMotion(scene.motionPlan, layer.id, layer.depth, frame, progress);
-    if (style.backdrop === "flat") {
-      motion.translateX += Math.sin(progress * Math.PI * 2) * 11 * (0.5 - layer.depth);
-      motion.translateY += Math.sin(progress * Math.PI) * 5 * (0.5 - layer.depth);
-    } else if (style.backdrop === "grid") {
+    const backdropOffset = visualBackdropLayerOffset(preset, layer.depth, progress);
+    motion.translateX += backdropOffset.x;
+    motion.translateY += backdropOffset.y;
+    motion.scale = Math.min(1.2, motion.scale * backdropOffset.scale);
+    if (style.backdrop === "grid") {
       const entrance = Math.max(0, Math.min(1, (progress - layer.depth * 0.08) / 0.18));
-      motion.translateY += (1 - entrance) * 26;
       motion.opacity *= 0.72 + 0.28 * entrance;
-    } else {
-      motion.translateX += (0.5 - layer.depth) * 66 * progress;
-      motion.translateY += (0.5 - layer.depth) * 24 * progress;
-      motion.scale = Math.min(1.2, motion.scale * (1 + 0.06 * progress));
     }
     const clipId = `reveal-${safeId(scene.id)}-${safeId(layer.id)}`;
     const transform = `translate(${motion.translateX} ${motion.translateY}) translate(540 960) scale(${motion.scale}) translate(-540 -960)`;
@@ -163,9 +176,9 @@ export function VisualCompositionView({ scene, composition, style, frame, progre
       {motion.reveal < 1 && <defs><clipPath id={clipId}><rect x="0" y="0" width={1080*motion.reveal} height="1920"/></clipPath></defs>}
       <g clipPath={motion.reveal < 1 ? `url(#${clipId})` : undefined}>
         {nodes.map((node,index)=>{
-          if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} node={node} style={style}/>;
+          if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} node={node} style={style} frame={frame} progress={progress}/>;
           const groupTransform = `translate(${node.x} ${node.y}) rotate(${node.rotation??0} ${node.width/2} ${node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
-          return <g key={`group-${index}`} transform={groupTransform} opacity={node.opacity??1}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} node={child} style={style}/>)}</g>;
+          return <g key={`group-${index}`} transform={groupTransform} opacity={node.opacity??1}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} node={child} style={style} frame={frame} progress={progress}/>)}</g>;
         })}
       </g>
     </g>;
@@ -177,24 +190,6 @@ export function VisualCompositionView({ scene, composition, style, frame, progre
       {contentLayers.map(renderLayer)}
     </g>
   </>;
-}
-
-export function visualCompositionFrame(composition: VisualComposition) {
-  const foreground = composition.layers.filter((layer) => layer.depth > 0.1);
-  const nodes = (foreground.length ? foreground : composition.layers).flatMap((layer) => layer.nodes).filter((node) => !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
-  if (!nodes.length) return { scale: 1, translateX: 0, translateY: 0 };
-  const bounds = nodes.reduce((box, node) => ({
-    left: Math.min(box.left, node.x),
-    top: Math.min(box.top, node.y),
-    right: Math.max(box.right, node.x + node.width),
-    bottom: Math.max(box.bottom, node.y + node.height),
-  }), { left: 1080, top: 1920, right: 0, bottom: 0 });
-  const width = Math.max(1, bounds.right - bounds.left);
-  const height = Math.max(1, bounds.bottom - bounds.top);
-  const scale = Math.min(1.3, 1080 / width, 1100 / height);
-  const centerX = (bounds.left + bounds.right) / 2;
-  const centerY = (bounds.top + bounds.bottom) / 2;
-  return { scale, translateX: 540 - centerX * scale, translateY: 990 - centerY * scale };
 }
 
 export { IconShape };

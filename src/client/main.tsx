@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
@@ -6,8 +6,12 @@ import type { AnyZodObject } from "remotion";
 import { categories, motionCues, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
+import { applyVisualStoryboard, buildVisualStoryboard, visualApprovalFingerprint, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { composeVisualScene } from "../domain/visual-composer";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
+import type { VisualAsset } from "../domain/visual-assets";
+import type { VisualSemanticPlan } from "../domain/visual-semantic-plan";
 import { durationInFrames } from "../domain/timeline";
 import { narrationScript } from "../domain/voice-timing";
 import { previewInputProps } from "../video/video";
@@ -15,12 +19,14 @@ import { VersionedVideo, type VideoProps } from "../video/root";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
-import { AiGenerationPanel } from "./AiGenerationPanel";
+import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
+import { VisualStoryboardReview } from "./VisualStoryboardReview";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
 import "./styles.css";
 import "./tts.css";
 import "./workflow.css";
 import "./workspace-refinement.css";
+import "./visual-storyboard.css";
 
 type Job = {
   id: string;
@@ -38,6 +44,8 @@ type Job = {
 type Project = {
   id: string;
   researchPackage: ResearchPackage;
+  visualStoryboard: VisualStoryboard;
+  visualAssets: VisualAsset[];
   audio: {
     file: string; name: string; durationSec: number; bytes: number; sha256: string;
     source: "upload" | "tts"; timingMode: "scaled" | "estimated";
@@ -54,20 +62,22 @@ type Project = {
   latestJob: Job;
 };
 
-type Status = { ffmpegAvailable: boolean; githubWorkflowAvailable: boolean; dailyLimit: number; jobsUsed: number; nextAllowedAt: string | null };
 type AiGenerationMode = "development" | "production";
+type Status = { ffmpegAvailable: boolean; githubWorkflowAvailable: boolean; generationMode: AiGenerationMode; dailyLimit: number; jobsUsed: number; nextAllowedAt: string | null };
 type AiGenerationSettings = {
   mode: AiGenerationMode;
   providers: {
-    development: { id: "opencode-local"; displayName: string; configured: boolean; connected: boolean; version: string | null; models: Array<{ id: string; providerID: string; modelID: string; name: string }>; disabledReason: string | null };
-    production: { id: "gemini-developer-api"; displayName: string; model: string | null; allowedModels: string[]; configured: boolean; disabledReason: string | null; freeTierOnly: boolean; dailyLimit: number; requestsUsed: number; requestsRemaining: number };
+    development: { id: "opencode-local"; displayName: string; configured: boolean; connected: boolean; state: "server-unreachable" | "authentication-failed" | "unsupported-api-version" | "model-unavailable" | "connected"; apiVersion: "v1" | "v2" | null; version: string | null; models: Array<{ id: string; providerID: string; modelID: string; name: string }>; disabledReason: string | null };
+    production: ProductionStatus & { id: "gemini-developer-api"; displayName: string };
   };
   generationAvailable: boolean;
 };
+type OpenCodeModel = AiGenerationSettings["providers"]["development"]["models"][number];
+type OpenCodeModelGroup = { id: string; name: string; models: OpenCodeModel[] };
 type TtsVoice = { id: string; name: string; locale: string; localeName: string; gender: string; description?: string; wordsPerMinute: number; availability: "api" | "fallback" };
 type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; dailyLimit?: number; requestsUsed?: number; requestsRemaining?: number; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
-type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null };
+type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null; retryAt?: string | null; quotaType?: string | null };
 type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "danger" };
 type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void };
 
@@ -78,6 +88,8 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     const error = new Error(body.error ?? `Request gagal (${response.status})`) as Failure;
     error.issues = body.issues;
     error.nextAllowedAt = body.nextAllowedAt;
+    error.retryAt = body.retryAt;
+    error.quotaType = body.quotaType;
     throw error;
   }
   return body as T;
@@ -100,7 +112,7 @@ function friendlyError(error: unknown) {
 
 function App() {
   const [view, setView] = useState<"dashboard" | "create" | "workspace" | "settings">("dashboard");
-  const [createMode, setCreateMode] = useState<"import" | "ai">("import");
+  const [createMode, setCreateMode] = useState<"import" | "ai">("ai");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [research, setResearch] = useState<ResearchPackage | null>(null);
@@ -112,6 +124,9 @@ function App() {
   const [aiSettingsError, setAiSettingsError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [generatingVisualSceneId, setGeneratingVisualSceneId] = useState<string | null>(null);
+  const [planningVisualSceneId, setPlanningVisualSceneId] = useState<string | null>(null);
+  const [visualPlannerModel, setVisualPlannerModel] = useState("");
   const [saved, setSaved] = useState(true);
   const [activeStep, setActiveStep] = useState<WorkspaceStep>("materials");
   const [previewStarted, setPreviewStarted] = useState(false);
@@ -129,15 +144,22 @@ function App() {
   const [testVoicePreview, setTestVoicePreview] = useState<TtsPreview | null>(null);
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
   const confirmationRef = useRef<PendingConfirmation | null>(null);
+  const createDraftUnsaved = useRef(false);
   const previewPlayer = useRef<PlayerRef>(null);
+  const setCreateDraftUnsaved = useCallback((value: boolean) => { createDraftUnsaved.current = value; }, []);
 
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
-  const reviewFingerprint = project && research ? previewReviewFingerprint(research, project.audio, RENDERER_VERSION) : "";
-  const draftAudioMatches = !project?.audio || project.audio.source !== "tts" || Boolean(project.audioMatchesNarration && research && narrationScript(research) === narrationScript(project.researchPackage));
+  const visualResearch = useMemo(() => project && research ? applyVisualStoryboard(research, project.visualStoryboard) : research, [project?.visualStoryboard, project?.id, research]);
+  const visualGate = useMemo(() => project && visualResearch ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets.map((asset) => asset.id)) : null, [project?.visualStoryboard, project?.visualAssets, visualResearch]);
+  const visualApproved = Boolean(visualGate?.ready && project?.visualStoryboard.scenes.length && project.visualStoryboard.scenes.every((scene) => scene.approved));
+  const reviewFingerprint = project && visualResearch ? previewReviewFingerprint(visualResearch, project.audio, RENDERER_VERSION) : "";
+  const draftAudioMatches = !project?.audio || project.audio.source !== "tts" || Boolean(project.audioMatchesNarration && visualResearch && narrationScript(visualResearch) === narrationScript(project.researchPackage));
   const workflowSignals = {
     activeStep,
     hasResearch: Boolean(research),
     saved,
+    visualStoryboardReady: Boolean(visualGate?.ready),
+    visualStoryboardApproved: visualApproved,
     hasAudio: Boolean(project?.audio),
     audioMatchesNarration: draftAudioMatches,
     hasPendingAudio: Boolean(project?.pendingTts),
@@ -148,6 +170,7 @@ function App() {
     latestJobContentCurrent: Boolean(project?.latestJobContentCurrent),
   };
   const stepStatuses = workflowStatuses(workflowSignals);
+  const renderMode = aiGenerationSettings?.mode ?? status?.generationMode ?? null;
 
   async function refresh() {
     const [list, serverStatus] = await Promise.all([
@@ -161,6 +184,7 @@ function App() {
   async function refreshAiGenerationSettings() {
     const settings = await api<AiGenerationSettings>("/api/settings/ai-generation");
     setAiGenerationSettings(settings);
+    setVisualPlannerModel((current) => settings.providers.development.models.some((model) => model.id === current) ? current : settings.providers.development.models[0]?.id ?? "");
     return settings;
   }
 
@@ -219,16 +243,31 @@ function App() {
     return confirmed && Boolean(await saveProject());
   }
 
+  async function confirmLeaveCreate() {
+    if (view !== "create" || !createDraftUnsaved.current) return true;
+    const confirmed = await askConfirmation({
+      title: "Hasil AI belum disimpan",
+      message: "Hasil generate belum tersimpan dan akan hilang jika keluar. Tetap di Create Video untuk menyimpan, atau buang hasil ini?",
+      confirmLabel: "Buang hasil & keluar",
+      cancelLabel: "Tetap di Create Video",
+      tone: "danger",
+    });
+    return confirmed;
+  }
+
   async function goToDashboard() {
     if (busy || ttsBusy || ttsLoading) return;
+    if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
+    createDraftUnsaved.current = false;
     setMessage("");
     setView("dashboard");
   }
 
-  async function openProject(id: string) {
+  async function openProject(id: string, notice?: string, createAlreadyConfirmed = false, initialStep?: WorkspaceStep) {
     if (view === "workspace" && project?.id === id) return;
     if (ttsBusy || ttsLoading) return;
+    if (!createAlreadyConfirmed && !await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     try {
       const loaded = await api<Project>(`/api/projects/${id}`);
@@ -243,12 +282,17 @@ function App() {
       setTtsRate(loaded.audio?.tts?.speakingRate ?? 1);
       setTtsVoices(null);
       setTtsLoading(false);
-      const savedPreviewReview = storedPreviewReviewed(id, previewReviewFingerprint(loaded.researchPackage, loaded.audio, RENDERER_VERSION));
-      const savedStep = storedWorkspaceStep(id);
+      const loadedVisualResearch = applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
+      const loadedVisualGate = visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets.map((asset) => asset.id));
+      const loadedVisualApproved = loadedVisualGate.ready && loaded.visualStoryboard.scenes.every((scene) => scene.approved);
+      const savedPreviewReview = storedPreviewReviewed(id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION));
+      const savedStep = initialStep ?? storedWorkspaceStep(id);
       setActiveStep(reachableWorkspaceStep(savedStep, {
         activeStep: savedStep,
         hasResearch: true,
         saved: true,
+        visualStoryboardReady: loadedVisualGate.ready,
+        visualStoryboardApproved: loadedVisualApproved,
         hasAudio: Boolean(loaded.audio),
         audioMatchesNarration: loaded.audio?.source !== "tts" || loaded.audioMatchesNarration,
         hasPendingAudio: Boolean(loaded.pendingTts),
@@ -262,28 +306,29 @@ function App() {
       setPreviewStarted(false);
       setTestVoicePreview(null);
       setSaved(true);
-      setMessage("");
+      setMessage(notice ?? "");
+      createDraftUnsaved.current = false;
       setView("workspace");
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
   async function openCreate() {
     if (busy || ttsBusy || ttsLoading) return;
+    if (view === "create") return;
+    if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
-    setCreateMode("import");
+    createDraftUnsaved.current = false;
+    setCreateMode("ai");
+    setJsonDraft("");
     setView("create");
     setMessage("");
-    if (!jsonDraft) {
-      try {
-        const sample = await api<ResearchPackage>("/api/sample");
-        setJsonDraft(JSON.stringify(sample, null, 2));
-      } catch (error) { setMessage(friendlyError(error)); }
-    }
   }
 
   async function openSettings() {
     if (busy || ttsBusy || ttsLoading || aiSettingsBusy) return;
+    if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
+    createDraftUnsaved.current = false;
     setView("settings");
     setMessage("");
     setAiSettingsError("");
@@ -298,6 +343,7 @@ function App() {
     try {
       const updated = await api<AiGenerationSettings>("/api/settings/ai-generation", jsonRequest("PUT", { mode }));
       setAiGenerationSettings(updated);
+      setStatus(await api<Status>("/api/status"));
     } catch (error) { setAiSettingsError(friendlyError(error)); }
     finally { setAiSettingsBusy(false); }
   }
@@ -325,14 +371,15 @@ function App() {
     setBusy(true);
     try {
       const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId }));
-      await refresh();
-      setMessage(`Project “${created.researchPackage.title}” dibuat dari AI draft. Storyboard, referensi, dan fakta tetap perlu ditinjau.`);
+      createDraftUnsaved.current = false;
+      await refresh().catch(() => undefined);
       return { id: created.id, title: created.researchPackage.title };
-    } catch (error) { setMessage(friendlyError(error)); return null; }
-    finally { setBusy(false); }
+    } finally { setBusy(false); }
   }
 
   async function loadSample() {
+    if (!await confirmLeaveCreate()) return;
+    if (!await saveBeforeLeavingWorkspace()) return;
     setBusy(true);
     try {
       const researchPackage = await api<ResearchPackage>("/api/sample");
@@ -351,12 +398,13 @@ function App() {
   }
 
   async function createFromJson() {
+    if (!await confirmLeaveCreate()) return;
     setBusy(true);
     try {
       const researchPackage = JSON.parse(jsonDraft) as ResearchPackage;
       const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage }));
       await refresh();
-      await openProject(created.id);
+      await openProject(created.id, undefined, true);
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }
@@ -370,14 +418,203 @@ function App() {
   }
 
   function updateScene(sceneId: string, change: (scene: Scene) => Scene) {
-    updateResearch((current) => ({ ...current, scenes: current.scenes.map((scene) => scene.id === sceneId ? change(scene) : scene) }));
+    if (!research) return;
+    const source = research.scenes.find((scene) => scene.id === sceneId);
+    if (!source) return;
+    const changed = change(source);
+    const nextResearch = { ...research, scenes: research.scenes.map((scene) => scene.id === sceneId ? changed : scene) };
+    updateResearch(() => nextResearch);
+    setProject((current) => {
+      if (!current) return current;
+      const refreshed = buildVisualStoryboard(nextResearch, current.visualStoryboard);
+      const authoredComposition = JSON.stringify(changed.visualComposition) !== JSON.stringify(source.visualComposition);
+      return {
+        ...current,
+        visualStoryboard: {
+          ...refreshed,
+          scenes: refreshed.scenes.map((scene) => scene.sceneId !== sceneId ? scene : {
+            ...scene,
+            ...(authoredComposition ? { composition: changed.visualComposition, compositionSource: "manual" as const, authoringConfirmed: true, authoringStatus: "needs_review" as const, layout: "existing-composition" as const, warnings: ["Komposisi manual dipilih; periksa kecocokan objek sebelum approval."] } : {}),
+            approved: false,
+          }),
+        },
+      };
+    });
+  }
+
+  function updateVisualScene(sceneId: string, change: Partial<VisualStoryboardScene>) {
+    if (!project || !research) return;
+    const prior = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
+    if (!prior) return;
+    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "composition", "compositionSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
+    const artworkChanged = artworkFields.some((field) => field in change);
+    const statusAfterReview = change.approved === true && prior.authoringStatus === "needs_review" ? "ready_for_review"
+      : change.approved === false && prior.compositionSource === "procedural" && prior.authoringStatus === "ready_for_review" ? "needs_review"
+        : prior.authoringStatus;
+    const updatedScene = { ...prior, authoringStatus: statusAfterReview, ...change };
+    const approved = change.approved ?? (artworkChanged ? false : prior.approved);
+    const nextScene = {
+      ...updatedScene,
+      approved,
+      approvedFingerprint: approved ? visualApprovalFingerprint(updatedScene) : null,
+    };
+    let storyboard: VisualStoryboard = {
+      ...project.visualStoryboard,
+      scenes: project.visualStoryboard.scenes.map((scene) => scene.sceneId === sceneId ? nextScene : scene),
+    };
+    if (change.headline !== undefined || change.narrationText !== undefined) {
+      storyboard = buildVisualStoryboard(applyVisualStoryboard(research, storyboard), storyboard);
+    }
+    const copyChanged = prior.headline !== storyboard.scenes.find((scene) => scene.sceneId === sceneId)?.headline || prior.narrationText !== storyboard.scenes.find((scene) => scene.sceneId === sceneId)?.narrationText;
+    setProject((current) => current ? { ...current, visualStoryboard: storyboard, ...(copyChanged ? { researchReviewStatus: "needs-review" as const } : {}) } : current);
+    setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
+    setSaved(false);
+    setPreviewReviewed(false);
+    setPreviewStarted(false);
+  }
+
+  async function regenerateVisualScene(sceneId: string, semanticPlanOverride?: VisualSemanticPlan, confirmationDone = false) {
+    if (!project || !research || busy && !confirmationDone || generatingVisualSceneId) return;
+    const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene) return;
+    if (!confirmationDone && (scene.authoringConfirmed || scene.approved || scene.compositionSource === "manual") && !await askConfirmation({
+      title: "Ganti ilustrasi yang sudah disetujui/di-edit?",
+      message: "Composer akan mengganti komposisi saat ini. Hasil manual dan approval akan hilang; komposisi baru perlu ditinjau dan disetujui ulang.",
+      confirmLabel: "Ganti ilustrasi",
+      cancelLabel: "Pertahankan komposisi",
+    })) return;
+    setGeneratingVisualSceneId(sceneId);
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const composed = composeVisualScene({
+        headline: scene.headline,
+        narration: scene.narrationText,
+        visualDescription: scene.visualSummary,
+        artDirection: { styleId: project.visualStoryboard.styleId, palette: project.visualStoryboard.palette },
+        sceneVisualFocus: scene.visualFocus,
+        illustrationIntent: scene.illustrationIntent,
+        existingVisualPlan: {
+          objects: scene.objects.map((object) => object.objectId), relationships: scene.relationships,
+          source: scene.compositionSource, status: scene.authoringStatus,
+          authoringConfirmed: scene.authoringConfirmed, approved: scene.approved,
+        },
+         existingComposition: scene.composition,
+        semanticPlan: semanticPlanOverride ?? scene.semanticPlan,
+        sharedWorldObjects: project.visualStoryboard.reusableWorldObjects,
+        assetLibrary: visualObjectLibrary,
+        preserveExisting: false,
+      });
+      if (!composed.composition) {
+        setMessage(`Ilustrasi belum dapat dibuat akurat: ${composed.missingVisuals.join(" · ")}. Komposisi saat ini dipertahankan.`);
+        return;
+      }
+      const type = composed.compositionType;
+      const motionIntent: VisualStoryboardScene["motionIntent"] = type === "connected-environment" || type === "scientific-diagram" ? "particle-flow"
+        : type === "cross-section" || type === "step-by-step-process" ? "path-animation"
+          : type === "hero-object-focus" || type === "before-and-after" ? "focus-shift" : "gentle-reveal";
+      updateVisualScene(sceneId, {
+        composition: composed.composition,
+        ...(semanticPlanOverride ?? scene.semanticPlan ? { semanticPlan: semanticPlanOverride ?? scene.semanticPlan } : {}),
+        compositionType: type,
+        layout: type ?? (composed.compositionSource === "procedural" ? "procedural-scene" : "existing-composition"),
+        compositionSource: composed.compositionSource,
+        objects: composed.objects.map((objectId) => ({ objectId, assetId: objectId, role: visualObjectLibrary[objectId].role, label: visualObjectLibrary[objectId].label })),
+        relationships: composed.relationships,
+        visualFocus: composed.focus,
+        illustrationIntent: composed.illustrationIntent,
+        motionIntent,
+        motionSummary: motionIntent === "particle-flow" ? "Partikel mengikuti lintasan lingkungan secara deterministik."
+          : motionIntent === "path-animation" ? "Path proses terungkap; hujan/uap mengikuti arah penjelasan."
+            : motionIntent === "focus-shift" ? "Zoom halus mengarahkan perhatian ke objek utama." : "Reveal ringan menjaga fokus pada ilustrasi.",
+        missingVisuals: composed.missingVisuals,
+        warnings: composed.warnings,
+        authoringStatus: composed.status,
+        authoringConfirmed: false,
+        approved: false,
+      });
+      setMessage(composed.status === "needs_visual_authoring" ? `Ilustrasi dibuat sebagian. Perlu authoring: ${composed.missingVisuals.join(" · ")}.` : "Ilustrasi otomatis diperbarui. Tinjau thumbnail sebelum approval.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setGeneratingVisualSceneId(null); }
+  }
+
+  async function planVisualScene(sceneId: string) {
+    if (!project || busy || planningVisualSceneId) return;
+    const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene) return;
+    if ((scene.authoringConfirmed || scene.approved || scene.compositionSource === "manual") && !await askConfirmation({
+      title: "Perbarui ilustrasi manual/approved dengan AI plan?",
+      message: "AI hanya menyusun semantic plan teks; composer lokal akan membuat ulang komposisi dan approval sebelumnya menjadi stale.",
+      confirmLabel: "Plan dan recompose",
+      cancelLabel: "Pertahankan ilustrasi",
+    })) return;
+    setBusy(true);
+    setPlanningVisualSceneId(sceneId);
+    try {
+      const settings = aiGenerationSettings ?? await refreshAiGenerationSettings();
+      const model = settings.mode === "development" ? visualPlannerModel : undefined;
+      if (settings.mode === "development" && !model) throw new Error("Pilih model OpenCode terhubung sebelum menjalankan visual planner.");
+      if (!settings.generationAvailable) throw new Error(settings.providers.production.disabledReason ?? settings.providers.development.disabledReason ?? "Provider AI Text belum tersedia.");
+      const result = await api<{ plan: VisualSemanticPlan; cached: boolean }>(`/api/projects/${project.id}/scenes/${sceneId}/visual-plan`, jsonRequest("POST", model ? { model } : {}));
+      await regenerateVisualScene(sceneId, result.plan, true);
+      setMessage(`Semantic plan ${result.cached ? "dipakai dari cache" : "dibuat provider terpilih"}; komposisi lokal siap ditinjau.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setPlanningVisualSceneId(null); setBusy(false); }
+  }
+
+  function useAuthoredComposition(sceneId: string) {
+    if (!project || !research) return;
+    const source = research.scenes.find((scene) => scene.id === sceneId);
+    if (!source) return;
+    updateVisualScene(sceneId, {
+      composition: source.visualComposition,
+      compositionSource: "manual",
+      layout: "existing-composition",
+      authoringStatus: "needs_review",
+      authoringConfirmed: true,
+      warnings: ["Komposisi manual dipilih; periksa kecocokan objek sebelum approval."],
+      approved: false,
+    });
+  }
+
+  function useUploadedIllustration(sceneId: string, assetId: string) {
+    if (!project) return;
+    const current = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
+    if (!current) return;
+    const composition = visualCompositionSchema.parse({
+      background: project.visualStoryboard.palette.canvas,
+      layers: [{ id: "user-illustration", depth: 0.72, nodes: [{ type: "image", asset: assetId, x: 100, y: 510, width: 880, height: 900 }] }],
+    });
+    updateVisualScene(sceneId, {
+      composition, compositionType: "hero-object-focus", layout: "existing-composition", compositionSource: "manual",
+      authoringStatus: "needs_review", authoringConfirmed: false,
+      warnings: ["Aset unggahan dipilih; tinjau makna objek dan hubungan scene sebelum konfirmasi manual."], approved: false,
+    });
+  }
+
+  async function uploadVisualIllustration(sceneId: string, file: File) {
+    if (!project || busy) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("illustration", file);
+      form.append("name", file.name.replace(/\.[^.]+$/, "").slice(0, 120));
+      const result = await api<{ project: Project; asset: VisualAsset }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
+      setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      useUploadedIllustration(sceneId, result.asset.id);
+      setMessage("Ilustrasi diunggah aman. Tinjau kecocokan makna sebelum konfirmasi dan approval.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  function confirmUploadedIllustration(sceneId: string) {
+    updateVisualScene(sceneId, { authoringConfirmed: true, authoringStatus: "needs_review", warnings: ["Kecocokan aset dan hubungan telah dikonfirmasi manusia; approval tetap terpisah."] });
   }
 
   async function saveProject(): Promise<Project | null> {
     if (!project || !research) return null;
     setBusy(true);
     try {
-      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research }));
+      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard }));
       setProject(updated);
       setResearch(updated.researchPackage);
       setSaved(true);
@@ -416,7 +653,7 @@ function App() {
       });
       if (!canAdvance) {
         setActiveStep(step);
-        setMessage(step === "materials" ? "Simpan storyboard sebelum lanjut." : step === "narration" ? "Audio AI Voice tidak sesuai dengan naskah terbaru. Buat dan setujui preview narasi baru." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Video sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
+        setMessage(step === "materials" ? "Simpan storyboard sebelum lanjut." : step === "visual" ? "Perbaiki quality gate, lalu approve setiap scene Visual Storyboard." : step === "narration" ? "Audio AI Voice tidak sesuai dengan naskah terbaru. Buat dan setujui preview narasi baru." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Motion sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
         return;
       }
     }
@@ -471,7 +708,7 @@ function App() {
     setTtsMessage("");
     try {
       if (!saved) {
-        const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research }));
+        const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard }));
         setProject(updated);
         setResearch(updated.researchPackage);
         setSaved(true);
@@ -546,6 +783,11 @@ function App() {
 
   async function renderFinal() {
     if (!project || !research || busy) return;
+    if (!visualGate?.ready || !visualApproved) {
+      setActiveStep("visual");
+      setMessage("Visual Storyboard belum lolos quality gate atau belum disetujui per scene.");
+      return;
+    }
     if (!saved) {
       setActiveStep("materials");
       setMessage("Simpan perubahan storyboard sebelum review fakta dan Preview Video.");
@@ -619,6 +861,7 @@ function App() {
   async function deleteProject(id: string) {
     const target = projects.find((item) => item.id === id);
     if (!target || busy || ttsBusy || ttsLoading) return;
+    if (view === "create" && project?.id === id && !await confirmLeaveCreate()) return;
     if (!await askConfirmation({ title: "Hapus video project?", message: `“${target.researchPackage.title}” beserta storyboard, job, dan hasil render akan dihapus permanen.`, confirmLabel: "Hapus video", tone: "danger" })) return;
     setBusy(true);
     try {
@@ -629,6 +872,7 @@ function App() {
         setSelectedSceneId(null);
         setTestVoicePreview(null);
         setTtsVoices(null);
+        createDraftUnsaved.current = false;
         setView("dashboard");
         setAudioMode("upload");
       }
@@ -679,7 +923,7 @@ function App() {
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
-      {view === "dashboard" && <Dashboard status={status} projects={projects} busy={busy || ttsBusy || ttsLoading} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
+      {view === "dashboard" && <Dashboard status={status} mode={renderMode} projects={projects} busy={busy || ttsBusy || ttsLoading} onCreate={() => void openCreate()} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page create-page">
         <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Generate draft dari topik bebas, impor Research Package v1.0/v1.1, atau gunakan sample. Versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung</button>
@@ -688,20 +932,23 @@ function App() {
           <button type="button" role="tab" aria-selected={createMode === "import"} className={createMode === "import" ? "selected" : ""} onClick={() => setCreateMode("import")}>Import Research Package</button>
           <button type="button" role="tab" aria-selected={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>Generate with AI</button>
         </div>
-        {createMode === "ai" ? <AiGenerationPanel
+        <div hidden={createMode !== "ai"}><AiGenerationPanel
           mode={aiGenerationSettings?.mode ?? null}
           development={aiGenerationSettings?.providers.development ?? null}
           production={aiGenerationSettings?.providers.production ?? null}
           projectBusy={busy}
           onGenerate={generateAiDraft}
           onCreateProject={createAiProject}
-          onOpenProject={(id) => void openProject(id)}
-        /> : <><div className="import-card">
-          <div className="import-toolbar"><div><strong>Research package</strong><p>JSON tersimpan lokal. Konten dianggap data, tidak menjalankan script.</p></div>
+          onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
+          onUnsavedChange={setCreateDraftUnsaved}
+          onConfirmDiscard={confirmLeaveCreate}
+        /></div>
+        {createMode === "import" && <><div className="import-card">
+          <div className="import-toolbar"><div><strong>Import Research Package</strong><p>JSON tersimpan lokal. Konten dianggap data, tidak menjalankan script.</p></div>
             <label className="button button-light file-button">Pilih file JSON<input type="file" accept=".json,application/json" onChange={(event) => void importFile(event.target.files?.[0])} /></label>
           </div>
-          <textarea className="json-editor" value={jsonDraft} onChange={(event) => setJsonDraft(event.target.value)} spellCheck={false} aria-label="Editor Research Package JSON" />
-          <div className="import-footer"><span>Schema v1.0 (auto-upgrade) / v1.1 <i /> Maks 1 MB <i /> Sumber tidak diverifikasi otomatis</span><button className="button button-primary" disabled={busy || !jsonDraft.trim()} onClick={() => void createFromJson()}>Buat storyboard <b>→</b></button></div>
+          <label className="import-json-field"><span>Research Package JSON</span><textarea className="json-editor" value={jsonDraft} onChange={(event) => setJsonDraft(event.target.value)} spellCheck={false} aria-label="Editor Research Package JSON" /><small>Schema v1.0 otomatis di-upgrade ke v1.1. Maksimal 1 MB; sumber tidak diverifikasi otomatis.</small></label>
+          <div className="import-footer"><button className="button button-primary" disabled={busy || !jsonDraft.trim()} onClick={() => void createFromJson()}>Buat storyboard <b>→</b></button></div>
         </div>
         <div className="notice-line"><span className="notice-icon">ⓘ</span><span>Import bukan verifikasi fakta. Tinjau klaim, URL, dan timing sebelum render atau publikasi.</span></div>
         </>}
@@ -723,7 +970,7 @@ function App() {
           <div className="heading-actions"><button className={`button button-light save-button ${saved ? "saved" : ""}`} onClick={() => void saveProject()} disabled={busy || saved}>{saved ? "✓ Tersimpan" : "Simpan perubahan"}</button></div>
         </div>
 
-        <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} onSelect={(step) => void goToStep(step)} />
+        <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />
         <div className="workspace-step-panel">
           <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>
 
@@ -753,6 +1000,31 @@ function App() {
               {!!researchWarnings(research).length && <div className="workflow-alert attention"><span>{researchWarnings(research).join(" ")}</span></div>}
             </aside>
           </div>}
+
+          {activeStep === "visual" && <VisualStoryboardReview
+            research={research}
+            storyboard={project.visualStoryboard}
+            gate={visualGate!}
+            saved={saved}
+            busy={busy}
+            generatingSceneId={generatingVisualSceneId}
+            onChange={updateVisualScene}
+            onGenerate={regenerateVisualScene}
+            onUseCurrentComposition={useAuthoredComposition}
+            assets={project.visualAssets}
+            onUploadAsset={uploadVisualIllustration}
+            onUseAsset={useUploadedIllustration}
+            onConfirmUserAsset={confirmUploadedIllustration}
+            aiMode={aiGenerationSettings?.mode ?? null}
+            plannerAvailable={Boolean(aiGenerationSettings && (aiGenerationSettings.mode === "development"
+              ? aiGenerationSettings.providers.development.models.some((model) => model.id === visualPlannerModel)
+              : aiGenerationSettings.providers.production.configured))}
+            models={aiGenerationSettings?.providers.development.models.map((model) => ({ id: model.id, name: model.name })) ?? []}
+            selectedModel={visualPlannerModel}
+            onSelectModel={setVisualPlannerModel}
+            planningSceneId={planningVisualSceneId}
+            onPlan={planVisualScene}
+          />}
 
           {activeStep === "narration" && <div className="workspace-step-content single narration-step">
             <div className="audio-step-intro"><strong>{project.audio ? `Audio aktif · ${project.audio.source === "tts" ? project.audio.tts?.voiceName ?? "AI Voice" : project.audio.name}` : "Belum ada audio aktif"}</strong><span>Kandidat AI Voice tidak mengganti audio aktif sampai Anda menyetujuinya. Membuka langkah ini tidak menjalankan synthesis.</span></div>
@@ -801,7 +1073,7 @@ function App() {
           </div>}
 
           {activeStep === "review" && <ReviewStep
-            research={research}
+            research={visualResearch!}
             project={project}
             onEditScene={(id) => { setSelectedSceneId(id); void goToStep("materials"); }}
             onEditReferences={() => void goToStep("materials")}
@@ -814,7 +1086,7 @@ function App() {
               <Player<AnyZodObject, VideoProps>
                 ref={previewPlayer}
                 component={VersionedVideo}
-                inputProps={previewInputProps(research, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, RENDERER_VERSION)}
+                inputProps={previewInputProps(visualResearch!, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, RENDERER_VERSION)}
                 durationInFrames={durationInFrames(research, project.audio?.durationSec)}
                 compositionWidth={1080}
                 compositionHeight={1920}
@@ -837,7 +1109,7 @@ function App() {
           </div>}
 
           {activeStep === "render" && <div className="render-step">
-            <div className="render-quota-card"><div><span className="eyebrow">PRODUCTION QUOTA</span><strong>{status ? `${status.jobsUsed} / ${status.dailyLimit} job hari ini` : "Memuat quota…"}</strong><small>{status?.nextAllowedAt ? `Slot berikutnya ${new Date(status.nextAllowedAt).toLocaleString("id-ID")}` : "Quota mengikuti server lokal."}</small></div><span className={`quota-indicator ${status?.ffmpegAvailable ? "ready" : "attention"}`}>{status?.ffmpegAvailable ? "FFMPEG SIAP" : "FFMPEG BELUM SIAP"}</span></div>
+            <div className="render-quota-card"><div><span className="eyebrow">RENDER QUOTA</span><strong>{renderQuotaValue(status, renderMode)}</strong><small>{renderQuotaNote(status, renderMode)}</small></div><span className={`quota-indicator ${status?.ffmpegAvailable ? "ready" : "attention"}`}>{status?.ffmpegAvailable ? "FFMPEG SIAP" : "FFMPEG BELUM SIAP"}</span></div>
             <div className="render-card">
               <div className="render-card-head"><div><span className="render-icon">↗</span><div><strong>Render final MP4</strong><small>{project.latestJob ? `Job ${project.latestJob.id.slice(0, 8)} · renderer v${project.latestJob.rendererVersion} · percobaan ${project.latestJob.attemptCount}/3` : "Snapshot dibuat hanya saat Anda memulai render final."}</small></div></div><span className={`status-chip ${project.latestJob && !project.latestJobContentCurrent ? "failed" : project.latestJob?.state ?? "idle"}`}>{project.latestJob && !project.latestJobContentCurrent ? "SNAPSHOT LAMA" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION ? "RENDERER V1" : jobLabel(project.latestJob?.state)}</span></div>
               {project.latestJob?.state === "rendering" && <div className="progress-track"><i style={{ width: `${project.latestJob.progress}%` }} /></div>}
@@ -874,6 +1146,26 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode }: {
 }) {
   const development = settings?.providers.development;
   const production = settings?.providers.production;
+  const providerGroups = useMemo(() => {
+    const groups = new Map<string, OpenCodeModelGroup>();
+    for (const model of development?.models ?? []) {
+      let group = groups.get(model.providerID);
+      if (!group) {
+        group = { id: model.providerID, name: model.name.split(" · ", 1)[0]?.trim() || model.providerID, models: [] };
+        groups.set(model.providerID, group);
+      }
+      group.models.push(model);
+    }
+    return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [development?.models]);
+  const modelCount = development?.models.length ?? 0;
+  const openCodeStateText = development ? ({
+    "server-unreachable": "Server Unreachable",
+    "authentication-failed": "Authentication Failed",
+    "unsupported-api-version": "Unsupported API Version",
+    "model-unavailable": "Model Unavailable",
+    connected: "Connected",
+  } as const)[development.state] : "Checking";
   return <section className="page ai-generation-settings">
     <div className="page-heading"><div><div className="eyebrow">KONFIGURASI PROVIDER</div><h1>Settings</h1><p>AI Generation Mode terpisah dari AI Voice, NODE_ENV, dan mode deployment.</p></div></div>
     {error && <div className="workflow-alert danger" role="alert">{error}</div>}
@@ -893,12 +1185,17 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode }: {
 
       <div className="ai-provider-grid">
         <section className={`ai-provider-card ${settings.mode === "development" ? "active" : ""}`}>
-          <div className="ai-provider-card-head"><div><span className="eyebrow">DEVELOPMENT</span><h2>OpenCode local</h2></div><span className={`settings-status-pill ${development?.configured ? "configured" : "unconfigured"}`}>{development?.configured ? "Connected" : "Unavailable"}</span></div>
-          <p>Generate memakai satu model authorized yang dipilih di Create Video. Tiap request memakai session terisolasi dan menonaktifkan tools.</p>
-          <dl className="ai-config-details">
-            <div><dt>Server</dt><dd>{development?.version ?? (development?.connected ? "Connected" : "Belum terhubung")}</dd></div>
-            <div><dt>Model tersedia</dt><dd>{development?.models.length ? development.models.map((model) => model.name).join(" · ") : "Tidak ada model authorized"}</dd></div>
-          </dl>
+          <div className="ai-provider-card-head"><div><span className="eyebrow">DEVELOPMENT</span><h2>OpenCode local</h2></div></div>
+          <p>Generate memakai satu model authorized yang dipilih di Create Video. Tiap request memakai isolated OpenCode server, session sementara, dan tools dinonaktifkan.</p>
+          <div className="opencode-summary" aria-label="Ringkasan status OpenCode">
+            <div className="opencode-summary-item"><span>Status</span><strong><i className={development?.connected ? "connected" : ""} aria-hidden="true" />{openCodeStateText}</strong></div>
+            <div className="opencode-summary-item"><span>Server / API</span><strong>{development?.version ? `${development.version} · ${development.apiVersion?.toUpperCase()} API` : "—"}</strong></div>
+            <div className="opencode-summary-item"><span>Provider terhubung</span><strong>{providerGroups.length}</strong></div>
+            <div className="opencode-summary-item"><span>Model tersedia</span><strong>{modelCount}</strong></div>
+          </div>
+          <div className="opencode-provider-groups" aria-label="Model berdasarkan provider">
+            {providerGroups.length ? providerGroups.map((group) => <OpenCodeProviderModels key={group.id} group={group} />) : <p className="opencode-model-empty">Tidak ada model authorized.</p>}
+          </div>
           {!development?.configured && <div className="workflow-alert attention" role="status">{development?.disabledReason ?? "OpenCode lokal belum dikonfigurasi."} Atur URL loopback dan Basic auth di environment backend.</div>}
           <small>Set <code>OPENCODE_SERVER_URL</code>, <code>OPENCODE_SERVER_USERNAME</code>, dan <code>OPENCODE_SERVER_PASSWORD</code>. Manual prompt/paste JSON tetap tersedia di Advanced pada Create Video.</small>
         </section>
@@ -908,10 +1205,12 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode }: {
           <p>Generator Research & Storyboard memakai model teks Gemini allowlisted; Visual Director terpisah. Tidak ada model fallback.</p>
           <dl className="ai-config-details">
             <div><dt>Text model</dt><dd>{production?.model ?? "Belum dikonfigurasi"}</dd></div>
+            <div><dt>Backend API key</dt><dd>{production?.apiKeyConfigured ? "Terbaca · rahasia disembunyikan" : "Tidak terbaca"}</dd></div>
             <div><dt>Free Tier guard</dt><dd>{production?.freeTierOnly ? "Aktif" : "Tidak aktif"}</dd></div>
             <div><dt>Model allowlist</dt><dd>{production?.allowedModels.join(" · ")}</dd></div>
-            <div><dt>Request quota</dt><dd>{production ? `${production.requestsUsed}/${production.dailyLimit} per 24 jam · ${production.requestsRemaining} tersisa` : "—"}</dd></div>
+            <div><dt>Batas lokal aplikasi</dt><dd>{production ? `${production.requestsUsed}/${production.dailyLimit} per rolling 24 jam · ${production.requestsRemaining} tersisa` : "—"}</dd></div>
           </dl>
+          {production && <GeminiTextQuotaSummary production={production} />}
           {!production?.configured && <div className="workflow-alert attention" role="status">{production?.disabledReason ?? "Gemini Text belum dikonfigurasi."}</div>}
           {production?.configured && <div className="settings-provider-note">Konfigurasi lokal lengkap; koneksi/model belum diuji. Tidak ada paid-model fallback.</div>}
           <small>API key hanya dibaca backend dari <code>GEMINI_API_KEY</code>; tidak ditampilkan atau disimpan di browser/SQLite. Text model dan quota terpisah dari TTS.</small>
@@ -920,6 +1219,41 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode }: {
 
         <div className="ai-settings-footnote"><strong>Generate hanya setelah klik eksplisit.</strong><span>Development mengirim input ke OpenCode lokal dan model terpilih; biaya provider mengikuti akun OpenCode. Production memakai Gemini guard/quota. Keduanya tidak melakukan fact-check independen.</span></div>
     </>}
+  </section>;
+}
+
+function OpenCodeProviderModels({ group }: { group: OpenCodeModelGroup }) {
+  const [expanded, setExpanded] = useState(false);
+  const [search, setSearch] = useState("");
+  const panelId = useId();
+  const filteredModels = useMemo(() => {
+    if (!expanded) return [];
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return group.models;
+    return group.models.filter((model) => `${model.name} ${model.id} ${model.modelID}`.toLocaleLowerCase().includes(query));
+  }, [expanded, group.models, search]);
+
+  return <section className={`opencode-provider-group ${expanded ? "expanded" : ""}`}>
+    <button type="button" className="opencode-provider-toggle" aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded((value) => !value)}>
+      <span className="opencode-provider-copy"><strong>{group.name}</strong><small>{group.models.length} model</small></span>
+      <svg className="opencode-provider-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
+    </button>
+    <div id={panelId} className="opencode-provider-panel" hidden={!expanded}>
+      {expanded && <>
+        <label className="opencode-model-search">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m12.5 12.5 4 4" /></svg>
+          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Cari model ${group.name}`} aria-label={`Cari model ${group.name}`} />
+        </label>
+        <ul className="opencode-model-list" aria-label={`${group.name}: ${filteredModels.length} model`}>
+          {filteredModels.map((model) => {
+            const prefix = `${group.name} · `;
+            const label = model.name.startsWith(prefix) ? model.name.slice(prefix.length) : model.name;
+            return <li key={model.id}><span>{label}</span><code>{model.modelID}</code></li>;
+          })}
+          {!filteredModels.length && <li className="opencode-model-no-results">Model tidak ditemukan.</li>}
+        </ul>
+      </>}
+    </div>
   </section>;
 }
 
@@ -968,7 +1302,20 @@ function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmati
   </div>;
 }
 
-function Dashboard({ status, projects, busy, onCreate, onSample, onOpen, onDelete }: { status: Status | null; projects: Project[]; busy: boolean; onCreate: () => void; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+function renderQuotaValue(status: Status | null, mode: AiGenerationMode | null) {
+  if (!status || !mode) return "Memuat quota…";
+  return mode === "development" ? "Render Lokal — Unlimited" : `${status.jobsUsed}/${status.dailyLimit} job per 24 jam`;
+}
+
+function renderQuotaNote(status: Status | null, mode: AiGenerationMode | null) {
+  if (!status || !mode) return "Memuat status render.";
+  if (mode === "development") return "Job lokal tetap dicatat; kuota harian tidak diterapkan.";
+  return status.nextAllowedAt
+    ? `Slot berikutnya ${new Date(status.nextAllowedAt).toLocaleString("id-ID")}`
+    : "Kuota 24 jam bergulir; job Development tetap dihitung.";
+}
+
+function Dashboard({ status, mode, projects, busy, onCreate, onSample, onOpen, onDelete }: { status: Status | null; mode: AiGenerationMode | null; projects: Project[]; busy: boolean; onCreate: () => void; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
   const latest = projects[0];
   return <section className="page dashboard-page">
     <div className="dashboard-heading"><div><div className="eyebrow">LOCAL CREATOR WORKSPACE</div><h1>Selamat datang di<br /><em>AI Facts Studio.</em></h1><p>Ubah riset terverifikasi menjadi animasi edukasi 2D, satu cerita dalam satu waktu.</p></div><button className="button button-primary create-cta" onClick={onCreate}>＋ Create video</button></div>
@@ -979,7 +1326,7 @@ function Dashboard({ status, projects, busy, onCreate, onSample, onOpen, onDelet
     </div>
 
     <div className="stat-grid">
-      <div className="stat-card"><span className="stat-icon teal">◷</span><div><small>DAILY JOB LIMIT</small><strong>{status ? `${Math.max(0, status.dailyLimit - status.jobsUsed)} / ${status.dailyLimit}` : "—"}</strong><p>{status?.jobsUsed ? `Slot berikutnya ${status.nextAllowedAt ? new Date(status.nextAllowedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "tersedia"}` : "Slot job video baru tersedia"}</p></div></div>
+      <div className="stat-card"><span className="stat-icon teal">◷</span><div><small>RENDER QUOTA</small><strong className="render-quota-value">{renderQuotaValue(status, mode)}</strong><p>{renderQuotaNote(status, mode)}</p></div></div>
       <div className="stat-card"><span className="stat-icon orange">▣</span><div><small>VIDEO PROJECTS</small><strong>{projects.length.toString().padStart(2, "0")}</strong><p>Draft tersimpan di perangkat</p></div></div>
       <div className="stat-card"><span className={`stat-icon ${status?.ffmpegAvailable ? "teal" : "orange"}`}>⌘</span><div><small>LOCAL RENDER ENGINE</small><strong className="engine-status">{status?.ffmpegAvailable ? "Ready" : "Setup needed"}</strong><p>{status?.ffmpegAvailable ? "FFmpeg tersedia" : "Install FFmpeg untuk render"}</p></div></div>
     </div>

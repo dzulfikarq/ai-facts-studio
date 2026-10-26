@@ -30,8 +30,32 @@ import { generateAiResearchStoryboard } from "../src/server/ai-generation/genera
 import { generateVisualSemanticPlan } from "../src/server/ai-generation/visual-planner";
 import type { AiGenerationProvider } from "../src/server/ai-generation/provider";
 import { fillEmptyGeminiTextEnvironment } from "../src/server/environment";
+import { resolveTheme } from "../src/client/theme-system";
 
 const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita"];
+assert.equal(resolveTheme("system", true), "dark", "System theme follows dark OS preference");
+assert.equal(resolveTheme("system", false), "light", "System theme follows light OS preference");
+assert.equal(resolveTheme("dark", false), "dark", "Explicit theme ignores OS preference");
+const redesignCss = await readFile(new URL("../src/client/redesign.css", import.meta.url), "utf8");
+const lightTokens = redesignCss.match(/^:root \{([^}]+)\}/m)?.[1] ?? "";
+const darkTokens = redesignCss.match(/^:root\[data-theme="dark"\] \{([^}]+)\}/m)?.[1] ?? "";
+const tokenColor = (block: string, name: string) => {
+  const value = block.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
+  assert.ok(value, `Missing color token --${name}`);
+  return value!;
+};
+const contrastRatio = (foreground: string, background: string) => {
+  const luminance = (hex: string) => {
+    const [r, g, b] = hex.slice(1).match(/.{2}/g)!.map((value) => parseInt(value, 16) / 255).map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0]! + 0.05) / (values[1]! + 0.05);
+};
+for (const [tokens, foreground, background] of [
+  [lightTokens, "text-primary", "background"], [lightTokens, "text-secondary", "surface"], [lightTokens, "primary-text", "primary-soft"], [lightTokens, "text-on-primary", "primary-action"],
+  [darkTokens, "text-primary", "background"], [darkTokens, "text-secondary", "surface"], [darkTokens, "primary-text", "primary-soft"], [darkTokens, "text-on-primary", "primary-action"],
+] as const) assert.ok(contrastRatio(tokenColor(tokens, foreground), tokenColor(tokens, background)) >= 4.5, `${foreground} on ${background} must meet WCAG AA`);
 const parsedSamples = [];
 for (const name of samples) {
   const raw = JSON.parse(await readFile(`samples/${name}.json`, "utf8")) as unknown;

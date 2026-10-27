@@ -7,7 +7,7 @@ import { layerMotion } from "../video/motion";
 import { composeVisualScene, compositionShowsObject, hasGenericIconCards, visualRelationshipIsVisible, visualRelationshipKinds, type VisualRelationship, type VisualAuthoringStatus } from "./visual-composer";
 import { visualObjectIds, visualObjectLibrary, visualObjectsForText, type VisualObjectId } from "./visual-objects";
 import { visualSemanticPlanSchema, type VisualSemanticPlan } from "./visual-semantic-plan";
-import { motionActionsSchema, motionIntensitySchema, motionKeyframesWithinSafeCanvas, motionTargetExists, motionTargetNode, type MotionIntensity } from "./motion-director";
+import { motionActionsSchema, motionIntensitySchema, motionKeyframesWithinSafeCanvas, motionTargetNode, type MotionIntensity } from "./motion-director";
 import { defaultGoogleFlowStyleLock, googleFlowStyleLockSchema, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken } from "./google-flow";
 
 export { visualObjectIds, visualObjectLibrary, visualObjectsForText } from "./visual-objects";
@@ -21,7 +21,7 @@ type ApprovalInput = {
   visualFocus: string | null; relationships: VisualRelationship[]; illustrationIntent: string; motionIntent: string; motionSummary: string;
   motionIntensity: MotionIntensity; motionTiming: "approximate" | "narration-aligned"; motionStatus: "not_prepared" | "ready_for_review" | "needs_review" | "static";
   motionActions: import("./motion-director").MotionAction[];
-  composition: VisualComposition; compositionSource: string; illustrationSource?: string; illustrationWorkflow?: string; authoringStatus: string; authoringConfirmed: boolean; missingVisuals: string[];
+  composition: VisualComposition; compositionOverride?: VisualComposition; compositionSource: string; illustrationSource?: string; illustrationWorkflow?: string; authoringStatus: string; authoringConfirmed: boolean; missingVisuals: string[];
   semanticPlan?: VisualSemanticPlan;
 };
 function fingerprint(content: string) {
@@ -34,7 +34,7 @@ export function visualApprovalFingerprint(scene: ApprovalInput) {
     sceneId: scene.sceneId, durationSec: scene.durationSec, headline: scene.headline, narrationText: scene.narrationText,
     visualSummary: scene.visualSummary, layout: scene.layout, compositionType: scene.compositionType, objects: scene.objects, relationships: scene.relationships,
     visualFocus: scene.visualFocus, illustrationIntent: scene.illustrationIntent, motionIntent: scene.motionIntent,
-    motionSummary: scene.motionSummary, composition: scene.composition, compositionSource: scene.compositionSource, illustrationSource: scene.illustrationSource,
+    motionSummary: scene.motionSummary, composition: scene.composition, compositionOverride: scene.compositionOverride, compositionSource: scene.compositionSource, illustrationSource: scene.illustrationSource,
     motionIntensity: scene.motionIntensity, motionTiming: scene.motionTiming, motionStatus: scene.motionStatus, motionActions: scene.motionActions,
     authoringStatus: scene.authoringStatus, authoringConfirmed: scene.authoringConfirmed, missingVisuals: scene.missingVisuals,
     semanticPlan: scene.semanticPlan,
@@ -87,8 +87,9 @@ export const visualStoryboardSceneSchema = z.object({
   motionIntensity: motionIntensitySchema.default("balanced"),
   motionTiming: z.enum(["approximate", "narration-aligned"]).default("approximate"),
   motionStatus: z.enum(["not_prepared", "ready_for_review", "needs_review", "static"]).default("not_prepared"),
-  motionActions: motionActionsSchema.default([]),
-  composition: visualCompositionSchema,
+    motionActions: motionActionsSchema.default([]),
+    composition: visualCompositionSchema,
+    compositionOverride: visualCompositionSchema.optional(),
   compositionSource: z.enum(["existing", "library", "procedural", "manual", "ai-vector"]).default("existing"),
   illustrationSource: z.enum(["ai-vector", "ai-image", "asset-library", "upload-image", "procedural", "manual"]).optional(),
   illustrationWorkflow: z.enum(["google-flow", "asset-library", "upload-image", "ai-vector", "ai-image-api"]).default("google-flow"),
@@ -108,24 +109,7 @@ export const visualStoryboardSceneSchema = z.object({
   const legacyMotionUnchanged = scene.motionStatus === "not_prepared" && scene.motionActions.length === 0;
   const motionDurationFrames = Math.floor(scene.durationSec * 30);
   scene.motionActions.forEach((action, index) => {
-    const target = motionTargetNode(scene.composition, action.targetNode);
-    if (!motionTargetExists(scene.composition, action.targetNode)) ctx.addIssue({ code: "custom", message: `Node motion '${action.targetNode}' tidak ditemukan`, path: ["motionActions", index, "targetNode"] });
     if (action.startFrame + action.durationFrames > motionDurationFrames) ctx.addIssue({ code: "custom", message: "Motion action melewati durasi scene", path: ["motionActions", index, "durationFrames"] });
-    if (target?.type === "text") ctx.addIssue({ code: "custom", message: "Motion Director tidak boleh menggerakkan label teks composition", path: ["motionActions", index, "targetNode"] });
-    if (action.kind === "draw" && target?.type !== "path" && !(target?.type === "shape" && target.shape === "line")) ctx.addIssue({ code: "custom", message: "Path drawing harus menargetkan path atau line nyata", path: ["motionActions", index, "targetNode"] });
-    if (target && !motionKeyframesWithinSafeCanvas(action, target)) {
-      ctx.addIssue({ code: "custom", message: "Keyframe objek keluar dari safe canvas", path: ["motionActions", index, "keyframes"] });
-    }
-  });
-  const imageNodes = compositionNodes(scene.composition).filter((node) => node.type === "image");
-  const movingVectorNodes = compositionNodes(scene.composition).filter((node) => node.type !== "image" && node.type !== "text"
-    && !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
-  if (imageNodes.length && !movingVectorNodes.length) scene.motionActions.forEach((action, index) => {
-    const target = motionTargetNode(scene.composition, action.targetNode);
-    const rasterTarget = target?.type === "image" || target?.type === "group" && target.children.some((child) => child.type === "image");
-    const wholeImageAction = ["fade", "translate", "scale", "rotate", "follow-path", "repeat", "reveal", "focus-shift", "state-transition"].includes(action.kind);
-    const rasterOverlay = action.kind === "particle-flow" && rasterTarget;
-    if (!rasterTarget || !wholeImageAction && !rasterOverlay) ctx.addIssue({ code: "custom", message: "Raster tunggal hanya boleh menerima gerak seluruh gambar atau overlay yang tersedia", path: ["motionActions", index, "kind"] });
   });
   if (scene.approved && scene.approvedFingerprint !== visualApprovalFingerprint(scene)
     && !(legacyMotionUnchanged && scene.approvedFingerprint === legacyMotionApprovalFingerprint(scene))
@@ -134,7 +118,7 @@ export const visualStoryboardSceneSchema = z.object({
   }
 }).transform((scene) => {
   const sceneToken = scene.sceneToken ?? stableGoogleFlowSceneToken(scene.sceneId);
-  const hasImage = compositionNodes(scene.composition).some((node) => node.type === "image");
+  const hasImage = compositionNodes(scene.compositionOverride ?? scene.composition).some((node) => node.type === "image");
   const flowStatus = scene.flowStatus ?? (scene.approved ? "approved" : hasImage ? scene.authoringConfirmed ? "ready-for-review" : "illustration-imported" : scene.flowPrompt ? "prompt-ready" : "awaiting-illustration");
   return { ...scene, sceneToken, recommendedFilename: recommendedGoogleFlowFilename({ ...scene, sceneToken }), flowStatus };
 });
@@ -178,9 +162,6 @@ export const visualStoryboardSchema = z.object({
   storyboard.scenes.forEach((scene, index) => {
     if (sceneIds.has(scene.sceneId)) ctx.addIssue({ code: "custom", message: "Scene ID storyboard harus unik", path: ["scenes", index, "sceneId"] });
     sceneIds.add(scene.sceneId);
-    if (storyboard.visualWorld && JSON.stringify(scene.composition) !== JSON.stringify(storyboard.visualWorld.composition)) {
-      ctx.addIssue({ code: "custom", message: "Semua scene Visual World harus memakai komposisi dasar yang sama", path: ["scenes", index, "composition"] });
-    }
     const objects = new Set<string>();
     scene.objects.forEach((object, objectIndex) => {
       if (objects.has(object.objectId)) ctx.addIssue({ code: "custom", message: "Object tidak boleh berulang dalam satu scene", path: ["scenes", index, "objects", objectIndex] });
@@ -201,15 +182,20 @@ export type VisualStoryboard = z.infer<typeof visualStoryboardSchema>;
 export type VisualStoryboardScene = VisualStoryboard["scenes"][number];
 export type VisualWorld = z.infer<typeof visualWorldSchema>;
 
+export function compositionForVisualScene(storyboard: Pick<VisualStoryboard, "visualWorld">, scene: Pick<VisualStoryboardScene, "composition" | "compositionOverride">): VisualComposition {
+  return scene.compositionOverride ?? storyboard.visualWorld?.composition ?? scene.composition;
+}
+
 export function buildVisualWorld(name: string, sourceScene: VisualStoryboardScene): VisualWorld {
-  const image = compositionNodes(sourceScene.composition).find((node) => node.type === "image");
+  const composition = sourceScene.compositionOverride ?? sourceScene.composition;
+  const image = compositionNodes(composition).find((node) => node.type === "image");
   return visualWorldSchema.parse({
     id: "shared-visual-world",
     name,
     sourceSceneId: sourceScene.sceneId,
     ...(image?.type === "image" ? { sourceAssetId: image.asset } : {}),
-    composition: sourceScene.composition,
-    elements: sourceScene.composition.layers.map((layer) => {
+    composition,
+    elements: composition.layers.map((layer) => {
       const id = layer.id.toLocaleLowerCase("id-ID");
       const hasImage = layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"));
       const semanticRole = id.includes("background") || id.includes("sky") ? "background"
@@ -261,7 +247,8 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
     const prior = previous?.scenes.find((item) => item.sceneId === scene.id);
     const visualSummary = scene.visualDescription.trim() || "Visual authoring diperlukan untuk materi ini.";
     const sameCopy = prior?.headline === scene.onScreenText && prior.narrationText === scene.narrationText && prior.visualSummary === visualSummary;
-    const hasRaster = Boolean(prior && compositionNodes(prior.composition).some((node) => node.type === "image"));
+    const priorComposition = prior ? compositionForVisualScene(previous!, prior) : undefined;
+    const hasRaster = Boolean(priorComposition && compositionNodes(priorComposition).some((node) => node.type === "image"));
     const preserveExisting = Boolean(prior && (prior.authoringConfirmed || prior.approved || prior.compositionSource === "ai-vector" || hasRaster || sameCopy));
     const existingPlan = prior ? {
       objects: prior.objects.map((object) => object.objectId), relationships: prior.relationships,
@@ -276,7 +263,7 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       sceneVisualFocus: prior?.visualFocus ?? null,
       illustrationIntent: prior?.illustrationIntent ?? "",
       existingVisualPlan: existingPlan,
-      existingComposition: prior?.composition ?? scene.visualComposition,
+      existingComposition: priorComposition ?? scene.visualComposition,
       semanticPlan: sameCopy ? prior?.semanticPlan : undefined,
       sharedWorldObjects: worldObjects,
       assetLibrary: visualObjectLibrary,
@@ -303,8 +290,9 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       motionIntensity: prior?.motionIntensity ?? "balanced",
       motionTiming: prior?.motionTiming ?? "approximate",
       motionStatus: prior?.motionActions?.length ? (sameCopy ? prior.motionStatus : "needs_review") : prior?.motionStatus ?? "not_prepared",
-      motionActions: prior?.motionActions ?? [],
-      composition: composed.composition ?? authoringPlaceholder(),
+       motionActions: prior?.motionActions ?? [],
+       composition: composed.composition ?? authoringPlaceholder(),
+       ...(prior?.compositionOverride ? { compositionOverride: composed.composition ?? prior.compositionOverride } : {}),
       compositionSource: composed.compositionSource,
       ...(prior?.illustrationSource ? { illustrationSource: prior.illustrationSource }
         : prior ? {} : { illustrationSource: composed.compositionSource === "ai-vector" ? "ai-vector" as const : composed.compositionSource === "manual" ? "manual" as const : "procedural" as const }),
@@ -371,7 +359,7 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     if (visual.headline.length > 72) add(visual.sceneId, "Headline terlalu panjang untuk dibaca pada layar ponsel.");
     if (!visual.visualSummary.trim()) add(visual.sceneId, "Ringkasan visual kosong.");
     const illustrationSource = illustrationSourceForScene(visual);
-    const composition = storyboard.visualWorld?.composition ?? visual.composition;
+    const composition = compositionForVisualScene(storyboard, visual);
     const nodes = compositionNodes(composition);
     const imageNodes = nodes.filter((node) => node.type === "image");
     const motionVectors = nodes.filter((node) => node.type !== "image" && node.type !== "text"
@@ -411,10 +399,26 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     if (visual.motionStatus === "not_prepared") reviewNotes.push(`Scene ${visual.sceneNumber}: Motion Plan belum dibuat; scene statis tetap valid.`);
     if (visual.motionStatus === "needs_review") reviewNotes.push(`Scene ${visual.sceneNumber}: Motion Plan dipertahankan setelah perubahan; tinjau ulang gerak.`);
     const motionDurationFrames = Math.floor(visual.durationSec * 30);
+    const missingMotionTargets = visual.motionActions.filter((action) => !motionTargetNode(composition, action.targetNode));
+    if (missingMotionTargets.length) {
+      sceneStatuses[visual.sceneId] = "needs_review";
+      add(visual.sceneId, `${missingMotionTargets.length} Motion Beat memiliki target layer/node yang hilang; pilih target baru atau hapus beat.`);
+    }
     visual.motionActions.forEach((action, actionIndex) => {
       const target = motionTargetNode(composition, action.targetNode);
-      if (!target || action.startFrame + action.durationFrames > motionDurationFrames) add(visual.sceneId, `Motion action ${actionIndex + 1} memiliki target/timing tidak valid.`);
+      if (action.startFrame + action.durationFrames > motionDurationFrames) add(visual.sceneId, `Motion action ${actionIndex + 1} memiliki timing tidak valid.`);
+      if (target?.type === "text") add(visual.sceneId, `Motion action ${actionIndex + 1} menargetkan label teks; pilih objek visual.`);
+      if (target && action.kind === "draw" && target.type !== "path" && !(target.type === "shape" && target.shape === "line")) {
+        add(visual.sceneId, `Motion action ${actionIndex + 1} harus menggambar path atau line.`);
+      }
       if (target && !motionKeyframesWithinSafeCanvas(action, target)) add(visual.sceneId, `Motion action ${actionIndex + 1} keluar dari safe canvas.`);
+      if (target && imageNodes.length && motionVectors.length === 0) {
+        const rasterTarget = target.type === "image" || target.type === "group" && target.children.some((child) => child.type === "image");
+        const wholeImageAction = ["fade", "translate", "scale", "rotate", "follow-path", "repeat", "reveal", "focus-shift", "state-transition"].includes(action.kind);
+        if (!rasterTarget || !wholeImageAction && !(action.kind === "particle-flow" && rasterTarget)) {
+          add(visual.sceneId, `Motion action ${actionIndex + 1} tidak didukung untuk ilustrasi raster tunggal.`);
+        }
+      }
     });
     if (visual.motionActions.reduce((total, action) => total + (action.particleCount ?? 0), 0) > 24) add(visual.sceneId, "Jumlah partikel motion melebihi batas 24.");
     if (visual.motionTiming === "approximate" && visual.motionActions.length) reviewNotes.push(`Scene ${visual.sceneNumber}: timing motion approximate berdasarkan durasi/narasi, bukan word-level audio alignment.`);
@@ -477,7 +481,7 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
       const layerPreference = visual.motionIntent === "particle-flow" ? ["river", "mineral", "charged-particles", "magnetic-field", "salt-ions"]
         : visual.motionIntent === "path-animation" ? ["rain", "runoff", "river", "water-vapor", "uv-rays", "volcano", "tectonic-plates"]
           : visual.motionIntent === "keyword-highlight" ? ["ozone", "salt-ions", "ocean"] : [];
-      const composition = storyboard.visualWorld?.composition ?? visual.composition;
+      const composition = compositionForVisualScene(storyboard, visual);
       const targetLayer = layerPreference.find((id) => composition.layers.some((layer) => layer.id === id)) ?? "all";
       const motionPlan = defaultMotionPlan(cues).map((plan, index) => ({
         ...plan,
@@ -490,7 +494,7 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
         onScreenText: visual.headline,
         narrationText: visual.narrationText,
         visualDescription: visual.visualSummary,
-        visualComposition: storyboard.visualWorld?.composition ?? visual.composition,
+        visualComposition: composition,
         motionActions: visual.motionActions,
         motionCues: cues,
         motionPlan,

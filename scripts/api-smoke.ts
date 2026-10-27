@@ -333,13 +333,17 @@ try {
   }
   batchForm.append("illustrations", new Blob([Buffer.from("invalid image bytes")], { type: "image/png" }), "flow-scene-invalid.png");
   batchMetadata.push({ name: "Invalid scene", source: "ai-generated", prompt: "Invalid fixture", provider: "Google Flow (manual import)" });
+  batchForm.append("illustrations", new Blob([Buffer.alloc(10 * 1024 * 1024 + 1)], { type: "image/png" }), "flow-scene-oversized.png");
+  batchMetadata.push({ name: "Oversized scene", source: "ai-generated", prompt: "Oversized fixture", provider: "Google Flow (manual import)" });
   batchForm.append("metadata", JSON.stringify(batchMetadata));
   const batchResponse = await fetch(`${baseUrl}/api/projects/${assetProject.id}/visual-assets/batch`, { method: "POST", body: batchForm });
   const batchUpload = await batchResponse.json();
   assert.equal(batchResponse.status, 201, batchUpload.error);
   assert.equal(batchUpload.results.length, 5, "six-file batch persists every valid image");
-  assert.equal(batchUpload.failures.length, 1, "one invalid image does not discard successful batch imports");
+  assert.equal(batchUpload.failures.length, 2, "invalid and oversized images do not discard successful batch imports");
   assert.equal(batchUpload.failures[0].index, 5, "partial failure maps to original file order");
+  assert.equal(batchUpload.failures[1].index, 6, "oversized file failure maps to original file order");
+  assert.match(batchUpload.failures[1].message, /10 MB/, "oversized file receives actionable per-file error");
   assert.equal(batchUpload.project.visualAssets.length, uploadedVisual.project.visualAssets.length + 5, "batch response includes all project assets");
   assert.deepEqual(batchUpload.results.map((entry: { index: number }) => entry.index), [0, 1, 2, 3, 4], "batch results preserve file order");
   assert.ok(batchUpload.results.every((entry: { asset: { source: string; provider: string; prompt: string } }, index: number) => entry.asset.source === "ai-generated" && entry.asset.provider === "Google Flow (manual import)" && entry.asset.prompt === `Prompt scene ${index + 1}`), "batch keeps per-file Flow metadata");

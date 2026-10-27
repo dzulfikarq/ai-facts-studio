@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, ImagePlus, Pause, Play, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { applyVisualStoryboard, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, ImagePlus, Pause, Play, Plus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
+import { applyVisualStoryboard, compositionForVisualScene, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
 import { captionSegmentsForScene } from "../domain/captions";
@@ -103,6 +103,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onApplyFlowBatch: (items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
 }) {
   const [tab, setTab] = useState<InspectorTab>("visual");
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [batchLauncher, setBatchLauncher] = useState<(() => void) | null>(null);
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [selectedMotionBeatRef, setSelectedMotionBeatRef] = useState<{ sceneId: string; actionId: string } | null>(null);
   const [imageBaseline, setImageBaseline] = useState<ImageBaseline | null>(null);
@@ -127,6 +129,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const uploadInput = useRef<HTMLInputElement>(null);
   const motionClipGesture = useRef<{ pointerId: number; actionId: string; startX: number; railWidth: number; startTimeSec: number; timingScale: number } | null>(null);
   const selectedScene = storyboard.scenes.find((scene) => scene.sceneId === selectedSceneId) ?? storyboard.scenes[0]!;
+  const selectedComposition = useMemo(() => compositionForVisualScene(storyboard, selectedScene), [storyboard, selectedScene]);
+  const registerBatchLauncher = useCallback((open: (() => void) | null) => setBatchLauncher(() => open), []);
   const selectedMotionAction = selectedMotionBeatRef?.sceneId === selectedScene.sceneId
     ? selectedScene.motionActions.find((action) => action.id === selectedMotionBeatRef.actionId) ?? selectedScene.motionActions[0]
     : selectedScene.motionActions[0];
@@ -136,7 +140,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const selectedBeat = selectedMotionAction ? motionBeatFromAction(selectedMotionAction) : null;
   const visualResearch = useMemo(() => applyVisualStoryboard(research, storyboard), [research, storyboard]);
   const sourceResearchScene = visualResearch.scenes.find((scene) => scene.id === selectedScene.sceneId)!;
-  const sceneImages = useMemo(() => visualImageNodes(selectedScene.composition), [selectedScene.composition]);
+  const sceneImages = useMemo(() => visualImageNodes(selectedComposition), [selectedComposition]);
   const selectedImage = sceneImages.find((entry) => entry.id === selectedImageId) ?? sceneImages[0];
   const selectedAsset = assets.find((asset) => asset.id === selectedImage?.node.asset);
   const previewDurationSec = timelineDuration(research, audio?.durationSec);
@@ -146,9 +150,9 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const selectedSpan = sceneSpan(sourceResearchScene);
   const scenePreviewFrame = (span: { startSec: number; endSec: number }) => Math.min(frameCount - 1, Math.floor((span.startSec + Math.min(1, (span.endSec - span.startSec) / 2)) * FPS));
   const sceneIssueList = gate.scenes[selectedScene.sceneId] ?? [];
-  const hasPrimaryArtwork = sceneHasPrimaryIllustration(selectedScene);
+  const hasPrimaryArtwork = sceneHasPrimaryIllustration(selectedScene, storyboard);
   const needsArtwork = !hasPrimaryArtwork;
-  const primaryIllustrationsReady = gate.ready && storyboard.scenes.every(sceneHasPrimaryIllustration);
+  const primaryIllustrationsReady = gate.ready && storyboard.scenes.every((scene) => sceneHasPrimaryIllustration(scene, storyboard));
   const illustrationStatus = selectedScene.approved ? "Approved"
     : !hasPrimaryArtwork ? "Perlu Ilustrasi"
       : selectedScene.flowStatus === "illustration-imported" ? "Ilustrasi Diimport"
@@ -166,11 +170,11 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
 
   useEffect(() => { selectedSceneRef.current = selectedSceneId; }, [selectedSceneId]);
   useEffect(() => {
-    const images = visualImageNodes(selectedScene.composition);
+    const images = visualImageNodes(selectedComposition);
     const first = images[0];
     if (!first) { setSelectedImageId(null); setImageBaseline(null); return; }
     if (!images.some((image) => image.id === selectedImageId)) setSelectedImageId(first.id);
-  }, [selectedScene.sceneId, selectedScene.composition, selectedImageId]);
+  }, [selectedScene.sceneId, selectedComposition, selectedImageId]);
   useEffect(() => {
     if (!selectedImage) { setImageBaseline(null); return; }
     setImageBaseline({ x: selectedImage.node.x, y: selectedImage.node.y, width: selectedImage.node.width, height: selectedImage.node.height, fit: selectedImage.node.fit, position: selectedImage.node.position });
@@ -227,6 +231,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     const scene = research.scenes.find((item) => item.id === sceneId);
     if (!scene) return;
     onSelectScene(sceneId);
+    setInspectorOpen(true);
     selectedSceneRef.current = sceneId;
     const span = sceneSpan(scene);
     seekTo(scenePreviewFrame(span));
@@ -236,8 +241,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const editImage = useCallback((nodeId: string, update: VisualImageUpdate) => {
     const scene = storyboard.scenes.find((item) => item.sceneId === selectedSceneRef.current);
     if (!scene) return;
-    onChange(scene.sceneId, { composition: updateVisualImageNode(scene.composition, nodeId, update) });
-  }, [onChange, storyboard.scenes]);
+    onChange(scene.sceneId, { composition: updateVisualImageNode(compositionForVisualScene(storyboard, scene), nodeId, update) });
+  }, [onChange, storyboard]);
   const editMotionBeat = useCallback((actionId: string, change: Partial<Pick<MotionBeat, "description" | "targetLayerId" | "targetNode" | "targetRole" | "startTimeSec" | "durationSec" | "easing" | "path" | "pathStyle">>) => {
     const action = selectedScene.motionActions.find((item) => item.id === actionId);
     if (!action) return;
@@ -364,6 +369,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
         <span className={`editor-save-state ${saved ? "saved" : "unsaved"}`} role="status"><i />{saved ? "Tersimpan" : "Belum disimpan"}</span>
       </div>
       <div className="video-editor-toolbar-actions">
+        <button type="button" className="button button-light editor-inspector-toggle" aria-expanded={inspectorOpen} aria-controls="video-editor-inspector" onClick={() => setInspectorOpen((open) => !open)}><SlidersHorizontal size={15} aria-hidden="true"/>{inspectorOpen ? "Tutup Inspector" : "Inspector"}</button>
         <button type="button" className="button button-light" onClick={onSave} disabled={saved || busy}><Check size={15} aria-hidden="true"/> Simpan</button>
         <button type="button" className="button button-light" onClick={() => playerRef.current?.toggle()}><Play size={15} aria-hidden="true"/>{playing ? "Jeda" : "Pratinjau video"}</button>
         <button type="button" className="button button-primary" onClick={onExport} disabled={busy}>Ekspor MP4 <span aria-hidden="true">→</span></button>
@@ -375,13 +381,13 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
       {motionPreparation && <span>{motionPreparation.status === "running" ? `Menyiapkan gerak ${motionPreparation.processed}/${motionPreparation.total}` : `Motion Director: ${motionPreparation.status === "completed" ? "selesai" : motionPreparation.status.replaceAll("_", " ")}`}</span>}
     </div>}
 
-    <div className="video-editor-layout">
+    <div className={`video-editor-layout inspector-${inspectorOpen ? "open" : "closed"}`}>
       <aside className="video-editor-scenes" aria-label="Daftar scene">
-        <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div>
+        <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div><div className="editor-scene-heading-actions"><button type="button" className="button button-light editor-batch-launch" onClick={() => batchLauncher?.()} disabled={busy || !batchLauncher} title={batchLauncher ? "Pilih beberapa ilustrasi Google Flow untuk scene" : "Pilih sumber Google Flow di tab Visual untuk membuka batch import"}><Upload size={14} aria-hidden="true"/><span>Import Semua Ilustrasi</span></button><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div></div>
         <div className="editor-scene-list">
           {storyboard.scenes.map((scene, index) => {
             const source = visualResearch.scenes[index]!;
-            const status = sceneIllustrationStatus(scene);
+            const status = sceneIllustrationStatus(scene, storyboard);
             const span = sceneSpan(source);
             return <button type="button" key={scene.sceneId} className={`editor-scene-item ${scene.sceneId === selectedScene.sceneId ? "selected" : ""}`} aria-pressed={scene.sceneId === selectedScene.sceneId} onClick={() => selectScene(scene.sceneId)}>
               <SceneThumbnail scene={source} storyboard={storyboard} preset={research.visualPreset} />
@@ -462,8 +468,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
         </section>
       </main>
 
-      <aside className="video-editor-inspector" aria-label="Pengaturan scene terpilih">
-        <div className="editor-inspector-scene"><span>SCENE {String(selectedTrackIndex + 1).padStart(2, "0")}</span><strong>{selectedScene.headline}</strong><small>{selectedScene.durationSec.toFixed(1)} detik</small></div>
+      <aside id="video-editor-inspector" className="video-editor-inspector" aria-label="Pengaturan scene terpilih" aria-hidden={!inspectorOpen}>
+        <header className="editor-inspector-header"><div className="editor-inspector-scene"><span>SCENE {String(selectedTrackIndex + 1).padStart(2, "0")}</span><strong>{selectedScene.headline}</strong><small>{selectedScene.durationSec.toFixed(1)} detik</small></div><button type="button" className="button button-light icon-button" onClick={() => setInspectorOpen(false)} aria-label="Tutup inspector"><X size={16} aria-hidden="true"/></button></header>
         <div className="editor-inspector-tabs" role="tablist" aria-label="Panel scene">
           {([ ["visual", "Visual"], ["text", "Teks"], ["motion", "Gerak"], ["audio", "Audio"] ] as const).map(([id, label]) => <button type="button" role="tab" key={id} aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}
         </div>
@@ -479,7 +485,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
                 <div><strong>{illustrationStatus}</strong>{needsArtwork ? <small>Visual draft tersedia; belum menjadi ilustrasi utama.</small> : <small>{selectedScene.approved ? "Versi visual ini telah disetujui." : "Tinjau gambar, crop, dan akurasi sebelum approval."}</small>}</div>
               </div>
               {storyboard.visualWorld ? <>
-                <div className="editor-info-box"><strong>Visual World aktif · {storyboard.visualWorld.elements.length} stable layer</strong><span>{storyboard.visualWorld.name}. Semua scene merender komposisi dasar sama; overlay gerak disimpan per beat.{storyboard.visualWorld.composition.layers.every((layer) => layer.nodes.every((node) => node.type !== "image" && (node.type !== "group" || node.children.every((child) => child.type !== "image")))) ? " Draft prosedural, bukan ilustrasi Flow final." : ""}</span></div>
+                <div className="editor-info-box"><strong>Shared VisualWorld · {storyboard.visualWorld.elements.length} stable layer</strong><span>{storyboard.visualWorld.name}. Scene tanpa override memakai base bersama; ilustrasi scene khusus hanya mengubah scene aktif. Motion Beat tetap tersimpan per scene.{storyboard.visualWorld.composition.layers.every((layer) => layer.nodes.every((node) => node.type !== "image" && (node.type !== "group" || node.children.every((child) => child.type !== "image")))) ? " Draft prosedural, bukan ilustrasi Flow final." : ""}</span></div>
                 <details className="editor-advanced">
                   <summary>Layer & peran Visual World</summary>
                   <ul>{storyboard.visualWorld.elements.map((element) => {
@@ -487,12 +493,12 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
                     return <li key={element.layerId}><strong>{element.layerId}</strong> · {element.semanticRole.replaceAll("-", " ")} · {layer.nodes.length} node</li>;
                   })}</ul>
                 </details>
-              </>
-                : sceneImages.length > 0 && <button type="button" className="button button-light full-button" onClick={() => onSetSharedVisualWorld(selectedScene.sceneId)} disabled={busy}>Gunakan ilustrasi ini untuk semua scene</button>}
+              </> : null}
+              {sceneImages.length > 0 && <button type="button" className="button button-light full-button" onClick={() => onSetSharedVisualWorld(selectedScene.sceneId)} disabled={busy}>Gunakan untuk Semua Scene</button>}
               {needsArtwork && selectedScene.illustrationWorkflow !== "google-flow" && <button type="button" className="button button-primary full-button" onClick={() => chooseIllustrationWorkflow("google-flow")}><ImagePlus size={15} aria-hidden="true"/> Buat dengan Google Flow</button>}
             </section>
 
-            {selectedScene.illustrationWorkflow === "google-flow" && <GoogleFlowPanel key={selectedScene.sceneId} research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} onFlowPromptChange={onFlowPromptChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onApplyBatch={onApplyFlowBatch}/>}
+            <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} showPanel={selectedScene.illustrationWorkflow === "google-flow"} onFlowPromptChange={onFlowPromptChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>
             {selectedScene.illustrationWorkflow === "asset-library" && <div className="editor-source-card"><strong>Asset Library</strong><span>Pilih ilustrasi yang tersimpan atau gunakan aset project.</span><button type="button" className="button button-primary full-button" onClick={() => onOpenLibrary(selectedScene.sceneId, "mine")} disabled={busy}><ImagePlus size={15} aria-hidden="true"/> Pilih dari Asset Library</button></div>}
             {selectedScene.illustrationWorkflow === "upload-image" && <div className="editor-source-card"><strong>Upload Gambar</strong><span>PNG, JPEG, atau WebP. File divalidasi dan disimpan melalui pipeline aset project.</span><input ref={uploadInput} type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={busy} onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void onUploadAsset(selectedScene.sceneId, file, { source: "user-upload", license: "User-provided; license/provenance not specified" }); event.currentTarget.value = ""; }}/><button type="button" className="button button-primary full-button" onClick={() => uploadInput.current?.click()} disabled={busy}><Upload size={15} aria-hidden="true"/> Pilih gambar</button></div>}
             {selectedScene.illustrationWorkflow === "ai-vector" && <div className="editor-source-card"><strong>AI Vector</strong><span>{vectorAvailable ? "Buat diagram atau visual proses yang dapat diedit sebagai vector." : "AI Vector memerlukan model OpenCode Development yang tersedia."}</span><button type="button" className="button button-primary full-button" onClick={() => onGenerateVector(selectedScene.sceneId)} disabled={!vectorAvailable || busy || vectorizingSceneId !== null}>{vectorizingSceneId === selectedScene.sceneId ? "Membuat AI Vector…" : "Buat AI Vector"}</button></div>}
@@ -538,11 +544,11 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
               {selectedMotionAction && selectedBeat && <>
                 <label className="editor-field">Kejadian<input maxLength={180} value={selectedMotionAction.description ?? selectedBeat.description} onChange={(event) => editMotionBeat(selectedMotionAction.id, { description: event.target.value })}/></label>
                 <label className="editor-field">Layer target<select value={selectedBeat.targetLayerId} onChange={(event) => {
-                  const layer = selectedScene.composition.layers.find((item) => item.id === event.target.value);
+                  const layer = selectedComposition.layers.find((item) => item.id === event.target.value);
                   if (!layer?.nodes.length) return;
                   const role = storyboard.visualWorld?.elements.find((element) => element.layerId === layer.id)?.semanticRole ?? layer.id.replaceAll("-", " ");
                   editMotionBeat(selectedMotionAction.id, { targetLayerId: layer.id, targetNode: `${layer.id}/0`, targetRole: role });
-                }}>{selectedScene.composition.layers.map((layer) => <option key={layer.id} value={layer.id}>{layer.id} · {storyboard.visualWorld?.elements.find((element) => element.layerId === layer.id)?.semanticRole ?? layer.nodes[0]?.type ?? "layer"}</option>)}</select></label>
+                }}>{selectedComposition.layers.map((layer) => <option key={layer.id} value={layer.id}>{layer.id} · {storyboard.visualWorld?.elements.find((element) => element.layerId === layer.id)?.semanticRole ?? layer.nodes[0]?.type ?? "layer"}</option>)}</select></label>
                 <div className="editor-motion-timing-fields">
                   <label className="editor-field">Mulai · detik<input type="number" min="0" max={selectedScene.durationSec} step="0.1" value={selectedBeat.startTimeSec.toFixed(1)} onChange={(event) => editMotionBeat(selectedMotionAction.id, { startTimeSec: Number(event.target.value) })}/></label>
                   <label className="editor-field">Durasi · detik<input type="number" min="0.1" max={selectedScene.durationSec} step="0.1" value={selectedBeat.durationSec.toFixed(1)} onChange={(event) => editMotionBeat(selectedMotionAction.id, { durationSec: Number(event.target.value) })}/></label>
@@ -589,20 +595,20 @@ function formatTime(seconds: number) {
   return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-function sceneIllustrationStatus(scene: VisualStoryboardScene) {
+function sceneIllustrationStatus(scene: VisualStoryboardScene, storyboard: VisualStoryboard) {
   if (scene.approved) return "Approved";
-  if (!sceneHasPrimaryIllustration(scene)) return "Perlu Ilustrasi";
+  if (!sceneHasPrimaryIllustration(scene, storyboard)) return "Perlu Ilustrasi";
   if (scene.flowStatus === "illustration-imported") return "Ilustrasi Diimport";
   return scene.authoringConfirmed ? "Siap Ditinjau" : "Perlu Ditinjau";
 }
 
-function sceneHasPrimaryIllustration(scene: VisualStoryboardScene) {
-  return visualImageNodes(scene.composition).length > 0 || scene.compositionSource === "ai-vector";
+function sceneHasPrimaryIllustration(scene: VisualStoryboardScene, storyboard: VisualStoryboard) {
+  return visualImageNodes(compositionForVisualScene(storyboard, scene)).length > 0 || scene.compositionSource === "ai-vector";
 }
 
 const SceneThumbnail = React.memo(function SceneThumbnail({ scene, storyboard, preset }: { scene: ResearchPackage["scenes"][number]; storyboard: VisualStoryboard; preset: ResearchPackage["visualPreset"] }) {
   const visual = storyboard.scenes.find((item) => item.sceneId === scene.id)!;
-  const composition = storyboard.visualWorld?.composition ?? visual.composition;
+  const composition = compositionForVisualScene(storyboard, visual);
   return <svg className="editor-scene-thumbnail" viewBox="0 0 1080 1920" role="img" aria-label={`Ilustrasi scene: ${scene.onScreenText}`}>
     <VisualCompositionView scene={scene} composition={composition} style={visualStyles[preset]} preset={preset} frame={Math.floor(scene.endSec * FPS * .4)} progress={.4}/>
     <rect x="50" y="40" width="980" height="400" rx="30" fill={storyboard.palette.canvas} opacity=".94"/>

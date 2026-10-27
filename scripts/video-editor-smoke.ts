@@ -97,6 +97,9 @@ try {
     await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${fixture.color}:s=720x1280:d=1`, "-frames:v", "1", "-y", output]);
     return readFile(output);
   }));
+  const retryFixturePath = path.join(tempDir, "flow-scene-04-retry.png");
+  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x7c4d39:s=720x1280:d=1", "-frames:v", "1", "-y", retryFixturePath]);
+  const retryFixtureBytes = await readFile(retryFixturePath);
 
   browser = await openBrowser("chrome", { logLevel: "error" });
   const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: () => {}, onLog: () => {} } as never);
@@ -151,6 +154,7 @@ try {
     workflow: document.querySelector<HTMLSelectElement>(".editor-illustration-section select")?.value,
     illustrationStatus: document.querySelector(".editor-illustration-heading span")?.textContent?.trim(),
     hfVisible: Boolean(document.querySelector(".editor-ai-image-panel")),
+    inspectorExpanded: document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded"),
   }));
   assert.equal(initialEditor.scenes, 7);
   assert.equal(initialEditor.canvas, true, "canvas uses actual Remotion composition SVG");
@@ -159,7 +163,14 @@ try {
   assert.equal(initialEditor.workflow, "google-flow", "Google Flow is default source for scene one");
   assert.equal(initialEditor.illustrationStatus, "Perlu Ilustrasi", "procedural draft is explicitly not treated as main illustration");
   assert.equal(initialEditor.hfVisible, false, "Hugging Face controls stay hidden until AI Image API is selected");
+  assert.equal(initialEditor.inspectorExpanded, "false", "inspector starts collapsed");
   await captureViewport("mountain-editor-visual-inspector-flow-default.png");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "inspector opens without changing scene");
+  await captureViewport("mountain-editor-inspector-open.png");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "false"), "inspector closes without changing scene");
+  await captureViewport("mountain-editor-inspector-closed.png");
   await page.evaluate(() => {
     const switcher = document.querySelector<HTMLDetailsElement>(".theme-switcher")!;
     switcher.open = true;
@@ -224,9 +235,14 @@ try {
   const exportCurrent = await fetch(`${apiUrl}/api/projects/${exportProject.id}`).then((response) => response.json());
   const exportBoard = structuredClone(exportCurrent.visualStoryboard);
   const { semanticPlan: _renderSemanticPlan, ...exportScene } = exportBoard.scenes[0];
+  const renderOverride = { background: exportBoard.palette.canvas, layers: [{ id: "manual-flow-raster-fixture", depth: 0.05, nodes: [{ type: "image", asset: renderFixture.asset.id, x: 0, y: 0, width: 1080, height: 1920, fit: "cover", position: "center" }] }] };
+  exportBoard.visualWorld = {
+    id: "shared-visual-world", name: "Smoke shared base", sourceSceneId: exportScene.sceneId, composition: exportScene.composition,
+    elements: exportScene.composition.layers.map((layer: { id: string }) => ({ layerId: layer.id, semanticRole: "other" })),
+  };
   exportBoard.scenes[0] = {
     ...exportScene,
-    composition: { background: exportBoard.palette.canvas, layers: [{ id: "manual-flow-raster-fixture", depth: 0.05, nodes: [{ type: "image", asset: renderFixture.asset.id, x: 0, y: 0, width: 1080, height: 1920, fit: "cover", position: "center" }] }] },
+    compositionOverride: renderOverride,
     compositionType: "hero-object-focus", layout: "existing-composition", objects: [], relationships: [], visualFocus: null,
     illustrationIntent: renderFixture.asset.name, motionIntent: "gentle-reveal", motionSummary: "Raster fixture animates as one image.",
     motionStatus: "not_prepared", motionActions: [], compositionSource: "library", illustrationSource: "ai-image", missingVisuals: [],
@@ -296,12 +312,15 @@ try {
   assert.ok(movedImage && movedImage.x > 40, `drag updates existing composition coordinates and persists: ${JSON.stringify(movedImage)}`);
   assert.ok(movedImage.width < 1000 && Math.abs(movedImage.width / movedImage.height - 1000 / 900) < 0.02, `resize handle scales raster while preserving aspect ratio: ${JSON.stringify(movedImage)}`);
   await page.evaluate(() => {
+    const details = [...document.querySelectorAll<HTMLDetailsElement>(".editor-advanced")].find((item) => item.querySelector("summary")?.textContent?.includes("Posisi, skala & crop"));
+    if (details) details.open = true;
     const select = [...document.querySelectorAll<HTMLLabelElement>(".editor-field")].find((label) => label.textContent?.includes("Tampilan gambar"))?.querySelector("select");
     if (!select) return;
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "cover");
     select.dispatchEvent(new Event("input", { bubbles: true }));
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".editor-field")].find((label) => label.textContent?.includes("Tampilan gambar"))?.querySelector("select")?.value === "cover"), "fit selector reflects local raster transform");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(async () => {
     const latest = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
@@ -312,6 +331,9 @@ try {
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
   const mobileBounds = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, canvas: document.querySelector<HTMLElement>(".editor-canvas-shell")?.getBoundingClientRect().width ?? 0, scenes: document.querySelector(".video-editor-scenes")?.getBoundingClientRect().width ?? 0 }));
   assert.ok(mobileBounds.scrollWidth <= mobileBounds.width && mobileBounds.canvas > 240 && mobileBounds.scenes <= mobileBounds.width, `mobile editor panels scroll rather than overflow: ${JSON.stringify(mobileBounds)}`);
+  const mobileInspector = await page.evaluate(() => ({ expanded: document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded"), width: document.querySelector<HTMLElement>(".video-editor-inspector")?.getBoundingClientRect().width ?? 0, contentHeight: document.querySelector<HTMLElement>(".editor-inspector-content")?.clientHeight ?? 0, scrollHeight: document.querySelector<HTMLElement>(".editor-inspector-content")?.scrollHeight ?? 0 }));
+  assert.equal(mobileInspector.expanded, "true", "scene selection opens inspector on mobile");
+  assert.ok(mobileInspector.width <= 390 && mobileInspector.contentHeight > 0, `mobile inspector fits viewport and keeps internal scroll: ${JSON.stringify(mobileInspector)}`);
   await captureViewport("video-editor-mobile.png");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 
@@ -411,22 +433,25 @@ try {
   const singleImportedProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
   assert.deepEqual(singleImportedProject.visualStoryboard.scenes[1].composition, mountainProject.visualStoryboard.scenes[1].composition, "single-scene import leaves other scene composition unchanged");
   assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-scene-item:first-child .editor-scene-thumbnail image").length > 0), "single-scene import updates sidebar thumbnail immediately");
-  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].some((button) => button.textContent?.includes("Gunakan ilustrasi ini untuk semua scene") && !button.disabled)), "shared Visual World action is enabled after upload");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Gunakan ilustrasi ini untuk semua scene"))?.click());
-  const sharedWorldConfirmation = await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "optional shared Visual World confirmation", 5).then(() => true).catch(() => false);
-  if (sharedWorldConfirmation) await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
-  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Visual World aktif"))), "shared Visual World is active before per-scene batch import");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].some((button) => button.textContent?.includes("Gunakan untuk Semua Scene") && !button.disabled)), "shared Visual World action is enabled after upload");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Gunakan untuk Semua Scene"))?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "shared Visual World warns about affected scenes");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Shared VisualWorld"))), "shared Visual World is active before per-scene batch import");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "shared Visual World persists before per-scene batch import");
+  const sharedWorldBeforeBatch = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json()).then((project) => project.visualStoryboard.visualWorld);
 
   await waitFor(() => page.evaluate(() => {
-    const button = [...document.querySelectorAll<HTMLButtonElement>(".google-flow-project-actions button")].find((item) => item.textContent?.includes("Import Semua Ilustrasi"));
+    const button = document.querySelector<HTMLButtonElement>(".editor-batch-launch");
     return Boolean(button && !button.disabled);
-  }), "batch import ready after single image upload");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-project-actions button")].find((button) => button.textContent?.includes("Import Semua Ilustrasi"))?.click());
+  }), "Scene List batch import launcher ready");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-batch-launch")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLDialogElement>(".google-flow-batch-dialog")?.open ?? false), "batch import review dialog");
   await page.evaluate((encodedFiles) => {
     const transfer = new DataTransfer();
     for (const item of encodedFiles) {
-      const bytes = Uint8Array.from(atob(item.base64), (character) => character.charCodeAt(0));
+      const bytes = item.oversized ? new Uint8Array(10 * 1024 * 1024 + 1) : Uint8Array.from(atob(item.base64), (character) => character.charCodeAt(0));
       transfer.items.add(new File([bytes], item.name, { type: "image/png" }));
     }
     const input = document.querySelector<HTMLInputElement>(".google-flow-batch-drop input")!;
@@ -436,10 +461,12 @@ try {
     ...flowFixtures.map((fixture, index) => ({ name: fixture.name, base64: flowFixtureBytes[index]!.toString("base64") })),
     { name: "unknown-final.png", base64: flowFixtureBytes[2]!.toString("base64") },
     { name: "scene-04-corrupt.png", base64: Buffer.from("not a PNG image").toString("base64") },
+    { name: "scene-06-oversized.png", oversized: true },
   ]);
-  await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head)").length === 5), "three matched, one unmatched, and one corrupt mountain Flow file enter batch review");
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head)").length === 6), "three matched, one unmatched, one corrupt, and one oversized Flow file enter batch review");
   const batchMapping = await page.evaluate(() => [...document.querySelectorAll<HTMLSelectElement>(".google-flow-batch-row:not(.google-flow-batch-head) select")].map((select) => select.value));
-  assert.deepEqual(batchMapping, [...mountainProject.visualStoryboard.scenes.slice(0, 3).map((scene: { sceneId: string }) => scene.sceneId), "", mountainProject.visualStoryboard.scenes[3].sceneId], "batch filenames map first three mountain scenes, leave unknown unmatched, and match corrupt file to scene four for server validation");
+  assert.deepEqual(batchMapping, [...mountainProject.visualStoryboard.scenes.slice(0, 3).map((scene: { sceneId: string }) => scene.sceneId), "", mountainProject.visualStoryboard.scenes[3].sceneId, mountainProject.visualStoryboard.scenes[5].sceneId], "batch maps first three scenes, leaves unknown unmatched, and assigns invalid/oversized files by scene number");
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head) .google-flow-match-status")[3]?.textContent?.includes("duplikat konten") ?? false), "exact duplicate content receives a batch review hint");
   await page.evaluate((sceneId) => {
     const select = document.querySelectorAll<HTMLSelectElement>(".google-flow-batch-row:not(.google-flow-batch-head) select")[3]!;
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, sceneId);
@@ -456,10 +483,12 @@ try {
     row.querySelector<HTMLButtonElement>("button")?.click();
   });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head) .google-flow-match-status")[3]?.textContent?.trim() === "Dilewati"), "unmatched file can be explicitly skipped");
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head) .google-flow-match-status")[5]?.textContent?.includes("melebihi 10 MB") ?? false), "oversized file gets per-row validation before upload");
+  await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-row:not(.google-flow-batch-head) button")[5]?.click());
   await captureViewport("mountain-google-flow-batch-review.png");
-  const batchApplyButton = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Semua yang Valid"))?.textContent ?? "");
+  const batchApplyButton = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.textContent ?? "");
   assert.match(batchApplyButton, /\(4\)/, "three scene mappings and one server-validated candidate have unique assignments");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Semua yang Valid"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "confirm batch replacement for existing artwork");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-batch-error")?.textContent?.trim())), "batch keeps per-file failure visible after successful files apply", 180);
@@ -470,12 +499,29 @@ try {
   assert.equal(batchProgress.value, "100", "completed partial batch exposes accessible completed progress");
   assert.match(batchProgress.text, /3 berhasil · 1 gagal dari 4/);
   const partialBatch = await page.evaluate(() => ({ remainingRows: document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head)").length, error: document.querySelector(".google-flow-batch-error")?.textContent?.trim() ?? "" }));
-  assert.equal(partialBatch.remainingRows, 2, "successful files leave review list while skipped and failed files remain");
+  assert.equal(partialBatch.remainingRows, 3, "successful files leave review list while skipped and failed files remain");
   assert.match(partialBatch.error, /scene-04-corrupt\.png/);
   await captureViewport("mountain-google-flow-batch-partial-failure.png");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-row:not(.google-flow-batch-head):last-child button")].find((button) => button.textContent?.trim() === "Lewati")?.click());
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.trim() === "Batal")?.click());
-  await waitFor(() => page.evaluate(() => !(document.querySelector<HTMLDialogElement>(".google-flow-batch-dialog")?.open ?? false)), "close partial batch review after preserving successful imports");
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll<HTMLDivElement>(".google-flow-batch-row:not(.google-flow-batch-head)")].find((item) => item.textContent?.includes("scene-04-corrupt.png"));
+    row?.querySelector<HTMLButtonElement>("button")?.click();
+  });
+  await page.evaluate((base64) => {
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "scene-04-retry.png", { type: "image/png" }));
+    const input = document.querySelector<HTMLInputElement>(".google-flow-batch-drop input")!;
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, retryFixtureBytes.toString("base64"));
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head)").length === 4), "retry adds only replacement for failed file while retaining skipped rows");
+  await waitFor(() => page.evaluate((sceneId) => [...document.querySelectorAll<HTMLSelectElement>(".google-flow-batch-row:not(.google-flow-batch-head) select")].some((select) => select.value === sceneId), mountainProject.visualStoryboard.scenes[3].sceneId), "retry file auto-matches failed scene");
+  const retryCount = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.textContent ?? "");
+  assert.match(retryCount, /\(1\)/, "retry submits only remaining valid file, not prior successes");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "confirm replacement for retry scene");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
+  await waitFor(() => page.evaluate(() => !(document.querySelector<HTMLDialogElement>(".google-flow-batch-dialog")?.open ?? false)), "retry applies failed file and closes completed batch");
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "batch image assignments mark project dirty");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   const batchSaveState = await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "batch save result", 180)
@@ -483,8 +529,12 @@ try {
   assert.equal(batchSaveState.state, "Tersimpan", `batch scene artwork persists; toast=${batchSaveState.message}`);
   const flowImportedProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
   const importedFirstThree = flowImportedProject.visualStoryboard.scenes.slice(0, 3);
-  assert.equal(flowImportedProject.visualStoryboard.visualWorld, undefined, "per-scene Flow batch detaches shared Visual World before saving distinct scene compositions");
+  assert.deepEqual(flowImportedProject.visualStoryboard.visualWorld, sharedWorldBeforeBatch, "per-scene Flow batch leaves Shared VisualWorld unchanged");
   assert.ok(importedFirstThree.every((scene: { flowStatus: string; composition: { layers: Array<{ nodes: Array<{ type: string; asset?: string }> }> } }) => scene.flowStatus === "illustration-imported" && scene.composition.layers.flatMap((layer) => layer.nodes).some((node) => node.type === "image" && node.asset?.startsWith("upload-"))), "all three POC scenes persist raster assets as imported artwork");
+  assert.ok(importedFirstThree.every((scene: { compositionOverride?: { layers: Array<{ nodes: Array<{ type: string; asset?: string }> }> } }) => scene.compositionOverride?.layers.flatMap((layer) => layer.nodes).some((node) => node.type === "image")), "all three imported scenes persist explicit scene overrides");
+  assert.ok(flowImportedProject.visualStoryboard.scenes.slice(4).every((scene: { compositionOverride?: unknown }) => !scene.compositionOverride), "unassigned scenes retain shared base without per-scene override");
+  assert.equal(flowImportedProject.visualStoryboard.scenes[3].flowStatus, "illustration-imported", "retry applies previously failed row without re-uploading successful rows");
+  assert.ok(flowImportedProject.visualStoryboard.scenes[3].compositionOverride?.layers.flatMap((layer: { nodes: Array<{ type: string }> }) => layer.nodes).some((node: { type: string }) => node.type === "image"), "retry persists replacement scene override");
   assert.deepEqual(importedFirstThree.map((scene: { flowPrompt?: string }) => Boolean(scene.flowPrompt)), [true, true, true], "scene-specific prompts persist with imported raster artwork");
   await page.evaluate(() => {
     document.querySelector<HTMLElement>(".editor-inspector-content")!.scrollTop = 0;
@@ -501,10 +551,10 @@ try {
 
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[0]?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-inspector-scene")?.textContent?.includes("SCENE 01") ?? false), "return to imported scene for shared Visual World test");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Gunakan ilustrasi ini untuk semua scene"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Gunakan untuk Semua Scene"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "shared Visual World warns before replacing imported scenes");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
-  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((node) => node.textContent?.includes("Visual World aktif"))), "shared Visual World applies to all scenes");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((node) => node.textContent?.includes("Shared VisualWorld"))), "shared Visual World applies to all scenes");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "shared Visual World saves");
   const sharedWorldSaved = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
@@ -598,6 +648,9 @@ try {
   assert.equal(renderedProject.latestJob.state, "rendered", `MP4 render succeeds: ${renderedProject.latestJob.error ?? ""}`);
   assert.equal(renderedProject.latestJob.manifest.videoCodec, "h264");
   assert.equal(renderedProject.latestJob.manifest.width, 1080);
+  const renderSnapshot = JSON.parse(await readFile(path.join(tempDir, "data", "jobs", renderedProject.latestJob.id, "snapshot.json"), "utf8"));
+  assert.deepEqual(renderSnapshot.research.scenes[0].visualComposition, renderOverride, "immutable render snapshot resolves scene override over Shared VisualWorld");
+  assert.ok(renderSnapshot.visualAssets.some((asset: { id: string }) => asset.id === renderFixture.asset.id), "render snapshot includes asset referenced only by scene override");
   const mp4 = await fetch(`${apiUrl}${renderedProject.latestJob.downloadUrl}`).then(async (response) => {
     assert.equal(response.status, 200);
     return Buffer.from(await response.arrayBuffer());
@@ -627,11 +680,11 @@ try {
   const volcanoEditor = await page.evaluate(() => ({
     scenes: document.querySelectorAll(".editor-scene-item").length,
     beats: document.querySelectorAll(".editor-motion-clip").length,
-    world: [...document.querySelectorAll(".editor-info-box strong")].find((item) => item.textContent?.includes("Visual World aktif"))?.textContent?.trim() ?? "",
+     world: [...document.querySelectorAll(".editor-info-box strong")].find((item) => item.textContent?.includes("Shared VisualWorld"))?.textContent?.trim() ?? "",
     layers: [...document.querySelectorAll(".editor-advanced")].find((item) => item.querySelector("summary")?.textContent?.includes("Layer & peran Visual World"))?.querySelectorAll("li").length ?? 0,
     draftNotice: [...document.querySelectorAll(".editor-info-box span")].some((item) => item.textContent?.includes("Draft prosedural, bukan ilustrasi Flow final.")),
   }));
-  assert.deepEqual(volcanoEditor, { scenes: 6, beats: 6, world: "Visual World aktif · 11 stable layer", layers: 11, draftNotice: true }, `sample opens with shared draft world, layer roles, and six beats: ${JSON.stringify(volcanoEditor)}`);
+   assert.deepEqual(volcanoEditor, { scenes: 6, beats: 6, world: "Shared VisualWorld · 12 stable layer", layers: 12, draftNotice: true }, `sample opens with shared draft world, layer roles, and six beats: ${JSON.stringify(volcanoEditor)}`);
   await captureViewport("volcano-sample-visual-world-six-motion-beats.png");
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-motion-clip")[2]?.click());
   await waitFor(() => page.evaluate(() => document.querySelector('[data-motion-path-point="0"]') !== null), "volcano Motion Beat opens path handles without Flow artwork");
@@ -654,7 +707,7 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length === 6), "reloaded volcano editor shows all six Motion Beats");
   const volcanoReloaded = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`).then((response) => response.json());
   assert.equal(volcanoReloaded.visualStoryboard.scenes[2].motionActions[0].path[0].x, volcanoSaved.visualStoryboard.scenes[2].motionActions[0].path[0].x, "edited volcano path survives project reload");
-  assert.ok(await page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Visual World aktif"))), "shared draft Visual World remains visible after reload");
+   assert.ok(await page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Shared VisualWorld"))), "shared draft Visual World remains visible after reload");
   console.log(`PASS: Remotion editor scene switch, scrub, Flow prompt/style-lock/import/batch/reload, shared Visual World persistence, Motion Beat timeline/path editing, raster transform/motion preview, approval, fact review, full preview, MP4 fixture, and volcano sample direct-to-editor persistence. Evidence: ${evidenceDir}`);
 } finally {
   for (const projectId of projectIds.reverse()) {

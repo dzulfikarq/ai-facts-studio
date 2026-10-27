@@ -13,7 +13,7 @@ import { openverseLicenseIds, reusableSceneInputSchema } from "../domain/asset-l
 import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
-import { applyVisualStoryboard, buildVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, compositionForVisualScene, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
 import type { VisualPreparationJob, VisualPreparationScene } from "../domain/visual-preparation";
 import type { MotionPreparationJob, MotionPreparationScene } from "../domain/motion-preparation";
 import { motionIntensitySchema, planSceneMotion } from "../domain/motion-director";
@@ -90,11 +90,8 @@ const illustrationUpload = multer({
 });
 const illustrationBatchUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 30, fields: 1, parts: 31, fieldSize: 1024 * 1024 },
-  fileFilter: (_request, file, done) => {
-    if (!["image/png", "image/jpeg", "image/webp"].includes(file.mimetype)) return done(new Error("Unggah PNG, JPEG, atau WebP. SVG tidak didukung."));
-    done(null, true);
-  },
+  limits: { fileSize: 11 * 1024 * 1024, files: 30, fields: 1, parts: 31, fieldSize: 1024 * 1024 },
+  fileFilter: (_request, _file, done) => done(null, true),
 });
 
 await mkdir(audioDir, { recursive: true });
@@ -111,7 +108,8 @@ function projectRow(id: string) {
 
 function snapshotForProject(project: StoredProject): RenderSnapshot {
   const extension = project.audio ? path.extname(project.audio.file) : "";
-  const referencedAssetIds = new Set(project.visualStoryboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node]))
+  const referencedAssetIds = new Set(project.visualStoryboard.scenes.flatMap((scene) => compositionForVisualScene(project.visualStoryboard, scene).layers
+    .flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node]))
     .flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : [])));
   return {
     research: applyVisualStoryboard(project.researchPackage, project.visualStoryboard),
@@ -222,7 +220,7 @@ function missingVisualAssetReferences(storyboard: ReturnType<typeof buildVisualS
   const available = new Set(assets.map((asset) => asset.id));
   return [
     ...storyboard.styleLock.referenceAssetIds.filter((assetId) => !available.has(assetId)),
-    ...storyboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => {
+    ...storyboard.scenes.flatMap((scene) => compositionForVisualScene(storyboard, scene).layers.flatMap((layer) => layer.nodes.flatMap((node) => {
     const candidates = node.type === "group" ? node.children : [node];
     return candidates.flatMap((candidate) => candidate.type === "image" && candidate.asset.startsWith("upload-") && !available.has(candidate.asset) ? [candidate.asset] : []);
     }))),
@@ -306,7 +304,7 @@ async function runMotionPreparation(job: MotionPreparationJob) {
           writeMotionPreparationJob(job);
           continue;
         }
-        const motion = planSceneMotion(scene, job.intensity);
+        const motion = planSceneMotion({ ...scene, composition: compositionForVisualScene(project.visualStoryboard, scene) }, job.intensity);
         const nextScene = { ...scene, ...motion, approved: false, approvedFingerprint: null };
         project.visualStoryboard = { ...project.visualStoryboard, scenes: project.visualStoryboard.scenes.map((item, index) => index === sceneIndex ? nextScene : item) };
         const merged = parseResearchPackage(applyVisualStoryboard(project.researchPackage, project.visualStoryboard));
@@ -341,8 +339,8 @@ async function runMotionPreparation(job: MotionPreparationJob) {
   }
 }
 
-function protectedVisualScene(scene: VisualStoryboard["scenes"][number]) {
-  const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+function protectedVisualScene(scene: VisualStoryboard["scenes"][number], storyboard: VisualStoryboard) {
+  const hasImage = compositionForVisualScene(storyboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
   return scene.approved || scene.authoringConfirmed || scene.compositionSource === "manual" || scene.compositionSource === "ai-vector" || hasImage;
 }
 
@@ -402,16 +400,17 @@ async function visualResourcesForScene(scene: VisualStoryboard["scenes"][number]
 
 async function prepareVisualSceneSafely(scene: VisualStoryboard["scenes"][number], storyboard: VisualStoryboard, project: StoredProject, trustedAssetCache: Map<string, Promise<VisualAsset | null>>) {
   const resources = await visualResourcesForScene(scene, project, trustedAssetCache);
+  const sceneWithEffectiveComposition = { ...scene, composition: compositionForVisualScene(storyboard, scene) };
   let reusableScenes = resources.reusableScenes;
   let assets = resources.assets;
   for (let attempt = 0; attempt <= resources.assets.length; attempt++) {
-    const result = prepareSmartVisual({ scene, storyboard, reusableScenes, assets });
+    const result = prepareSmartVisual({ scene: sceneWithEffectiveComposition, storyboard, reusableScenes, assets });
     const invalid = result.assetIds.filter((id) => !resources.assetMap.has(id));
     if (!invalid.length) return { result, assets: resources.assetMap };
     assets = assets.filter((asset) => !invalid.includes(asset.id));
     reusableScenes = reusableScenes.filter((candidate) => candidate.assetIds.every((id) => !invalid.includes(id)));
   }
-  return { result: prepareSmartVisual({ scene, storyboard, reusableScenes: [], assets: [] }), assets: resources.assetMap };
+  return { result: prepareSmartVisual({ scene: sceneWithEffectiveComposition, storyboard, reusableScenes: [], assets: [] }), assets: resources.assetMap };
 }
 
 async function runVisualPreparation(job: VisualPreparationJob) {
@@ -433,7 +432,7 @@ async function runVisualPreparation(job: VisualPreparationJob) {
         const index = project.visualStoryboard.scenes.findIndex((scene) => scene.sceneId === state.sceneId);
         if (index < 0) throw new Error("Scene tidak ditemukan lagi di Visual Storyboard.");
         const scene = project.visualStoryboard.scenes[index]!;
-        if (protectedVisualScene(scene)) {
+        if (protectedVisualScene(scene, project.visualStoryboard)) {
           state.status = scene.approved ? "approved" : scene.authoringStatus === "needs_visual_authoring" ? "needs_attention" : "ready_for_review";
           state.source = "preserved";
           state.message = "Ilustrasi terpilih/manual dipertahankan; perubahan otomatis tidak menimpanya.";
@@ -454,6 +453,7 @@ async function runVisualPreparation(job: VisualPreparationJob) {
         const nextScene = result.composition ? {
           ...scene,
           composition: result.composition,
+          compositionOverride: project.visualStoryboard.visualWorld ? result.composition : undefined,
           ...(result.compositionType ? { compositionType: result.compositionType } : {}),
           ...(result.layout ? { layout: result.layout } : {}),
           ...(result.compositionSource ? { compositionSource: result.compositionSource } : {}),
@@ -576,7 +576,8 @@ function reusableSceneReferencesVisualAsset(file: string) {
 }
 
 function visualAssetReferencedByStoryboard(storyboard: VisualStoryboard, assetId: string) {
-  return storyboard.styleLock.referenceAssetIds.includes(assetId) || storyboard.scenes.some((scene) => scene.composition.layers.some((layer) => layer.nodes.some((node) => {
+  const compositions = [storyboard.visualWorld?.composition, ...storyboard.scenes.flatMap((scene) => [scene.composition, scene.compositionOverride])].filter((composition): composition is NonNullable<typeof composition> => Boolean(composition));
+  return storyboard.styleLock.referenceAssetIds.includes(assetId) || compositions.some((composition) => composition.layers.some((layer) => layer.nodes.some((node) => {
     const candidates = node.type === "group" ? node.children : [node];
     return candidates.some((candidate) => candidate.type === "image" && candidate.asset === assetId);
   })));
@@ -618,7 +619,7 @@ function visualAssetUsageIndex() {
       const project = JSON.parse(row.data_json) as StoredProject;
       for (const asset of project.visualAssets ?? []) add(asset.id, row.id, 0);
       for (const assetId of project.visualStoryboard?.styleLock?.referenceAssetIds ?? []) add(assetId, row.id);
-      for (const scene of project.visualStoryboard.scenes) for (const layer of scene.composition.layers) for (const node of layer.nodes) {
+      for (const scene of project.visualStoryboard.scenes) for (const layer of compositionForVisualScene(project.visualStoryboard, scene).layers) for (const node of layer.nodes) {
         const nodes = node.type === "group" ? node.children : [node];
         for (const candidate of nodes) if (candidate.type === "image" && candidate.asset.startsWith("upload-")) add(candidate.asset, row.id);
       }
@@ -695,6 +696,7 @@ async function persistVisualAsset(projectId: string, asset: VisualAsset, bytes: 
 }
 
 async function prepareVisualAssetUpload(file: Express.Multer.File, metadata: Record<string, unknown>) {
+  if (file.size > 10 * 1024 * 1024) throw new Error("File melebihi batas 10 MB; kompres atau ekspor ulang gambar.");
   const processed = await validateAndOptimizeRasterImage(file.buffer, file.mimetype);
   const image = processed.image;
   const sha256 = createHash("sha256").update(processed.buffer).digest("hex");
@@ -1217,7 +1219,7 @@ app.post("/api/projects/:id/visual-preparation", (request, response) => {
   const now = new Date().toISOString();
   const scenes: VisualPreparationScene[] = project.visualStoryboard.scenes.map((scene) => {
     if (scene.approved) return { sceneId: scene.sceneId, status: "approved", source: "preserved", message: "Approval dipertahankan; tidak ada generasi ulang." };
-    if (protectedVisualScene(scene)) return {
+    if (protectedVisualScene(scene, project.visualStoryboard)) return {
       sceneId: scene.sceneId, status: scene.authoringStatus === "needs_visual_authoring" ? "needs_attention" : "ready_for_review",
       source: "preserved", message: "Ilustrasi manual/terpilih dipertahankan; tidak ditimpa batch.",
     };
@@ -1492,7 +1494,7 @@ app.get("/api/openverse/thumbnail", async (request, response) => {
 app.get("/api/projects/:id/visual-assets/credits.csv", (request, response) => {
   const project = getProject(String(request.params.id));
   if (!project) return apiError(response, 404, "Project tidak ditemukan.");
-  const referenced = new Set(project.visualStoryboard.scenes.flatMap((scene: VisualStoryboard["scenes"][number]) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : [])));
+  const referenced = new Set(project.visualStoryboard.scenes.flatMap((scene: VisualStoryboard["scenes"][number]) => compositionForVisualScene(project.visualStoryboard, scene).layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : [])));
   const rows = (project.visualAssets as VisualAsset[]).filter((asset) => referenced.has(asset.id)).map((asset) => [asset.name, asset.creator ?? "", asset.attribution ?? "", asset.license, asset.licenseUrl ?? "", asset.sourceUrl ?? "", asset.provider ?? ""]);
   const csv = [ ["Asset", "Creator", "Attribution", "License", "License URL", "Source URL", "Provider"], ...rows ]
     .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { ResearchPackage } from "../domain/research";
-import { applyVisualStoryboard, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, compositionForVisualScene, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { VisualCompositionView } from "../video/visual-primitives";
 import { visualStyles } from "../video/style-config";
 import type { VisualAsset } from "../domain/visual-assets";
@@ -104,7 +104,7 @@ export function VisualStoryboardReview({ research, storyboard, gate, saved, busy
   const liveAttentionScenes = storyboard.scenes.filter((scene) => !scene.approved && (scene.authoringStatus === "needs_visual_authoring" || (gate.scenes[scene.sceneId]?.length ?? 0) > 0));
   const readyForReviewCount = storyboard.scenes.filter((scene) => !scene.approved && scene.authoringStatus !== "needs_visual_authoring" && !(gate.scenes[scene.sceneId]?.length)).length;
   const repairableSceneIds = liveAttentionScenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring" && !scene.authoringConfirmed && scene.compositionSource !== "manual" && scene.compositionSource !== "ai-vector"
-    && !scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")))).map((scene) => scene.sceneId);
+    && !compositionForVisualScene(storyboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")))).map((scene) => scene.sceneId);
   const retryableMotionSceneIds = motionPreparation?.scenes.filter((scene) => scene.status === "failed" || scene.status === "cancelled").map((scene) => scene.sceneId) ?? [];
   const sourceActionsDisabled = busy || generatingSceneId !== null || planningSceneId !== null || vectorizingSceneId !== null || generatingAiImageSceneId !== null;
   const closeSourceDialog = () => { sourceDialog.current?.close(); setSourceSceneId(null); };
@@ -168,9 +168,11 @@ export function VisualStoryboardReview({ research, storyboard, gate, saved, busy
             : scene.approved ? "Approved"
               : scene.authoringStatus === "needs_visual_authoring" || issues.length ? "Needs Attention" : "Ready for Review";
         const illustrationSource = illustrationSourceForScene(scene);
-        const imageNodes = scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).filter((node) => node.type === "image");
+        const sceneComposition = compositionForVisualScene(storyboard, scene);
+        const imageNodes = sceneComposition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).filter((node) => node.type === "image");
         const previousImageScene = storyboard.scenes.slice(0, index).reverse().map((previous) => {
-          const image = previous.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image");
+          const composition = compositionForVisualScene(storyboard, previous);
+          const image = composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image");
           if (!image) return null;
           const asset = assets.find((candidate) => candidate.id === image.asset);
           return { scene: previous, image, asset };
@@ -199,7 +201,7 @@ export function VisualStoryboardReview({ research, storyboard, gate, saved, busy
             {scene.authoringStatus === "needs_visual_authoring" && !scene.authoringConfirmed
               ? <div className="visual-author-placeholder"><strong>Visual belum memadai</strong><span>{scene.missingVisuals.join(" · ") || "Konsep inti belum dapat digambarkan akurat."}</span></div>
               : source && <svg viewBox="0 0 1080 1920" role="img" aria-label={`Thumbnail scene ${scene.sceneNumber}: ${scene.headline}`}>
-              <VisualCompositionView scene={source} composition={scene.composition} style={visualStyles[research.visualPreset]} preset={research.visualPreset} frame={thumbnailFrame} progress={thumbnailProgress}/>
+              <VisualCompositionView scene={source} composition={sceneComposition} style={visualStyles[research.visualPreset]} preset={research.visualPreset} frame={thumbnailFrame} progress={thumbnailProgress}/>
               <rect x="45" y="34" width="990" height="450" rx="20" fill={storyboard.palette.canvas} opacity=".96"/>
               <text x="84" y="92" fill={storyboard.palette.primary} fontFamily="Arial,sans-serif" fontSize="24" fontWeight="700" letterSpacing="3">AI FACTS · SCENE {String(scene.sceneNumber).padStart(2, "0")}</text>
               <foreignObject x="80" y="126" width="920" height="290"><div className="visual-thumbnail-headline">{scene.headline}</div></foreignObject>

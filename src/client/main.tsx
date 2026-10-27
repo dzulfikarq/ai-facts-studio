@@ -7,7 +7,7 @@ import type { AnyZodObject } from "remotion";
 import { categories, motionCues, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
-import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
@@ -578,11 +578,20 @@ function App() {
     if (!project || !research) return;
     const prior = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
     if (!prior) return;
-    const compositionChanged = Boolean(change.composition && JSON.stringify(change.composition) !== JSON.stringify(prior.composition));
-    const effectiveChange = compositionChanged && !("motionActions" in change)
-      ? { ...change, motionActions: [], motionStatus: "not_prepared" as const, motionSummary: "Komposisi berubah; buat ulang Motion Plan sebelum approval." }
+    const currentComposition = compositionForVisualScene(project.visualStoryboard, prior);
+    const requestedComposition = change.compositionOverride ?? change.composition;
+    const compositionChanged = Boolean(requestedComposition && JSON.stringify(requestedComposition) !== JSON.stringify(currentComposition));
+    const effectiveChange: Partial<VisualStoryboardScene> = compositionChanged
+      ? {
+          ...change,
+          ...(requestedComposition ? project.visualStoryboard.visualWorld
+            ? { composition: requestedComposition, compositionOverride: requestedComposition }
+            : { composition: requestedComposition, compositionOverride: undefined } : {}),
+          ...(!("motionActions" in change) && prior.motionActions.length ? { motionStatus: "needs_review" as const, motionSummary: "Ilustrasi berubah; Motion Beat dipertahankan. Periksa target yang hilang sebelum approval." } : {}),
+          ...(!("warnings" in change) && prior.motionActions.length ? { warnings: [...prior.warnings.slice(0, 6), "Ilustrasi berubah; Motion Beat dipertahankan untuk ditinjau. Target yang hilang perlu diperbaiki."] } : {}),
+        }
       : change;
-    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionSource", "illustrationSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
+    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionOverride", "compositionSource", "illustrationSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
     const artworkChanged = artworkFields.some((field) => field in effectiveChange);
     const copyChanged = effectiveChange.headline !== undefined && effectiveChange.headline !== prior.headline || effectiveChange.narrationText !== undefined && effectiveChange.narrationText !== prior.narrationText;
     const statusAfterReview = effectiveChange.approved === true && prior.authoringStatus === "needs_review" ? "ready_for_review"
@@ -607,32 +616,6 @@ function App() {
       ...project.visualStoryboard,
       scenes: project.visualStoryboard.scenes.map((scene) => scene.sceneId === sceneId ? nextScene : scene),
     };
-    if (project.visualStoryboard.visualWorld && compositionChanged && effectiveChange.composition) {
-      const source = nextScene;
-      const visualWorld = buildVisualWorld(project.visualStoryboard.visualWorld.name, source);
-      storyboard = {
-        ...storyboard,
-        visualWorld,
-        scenes: storyboard.scenes.map((scene) => {
-          return {
-            ...scene,
-            composition: effectiveChange.composition!,
-            compositionSource: source.compositionSource,
-            illustrationSource: source.illustrationSource,
-            illustrationWorkflow: source.illustrationWorkflow,
-            authoringConfirmed: false,
-            authoringStatus: "needs_review" as const,
-            approved: false,
-            approvedFingerprint: null,
-            motionActions: [],
-            motionStatus: "not_prepared" as const,
-            motionSummary: "Visual World berubah; buat ulang Motion Beat sebelum approval.",
-            flowStatus: "illustration-imported" as const,
-            warnings: [...scene.warnings.slice(0, 6), "Visual World berubah; tinjau ulang semua scene dan motion beat."],
-          };
-        }),
-      };
-    }
     if (effectiveChange.headline !== undefined || effectiveChange.narrationText !== undefined) {
       storyboard = buildVisualStoryboard(applyVisualStoryboard(research, storyboard), storyboard);
     }
@@ -674,7 +657,7 @@ function App() {
           source: scene.compositionSource, status: scene.authoringStatus,
           authoringConfirmed: scene.authoringConfirmed, approved: scene.approved,
         },
-         existingComposition: scene.composition,
+         existingComposition: compositionForVisualScene(project.visualStoryboard, scene),
         semanticPlan: semanticPlanOverride ?? scene.semanticPlan,
         sharedWorldObjects: project.visualStoryboard.reusableWorldObjects,
         assetLibrary: visualObjectLibrary,
@@ -741,16 +724,21 @@ function App() {
 
   async function setSharedVisualWorld(sceneId: string) {
     if (!project || !research) return;
-    const source = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
-    if (!source || !source.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")))) {
+    const selectedSource = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
+    if (!selectedSource) return;
+    const source = { ...selectedSource, composition: compositionForVisualScene(project.visualStoryboard, selectedSource), compositionOverride: undefined };
+    if (!source.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")))) {
       setMessage("Impor ilustrasi dasar dulu sebelum menjadikannya Visual World bersama.");
       return;
     }
-    const replacingOtherArt = project.visualStoryboard.scenes.some((scene) => scene.approved || scene.motionActions.length > 0 || scene.sceneId !== sceneId && scene.compositionSource !== "procedural");
+    const replacingOtherArt = project.visualStoryboard.scenes.some((scene) => scene.sceneId !== sceneId && (
+      JSON.stringify(compositionForVisualScene(project.visualStoryboard, scene)) !== JSON.stringify(source.composition)
+      || scene.compositionSource !== source.compositionSource || scene.illustrationSource !== source.illustrationSource
+    ));
     if (replacingOtherArt && !await askConfirmation({
       title: "Gunakan ilustrasi ini untuk semua scene?",
-      message: "Satu visual world akan mengganti komposisi scene lain. Motion beat dan approval lama dibatalkan; setiap scene perlu ditinjau ulang.",
-      confirmLabel: "Gunakan Visual World",
+      message: "Komposisi scene ini menjadi shared base untuk seluruh scene dan mengganti override scene lain. Approval scene terdampak dibatalkan; Motion Beat dipertahankan, tetapi target yang hilang perlu diperbaiki.",
+      confirmLabel: "Gunakan untuk Semua Scene",
       cancelLabel: "Pertahankan semua scene",
       tone: "warning",
     })) return;
@@ -758,29 +746,32 @@ function App() {
     const storyboard: VisualStoryboard = {
       ...project.visualStoryboard,
       visualWorld,
-      scenes: project.visualStoryboard.scenes.map((scene) => ({
-        ...scene,
-        composition: source.composition,
-        compositionSource: source.compositionSource,
-        illustrationSource: source.illustrationSource,
-        illustrationWorkflow: source.illustrationWorkflow,
-        authoringConfirmed: scene.sceneId === sceneId && source.authoringConfirmed,
-        authoringStatus: scene.sceneId === sceneId ? source.authoringStatus : "needs_review",
-        approved: false,
-        approvedFingerprint: null,
-        motionActions: [],
-        motionStatus: "not_prepared",
-        motionSummary: "Motion Beat scene ini belum disiapkan.",
-        flowStatus: "illustration-imported",
-        warnings: [...scene.warnings.slice(0, 6), "Memakai Visual World bersama; tinjau kecocokan untuk tahap narasi ini."],
-      })),
+      scenes: project.visualStoryboard.scenes.map((scene) => {
+        const affected = JSON.stringify(compositionForVisualScene(project.visualStoryboard, scene)) !== JSON.stringify(source.composition)
+          || scene.compositionSource !== source.compositionSource || scene.illustrationSource !== source.illustrationSource;
+        const nextScene = {
+          ...scene,
+          composition: source.composition,
+          compositionOverride: undefined,
+          ...(affected ? { compositionSource: source.compositionSource, illustrationSource: source.illustrationSource, illustrationWorkflow: source.illustrationWorkflow } : {}),
+          authoringConfirmed: scene.sceneId === sceneId ? source.authoringConfirmed : affected ? false : scene.authoringConfirmed,
+          authoringStatus: scene.sceneId === sceneId ? source.authoringStatus : affected ? "needs_review" : scene.authoringStatus,
+          approved: affected ? false : scene.approved,
+          approvedFingerprint: affected ? null : scene.approvedFingerprint,
+          motionStatus: affected && scene.motionActions.length ? "needs_review" as const : scene.motionStatus,
+          motionSummary: affected && scene.motionActions.length ? "Shared VisualWorld berubah; Motion Beat dipertahankan. Periksa target layer sebelum approval." : scene.motionSummary,
+          flowStatus: affected ? "illustration-imported" as const : scene.flowStatus,
+          warnings: affected ? [...scene.warnings.slice(0, 6), "Shared VisualWorld diterapkan; tinjau scene dan target Motion Beat."] : scene.warnings,
+        };
+        return { ...nextScene, approvedFingerprint: nextScene.approved ? visualApprovalFingerprint(nextScene) : null };
+      }),
     };
     setProject((current) => current ? { ...current, visualStoryboard: storyboard } : current);
     setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
     setSaved(false);
     setPreviewReviewed(false);
     setPreviewStarted(false);
-    setMessage("Visual World dipakai bersama. Tinjau tiap beat, lalu simpan.");
+    setMessage("Ilustrasi dipakai untuk semua scene. Visual World lama diganti; beat dipertahankan untuk ditinjau. Simpan perubahan.");
   }
 
   async function generateVectorScene(sceneId: string) {
@@ -902,7 +893,8 @@ function App() {
     if (!project) return;
     const current = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
     if (!current) return;
-    const currentImageId = current.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
+    const currentComposition = compositionForVisualScene(project.visualStoryboard, current);
+    const currentImageId = currentComposition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
     const replacingImage = currentImageId !== undefined && currentImageId !== assetId;
     if (!confirmationDone && (current.approved || current.authoringConfirmed || replacingImage) && !await askConfirmation({
       title: "Ganti ilustrasi scene?",
@@ -931,9 +923,9 @@ function App() {
         : { type: "image" as const, asset: assetId, x: 40, y: 520, width: 1000, height: 900, fit: placement.fit, position: placement.position };
     const sourceLayer = { id: layerId, depth: mode === "background" || fullFrameAiImage ? 0.05 : 0.72, nodes: [node] };
     const addToExisting = mode !== "hero";
-    const existingLayers = current.composition.layers.filter((layer) => layer.id !== layerId);
+    const existingLayers = currentComposition.layers.filter((layer) => layer.id !== layerId);
     const composition = visualCompositionSchema.parse({
-      background: project.visualStoryboard.palette.canvas,
+      background: currentComposition.background,
       layers: addToExisting ? [...existingLayers, sourceLayer] : [sourceLayer],
     });
     updateVisualScene(sceneId, {
@@ -951,7 +943,7 @@ function App() {
   async function uploadVisualIllustration(sceneId: string, file: File, metadata: IllustrationImportInfo): Promise<boolean> {
     if (!project || busy) return false;
     const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
-    const currentImageId = scene?.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
+    const currentImageId = scene ? compositionForVisualScene(project.visualStoryboard, scene).layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset : undefined;
     if (scene && (scene.approved || scene.authoringConfirmed || currentImageId !== undefined) && !await askConfirmation({
       title: "Ganti ilustrasi scene?",
       message: "File baru mengganti komposisi dan membatalkan approval. Aset tersimpan di library project.",
@@ -974,7 +966,8 @@ function App() {
       if (metadata.model) form.append("model", metadata.model);
       const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean; originalBytes: number }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
       setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
-      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true, false, undefined,
+      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true, false,
+        metadata.provider?.startsWith("Google Flow") ? { mode: "hero", fit: "cover", position: "center" } : undefined,
         metadata.provider?.startsWith("Google Flow") ? "google-flow" : metadata.source === "ai-generated" ? "ai-image-api" : "upload-image");
       setMessage(`Aset tersimpan${result.optimized ? " dan dioptimalkan ke WebP" : ""}. Tinjau thumbnail, safe crop, lisensi, dan kecocokan sebelum approval.`);
       return true;
@@ -986,7 +979,7 @@ function App() {
     if (!project) return;
     setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
       if (scene.sceneId !== sceneId) return scene;
-      const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+      const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
       return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
@@ -1003,7 +996,7 @@ function App() {
     setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
       const prompt = byScene.get(scene.sceneId);
       if (!prompt || scene.flowPrompt) return scene;
-      const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+      const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
       return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
@@ -1023,7 +1016,7 @@ function App() {
     setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
       const prompt = byScene.get(scene.sceneId);
       if (!prompt) return scene;
-      const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+      const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
       return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
@@ -1056,13 +1049,13 @@ function App() {
     if (targets.some((scene) => !scene) || new Set(items.map((item) => item.sceneId)).size !== items.length) {
       return { ...empty, failures: items.map((item) => ({ id: item.id, fileName: item.file.name, message: "Assignment scene tidak valid atau duplikat." })) };
     }
-    const replacing = targets.filter((scene) => scene!.approved || scene!.motionActions.length > 0 || scene!.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
+    const replacing = targets.filter((scene) => scene!.approved || scene!.motionActions.length > 0 || compositionForVisualScene(project.visualStoryboard, scene!).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
     const sharedWorld = project.visualStoryboard.visualWorld;
-    if ((sharedWorld || replacing.length) && !await askConfirmation({
-      title: sharedWorld ? "Impor ilustrasi per scene?" : "Ganti ilustrasi scene?",
+    if (replacing.length && !await askConfirmation({
+      title: sharedWorld ? "Buat override ilustrasi per scene?" : "Ganti ilustrasi scene?",
       message: sharedWorld
-        ? `Batch impor melepas Visual World bersama agar scene dapat memakai ilustrasi berbeda. ${replacing.length} scene target memiliki ilustrasi, Motion Beat, atau approval yang perlu ditinjau ulang; scene lain mempertahankan komposisi lama.`
-        : `${replacing.length} scene target memiliki ilustrasi, Motion Beat, atau approval. File baru mengganti komposisi dan membatalkan Motion Beat serta approval pada scene tersebut. Scene lain tetap.`,
+        ? `${replacing.length} scene target mendapat ilustrasi khusus; Shared VisualWorld tetap untuk scene lain. Approval target dibatalkan. Motion Beat dipertahankan; target yang hilang perlu diperbaiki.`
+        : `${replacing.length} scene target memiliki ilustrasi, Motion Beat, atau approval. Ilustrasi target diganti; approval dibatalkan. Motion Beat dipertahankan dan target yang hilang ditandai untuk diperbaiki. Scene lain tetap.`,
       confirmLabel: "Impor dan ganti",
       cancelLabel: "Batal",
       tone: "warning",
@@ -1108,23 +1101,18 @@ function App() {
               layers: [{ id: `flow-${imported.asset.sha256.slice(0, 12)}`, depth: 0.05, nodes: [{ type: "image", asset: imported.asset.id, x: 0, y: 0, width: 1080, height: 1920, fit: "cover", position: "center" }] }],
             });
             return {
-              ...withoutSemanticPlan, composition, compositionType: "hero-object-focus" as const, layout: "existing-composition" as const,
+              ...withoutSemanticPlan, composition, compositionOverride: sharedWorld ? composition : undefined, compositionType: "hero-object-focus" as const, layout: "existing-composition" as const,
               objects: [], relationships: [], visualFocus: null, illustrationIntent: imported.asset.name, motionIntent: "gentle-reveal" as const,
-              motionSummary: "Ilustrasi Google Flow raster bergerak sebagai satu gambar; objek internal tidak dipisah.", motionStatus: "not_prepared" as const, motionActions: [],
+              motionSummary: imported.scene.motionActions.length ? "Ilustrasi berubah; Motion Beat dipertahankan untuk ditinjau. Objek raster bergerak sebagai satu gambar." : "Ilustrasi Google Flow raster bergerak sebagai satu gambar; objek internal tidak dipisah.", motionStatus: imported.scene.motionActions.length ? "needs_review" as const : "not_prepared" as const, motionActions: imported.scene.motionActions,
               compositionSource: "library" as const, illustrationSource: "ai-image" as const, missingVisuals: [],
               illustrationWorkflow: "google-flow" as const,
               authoringStatus: "needs_review" as const, authoringConfirmed: false,
-              warnings: ["Google Flow output diimpor manual; provenance dilaporkan pengguna. Tinjau akurasi ilmiah, crop, dan safe area."],
+              warnings: ["Google Flow output diimpor manual; provenance dilaporkan pengguna. Tinjau akurasi ilmiah, crop, dan safe area.", ...(imported.scene.motionActions.length ? ["Motion Beat dipertahankan; periksa target layer setelah komposisi berubah."] : [])],
               approved: false, approvedFingerprint: null, flowStatus: "illustration-imported" as const,
             };
           });
-        const storyboardBase = { ...project.visualStoryboard };
-        if (storyboardBase.visualWorld) {
-          // ponytail: different per-scene artwork cannot remain one shared base; untouched scenes keep their composition.
-          delete storyboardBase.visualWorld;
-        }
         const storyboard: VisualStoryboard = {
-          ...storyboardBase,
+          ...project.visualStoryboard,
           scenes,
           reusableWorldObjects: visualObjectIds.filter((objectId) => scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1),
         };
@@ -1134,7 +1122,7 @@ function App() {
         setPreviewReviewed(false);
         setPreviewStarted(false);
       }
-      setMessage(`${uploaded.length} ilustrasi dipasang ke scene${uploaded.length && sharedWorld ? "; Visual World dilepas, scene lain mempertahankan komposisi lama" : ""}${failures.length ? `; ${failures.length} gagal—file sukses tetap tersimpan di Asset Library` : ""}. Tinjau lalu simpan perubahan.`);
+      setMessage(`${uploaded.length} ilustrasi dipasang ke scene${uploaded.length && sharedWorld ? "; Shared VisualWorld dipertahankan, target memakai override scene" : ""}${failures.length ? `; ${failures.length} gagal—file sukses tetap tersimpan dan tidak perlu diunggah ulang` : ""}. Tinjau lalu simpan perubahan.`);
       return { appliedIds: uploaded.map(({ item }) => item.id), failures };
     } finally { setBusy(false); }
   }
@@ -1156,9 +1144,10 @@ function App() {
   }
 
   async function confirmSceneIllustrationReplacement(sceneId: string, sourceLabel: string) {
-    const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!project) return false;
+    const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
     if (!scene) return false;
-    const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+    const hasImage = compositionForVisualScene(project.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
     if (!(scene.approved || scene.authoringConfirmed || scene.compositionSource === "manual" || scene.compositionSource === "ai-vector" || hasImage)) return true;
     return askConfirmation({
       title: "Ganti komposisi scene?",

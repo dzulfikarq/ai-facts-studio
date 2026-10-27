@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { VisualAsset } from "../domain/visual-assets";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { ResearchPackage } from "../domain/research";
-import type { VisualStoryboard, VisualStoryboardScene } from "../domain/visual-storyboard";
+import { compositionForVisualScene, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 
 type Tab = "mine" | "packs" | "online" | "scenes";
 type UseMode = "background" | "hero" | "layer";
@@ -149,11 +149,12 @@ export function SmartAssetLibraryDialog({ open, scene, research, storyboard, pro
         const thumbnailDataUrl = canvas.toDataURL("image/png");
         const researchScene = research.scenes.find((item) => item.id === scene.sceneId);
         if (!researchScene) throw new Error("Research scene tidak ditemukan.");
-        const imageIds = [...new Set(scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : []))];
+        const composition = compositionForVisualScene(storyboard, scene);
+        const imageIds = [...new Set(composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : []))];
         await onSaveReusableScene(scene.sceneId, {
           name: reusableName.trim(), tags: reusableTags.split(",").map((tag) => tag.trim()).filter(Boolean),
           concepts: reusableConcepts.split(",").map((concept) => concept.trim()).filter(Boolean), styleId: storyboard.styleId,
-          layout: scene.layout, ...(scene.compositionType ? { compositionType: scene.compositionType } : {}), composition: scene.composition,
+           layout: scene.layout, ...(scene.compositionType ? { compositionType: scene.compositionType } : {}), composition,
           palette: storyboard.palette, motionIntent: scene.motionIntent, motionSummary: scene.motionSummary,
           motionPlan: researchScene.motionPlan, objects: scene.objects, relationships: scene.relationships, visualFocus: scene.visualFocus,
           assetIds: imageIds, thumbnailDataUrl, provenance: "Saved from Visual Storyboard; source scene copy excluded from reusable template.",
@@ -167,7 +168,7 @@ export function SmartAssetLibraryDialog({ open, scene, research, storyboard, pro
   function changeTab(next: Tab) { setTab(next); setPage(1); setError(""); }
   const placement: AssetPlacement = { mode, fit, position };
   const currentPageCount = tab === "mine" ? local.pageCount : tab === "packs" ? pack.pageCount : tab === "scenes" ? scenes.pageCount : online?.pageCount ?? 0;
-  const sceneIsAlreadyUsed = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" && node.asset.startsWith("upload-")));
+  const sceneIsAlreadyUsed = compositionForVisualScene(storyboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" && node.asset.startsWith("upload-")));
 
   return <dialog ref={dialog} className="smart-asset-dialog" aria-labelledby="smart-asset-title" onClose={onClose}>
     <header className="smart-asset-head">

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, ImagePlus, Pause, Play, RotateCcw, Upload } from "lucide-react";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, ImagePlus, Pause, Play, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { applyVisualStoryboard, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
@@ -11,17 +11,19 @@ import { durationInFrames, FPS, sceneTimes, timelineDuration } from "../domain/t
 import { visualImageNodes, updateVisualImageNode, type VisualImageNode, type VisualImageTransform, type VisualImageUpdate } from "../domain/visual-composition";
 import type { ResearchPackage } from "../domain/research";
 import type { MotionIntensity } from "../domain/motion-director";
+import { motionActionSchema } from "../domain/motion-director";
+import { motionBeatFromAction, updateMotionBeat, type MotionBeat } from "../domain/motion-beats";
 import type { VisualAsset } from "../domain/visual-assets";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { MotionPreparationJob } from "../domain/motion-preparation";
 import type { VisualPreparationJob } from "../domain/visual-preparation";
 import { SmartAssetLibraryDialog, type AssetPlacement, type ReusableSceneEntry } from "./SmartAssetLibraryDialog";
-import { GoogleFlowPanel, type FlowBatchItem } from "./GoogleFlowPanel";
+import { GoogleFlowPanel, type FlowBatchItem, type FlowBatchProgress } from "./GoogleFlowPanel";
 import { visualStyles } from "../video/style-config";
 import { VisualCompositionView } from "../video/visual-primitives";
 import { VersionedVideo, type VideoProps } from "../video/root";
 import { previewInputProps } from "../video/video";
-import type { VideoEditorInteractions } from "../video/types";
+import type { EditorMotionPath, VideoEditorInteractions } from "../video/types";
 import "./video-editor-v2.css";
 
 type IllustrationImportInfo = { source: "user-upload" | "ai-generated"; prompt?: string; license: string; provider?: string; model?: string };
@@ -38,7 +40,7 @@ type MotionPreset = "static" | "gentle" | "pan-zoom" | "process" | "particles";
 type IllustrationWorkflow = VisualStoryboardScene["illustrationWorkflow"];
 type ImageBaseline = VisualImageTransform & Pick<VisualImageNode, "fit" | "position">;
 
-export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onApplyFlowBatch }: {
+export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onApplyFlowBatch }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
   gate: VisualQualityGate;
@@ -69,6 +71,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onSave: () => void;
   onGenerate: (sceneId: string) => void;
   onUseCurrentComposition: (sceneId: string) => void;
+  onSetSharedVisualWorld: (sceneId: string) => void;
   onOpenLibrary: (sceneId: string, tab?: "mine" | "scenes") => void;
   onCloseLibrary: () => void;
   onDeleteAsset: (assetId: string) => void;
@@ -97,10 +100,11 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onApplyStyleLock: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
   onUploadFlowReference: (file: File) => Promise<VisualAsset | null>;
   onImportFlowIllustration: (sceneId: string, file: File, metadata: { source: "ai-generated"; prompt: string; license: string; provider: string; model: string }) => Promise<boolean>;
-  onApplyFlowBatch: (items: FlowBatchItem[]) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
+  onApplyFlowBatch: (items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
 }) {
   const [tab, setTab] = useState<InspectorTab>("visual");
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [selectedMotionBeatRef, setSelectedMotionBeatRef] = useState<{ sceneId: string; actionId: string } | null>(null);
   const [imageBaseline, setImageBaseline] = useState<ImageBaseline | null>(null);
   const [safeGuides, setSafeGuides] = useState(false);
   const [sourceSceneId, setSourceSceneId] = useState<string | null>(null);
@@ -121,7 +125,15 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const selectedSceneRef = useRef(selectedSceneId);
   const lastUiFrame = useRef(0);
   const uploadInput = useRef<HTMLInputElement>(null);
+  const motionClipGesture = useRef<{ pointerId: number; actionId: string; startX: number; railWidth: number; startTimeSec: number; timingScale: number } | null>(null);
   const selectedScene = storyboard.scenes.find((scene) => scene.sceneId === selectedSceneId) ?? storyboard.scenes[0]!;
+  const selectedMotionAction = selectedMotionBeatRef?.sceneId === selectedScene.sceneId
+    ? selectedScene.motionActions.find((action) => action.id === selectedMotionBeatRef.actionId) ?? selectedScene.motionActions[0]
+    : selectedScene.motionActions[0];
+  const selectedPathAction = selectedMotionBeatRef?.sceneId === selectedScene.sceneId
+    ? selectedScene.motionActions.find((action) => action.id === selectedMotionBeatRef.actionId)
+    : undefined;
+  const selectedBeat = selectedMotionAction ? motionBeatFromAction(selectedMotionAction) : null;
   const visualResearch = useMemo(() => applyVisualStoryboard(research, storyboard), [research, storyboard]);
   const sourceResearchScene = visualResearch.scenes.find((scene) => scene.id === selectedScene.sceneId)!;
   const sceneImages = useMemo(() => visualImageNodes(selectedScene.composition), [selectedScene.composition]);
@@ -219,18 +231,37 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     const span = sceneSpan(scene);
     seekTo(scenePreviewFrame(span));
     setSelectedImageId(null);
+    setSelectedMotionBeatRef(null);
   };
   const editImage = useCallback((nodeId: string, update: VisualImageUpdate) => {
     const scene = storyboard.scenes.find((item) => item.sceneId === selectedSceneRef.current);
     if (!scene) return;
     onChange(scene.sceneId, { composition: updateVisualImageNode(scene.composition, nodeId, update) });
   }, [onChange, storyboard.scenes]);
+  const editMotionBeat = useCallback((actionId: string, change: Partial<Pick<MotionBeat, "description" | "targetLayerId" | "targetNode" | "targetRole" | "startTimeSec" | "durationSec" | "easing" | "path" | "pathStyle">>) => {
+    const action = selectedScene.motionActions.find((item) => item.id === actionId);
+    if (!action) return;
+    try {
+      const updated = updateMotionBeat(action, change, selectedScene.durationSec);
+      onChange(selectedScene.sceneId, {
+        motionActions: selectedScene.motionActions.map((item) => item.id === actionId ? updated : item),
+        motionStatus: "ready_for_review",
+        motionSummary: `${selectedScene.motionActions.length} Motion Beat · timing perkiraan`,
+      });
+    } catch { /* Invalid intermediate field value stays local until next valid edit. */ }
+  }, [onChange, selectedScene]);
   const editorInteractions = useMemo<VideoEditorInteractions>(() => ({
     sceneId: selectedScene.sceneId,
     selectedImageId,
     onSelectImage: setSelectedImageId,
     onTransformImage: (nodeId, transform) => editImage(nodeId, transform),
-  }), [editImage, selectedImageId, selectedScene.sceneId]);
+    selectedMotionPath: selectedPathAction?.path ? { actionId: selectedPathAction.id, points: selectedPathAction.path, pathStyle: selectedPathAction.pathStyle } satisfies EditorMotionPath : null,
+    onTransformMotionPathPoint: (index, point) => {
+      if (!selectedMotionAction?.path || index >= selectedMotionAction.path.length) return;
+      const path = selectedMotionAction.path.map((entry, pointIndex) => pointIndex === index ? point : entry);
+      editMotionBeat(selectedMotionAction.id, { path });
+    },
+  }), [editImage, editMotionBeat, selectedImageId, selectedPathAction, selectedScene.sceneId]);
   const playerInputProps = useMemo<VideoProps>(() => ({
     ...previewInputProps(visualResearch, audio?.file, audio?.durationSec, audio?.timingMode),
     editor: editorInteractions,
@@ -251,6 +282,51 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     const index = research.scenes.findIndex((scene) => scene.id === selectedScene.sceneId);
     const next = research.scenes[Math.max(0, Math.min(research.scenes.length - 1, index + direction))];
     if (next) selectScene(next.id);
+  };
+  const selectMotionBeat = (sceneId: string, actionId: string) => {
+    const scene = research.scenes.find((item) => item.id === sceneId);
+    const visual = storyboard.scenes.find((item) => item.sceneId === sceneId);
+    const action = visual?.motionActions.find((item) => item.id === actionId);
+    if (!scene || !visual || !action) return;
+    selectScene(sceneId);
+    setSelectedMotionBeatRef({ sceneId, actionId });
+    setTab("motion");
+    const span = sceneSpan(scene);
+    const scaledOffset = action.startFrame / FPS * ((span.endSec - span.startSec) / visual.durationSec);
+    seekTo((span.startSec + scaledOffset) * FPS);
+  };
+  const addMotionBeat = () => {
+    if (!selectedImage || selectedScene.motionActions.length >= 12) return;
+    const node = selectedImage.node;
+    const x = Math.round(Math.max(12, Math.min(1068, node.x + node.width / 2)));
+    const low = Math.max(18, Math.min(1902, node.y + node.height * .82));
+    const high = Math.max(18, Math.min(1902, node.y + node.height * .35));
+    const id = `motion-beat-${Array.from({ length: 13 }, (_, index) => index + 1).find((number) => !selectedScene.motionActions.some((action) => action.id === `motion-beat-${number}`)) ?? 13}`;
+    const totalFrames = Math.max(1, Math.floor(selectedScene.durationSec * FPS));
+    const startFrame = Math.min(Math.floor(totalFrames * .18), totalFrames - 1);
+    const durationFrames = Math.max(1, Math.min(Math.floor(3 * FPS), totalFrames - startFrame));
+    const action = motionActionSchema.parse({
+      id,
+      description: "Magma naik mengikuti conduit",
+      kind: "particle-flow",
+      targetNode: selectedImage.id,
+      targetLayerId: selectedImage.layerId,
+      targetRole: "magma",
+      startFrame,
+      durationFrames,
+      easing: "linear",
+      path: [{ x, y: low }, { x: Math.round(x + node.width * .035), y: Math.round((low + high) / 2) }, { x, y: high }],
+      motionPathRef: `path-${id}`,
+      pathStyle: "magma",
+      particleCount: 5,
+    });
+    onChange(selectedScene.sceneId, {
+      motionActions: [...selectedScene.motionActions, action],
+      motionStatus: "ready_for_review",
+      motionSummary: `${selectedScene.motionActions.length + 1} Motion Beat · timing perkiraan`,
+    });
+    setSelectedMotionBeatRef({ sceneId: selectedScene.sceneId, actionId: action.id });
+    setTab("motion");
   };
   const previewSingleScene = () => {
     const start = Math.floor(selectedSpan.startSec * FPS);
@@ -338,7 +414,46 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
           <div className="editor-track-row"><span>Scene</span><div className="editor-track-rail">{research.scenes.map((scene, index) => {
             const span = sceneSpan(scene);
             return <button type="button" key={scene.id} className={`editor-track-clip ${scene.id === selectedScene.sceneId ? "selected" : ""}`} style={{ left: `${span.startSec / previewDurationSec * 100}%`, width: `${Math.max(0.5, (span.endSec - span.startSec) / previewDurationSec * 100)}%` }} onClick={() => selectScene(scene.id)} aria-label={`Pilih scene ${index + 1}: ${scene.onScreenText}`}><strong>{String(index + 1).padStart(2, "0")}</strong><small>{(span.endSec - span.startSec).toFixed(1)}s</small></button>;
-          })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
+           })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
+          <div className="editor-track-row"><span>Motion Beat</span><div className="editor-motion-rail" aria-label="Timeline motion beats">
+            {storyboard.scenes.flatMap((visual) => {
+              const scene = research.scenes.find((item) => item.id === visual.sceneId);
+              if (!scene) return [];
+              const span = sceneSpan(scene);
+              const timingScale = (span.endSec - span.startSec) / visual.durationSec;
+              return visual.motionActions.map((action) => {
+                const beat = motionBeatFromAction(action);
+                const startSec = span.startSec + beat.startTimeSec * timingScale;
+                const durationSec = beat.durationSec * timingScale;
+                const width = Math.max(1.2, durationSec / previewDurationSec * 100);
+                const left = Math.max(0, Math.min(100 - width, startSec / previewDurationSec * 100));
+                const selected = selectedMotionBeatRef?.sceneId === visual.sceneId && selectedMotionBeatRef.actionId === action.id;
+                return <button type="button" key={`${visual.sceneId}-${action.id}`} className={`editor-motion-clip ${selected ? "selected" : ""}`} style={{ left: `${left}%`, width: `${width}%` }} aria-pressed={selected} aria-label={`Motion Beat scene ${visual.sceneNumber}: ${beat.description}, mulai ${beat.startTimeSec.toFixed(1)} detik, durasi ${beat.durationSec.toFixed(1)} detik. Seret atau gunakan panah untuk menggeser waktu.`} title={`${beat.description} · ${beat.startTimeSec.toFixed(1)}s + ${beat.durationSec.toFixed(1)}s`} onClick={() => selectMotionBeat(visual.sceneId, action.id)}
+                  onPointerDown={(event) => {
+                    if (visual.sceneId !== selectedScene.sceneId || !event.isPrimary || event.button !== 0) return;
+                    const railWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+                    if (!railWidth) return;
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    motionClipGesture.current = { pointerId: event.pointerId, actionId: action.id, startX: event.clientX, railWidth, startTimeSec: beat.startTimeSec, timingScale };
+                  }}
+                  onPointerUp={(event) => {
+                    const active = motionClipGesture.current;
+                    if (!active || active.pointerId !== event.pointerId || active.actionId !== action.id) return;
+                    motionClipGesture.current = null;
+                    const deltaX = event.clientX - active.startX;
+                    if (Math.abs(deltaX) > 4) editMotionBeat(action.id, { startTimeSec: active.startTimeSec + deltaX / active.railWidth * previewDurationSec / active.timingScale });
+                  }}
+                  onPointerCancel={(event) => { if (motionClipGesture.current?.pointerId === event.pointerId) motionClipGesture.current = null; }}
+                  onKeyDown={(event) => {
+                    if (visual.sceneId !== selectedScene.sceneId || event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                    event.preventDefault();
+                    const delta = event.shiftKey ? 1 / FPS : 0.1;
+                    editMotionBeat(action.id, { startTimeSec: beat.startTimeSec + (event.key === "ArrowLeft" ? -delta : delta) });
+                  }}><span>{beat.description}</span></button>;
+              });
+            })}
+            <i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/>
+          </div></div>
           {audio && <div className="editor-track-row"><span>Narasi</span><div className="editor-track-rail"><div className="editor-audio-clip" style={{ left: 0, width: `${Math.min(100, audio.durationSec / previewDurationSec * 100)}%` }} title={audio.name}>{audio.name}</div></div></div>}
           {captionsAvailable && <div className="editor-track-row"><span>Subtitle</span><div className="editor-track-rail">{research.scenes.map((scene) => {
             const span = sceneSpan(scene);
@@ -363,6 +478,17 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
                 <SceneThumbnail scene={sourceResearchScene} storyboard={storyboard} preset={research.visualPreset}/>
                 <div><strong>{illustrationStatus}</strong>{needsArtwork ? <small>Visual draft tersedia; belum menjadi ilustrasi utama.</small> : <small>{selectedScene.approved ? "Versi visual ini telah disetujui." : "Tinjau gambar, crop, dan akurasi sebelum approval."}</small>}</div>
               </div>
+              {storyboard.visualWorld ? <>
+                <div className="editor-info-box"><strong>Visual World aktif · {storyboard.visualWorld.elements.length} stable layer</strong><span>{storyboard.visualWorld.name}. Semua scene merender komposisi dasar sama; overlay gerak disimpan per beat.{storyboard.visualWorld.composition.layers.every((layer) => layer.nodes.every((node) => node.type !== "image" && (node.type !== "group" || node.children.every((child) => child.type !== "image")))) ? " Draft prosedural, bukan ilustrasi Flow final." : ""}</span></div>
+                <details className="editor-advanced">
+                  <summary>Layer & peran Visual World</summary>
+                  <ul>{storyboard.visualWorld.elements.map((element) => {
+                    const layer = storyboard.visualWorld!.composition.layers.find((item) => item.id === element.layerId)!;
+                    return <li key={element.layerId}><strong>{element.layerId}</strong> · {element.semanticRole.replaceAll("-", " ")} · {layer.nodes.length} node</li>;
+                  })}</ul>
+                </details>
+              </>
+                : sceneImages.length > 0 && <button type="button" className="button button-light full-button" onClick={() => onSetSharedVisualWorld(selectedScene.sceneId)} disabled={busy}>Gunakan ilustrasi ini untuk semua scene</button>}
               {needsArtwork && selectedScene.illustrationWorkflow !== "google-flow" && <button type="button" className="button button-primary full-button" onClick={() => chooseIllustrationWorkflow("google-flow")}><ImagePlus size={15} aria-hidden="true"/> Buat dengan Google Flow</button>}
             </section>
 
@@ -405,6 +531,33 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
           </>}
 
           {tab === "motion" && <>
+            <section className="editor-motion-beats" aria-label="Motion Beats scene">
+              <div className="editor-info-box"><strong>{selectedScene.motionActions.length} Motion Beat</strong><span>Beat memakai target/layer stabil dan waktu relatif scene. Timing narasi tetap perkiraan kecuali ada alignment kata.</span></div>
+              <button type="button" className="button button-light full-button" onClick={addMotionBeat} disabled={!selectedImage || selectedScene.motionActions.length >= 12}><Plus size={14} aria-hidden="true"/> Tambah beat jalur magma</button>
+              {!selectedMotionAction && <small>Impor ilustrasi dasar untuk menambah overlay jalur yang bisa dikoreksi di canvas.</small>}
+              {selectedMotionAction && selectedBeat && <>
+                <label className="editor-field">Kejadian<input maxLength={180} value={selectedMotionAction.description ?? selectedBeat.description} onChange={(event) => editMotionBeat(selectedMotionAction.id, { description: event.target.value })}/></label>
+                <label className="editor-field">Layer target<select value={selectedBeat.targetLayerId} onChange={(event) => {
+                  const layer = selectedScene.composition.layers.find((item) => item.id === event.target.value);
+                  if (!layer?.nodes.length) return;
+                  const role = storyboard.visualWorld?.elements.find((element) => element.layerId === layer.id)?.semanticRole ?? layer.id.replaceAll("-", " ");
+                  editMotionBeat(selectedMotionAction.id, { targetLayerId: layer.id, targetNode: `${layer.id}/0`, targetRole: role });
+                }}>{selectedScene.composition.layers.map((layer) => <option key={layer.id} value={layer.id}>{layer.id} · {storyboard.visualWorld?.elements.find((element) => element.layerId === layer.id)?.semanticRole ?? layer.nodes[0]?.type ?? "layer"}</option>)}</select></label>
+                <div className="editor-motion-timing-fields">
+                  <label className="editor-field">Mulai · detik<input type="number" min="0" max={selectedScene.durationSec} step="0.1" value={selectedBeat.startTimeSec.toFixed(1)} onChange={(event) => editMotionBeat(selectedMotionAction.id, { startTimeSec: Number(event.target.value) })}/></label>
+                  <label className="editor-field">Durasi · detik<input type="number" min="0.1" max={selectedScene.durationSec} step="0.1" value={selectedBeat.durationSec.toFixed(1)} onChange={(event) => editMotionBeat(selectedMotionAction.id, { durationSec: Number(event.target.value) })}/></label>
+                </div>
+                <label className="editor-field">Preset animasi<select value={selectedMotionAction.pathStyle ?? "particles"} onChange={(event) => editMotionBeat(selectedMotionAction.id, { pathStyle: event.target.value as NonNullable<MotionBeat["pathStyle"]> })}><option value="magma">Magma glow</option><option value="lava">Lava reveal</option><option value="smoke">Smoke puffs</option><option value="highlight">Highlight path</option><option value="particles">Particles</option></select></label>
+                <label className="editor-field">Easing<select value={selectedMotionAction.easing} onChange={(event) => editMotionBeat(selectedMotionAction.id, { easing: event.target.value as MotionBeat["easing"] })}><option value="linear">Linear</option><option value="easeIn">Masuk perlahan</option><option value="easeOut">Keluar perlahan</option><option value="easeInOut">Masuk-keluar</option></select></label>
+                <div className="editor-info-box"><strong>{selectedMotionAction.kind.replaceAll("-", " ")} · {selectedBeat.targetRole}</strong><span>{selectedMotionAction.path?.length ?? 0} titik jalur{selectedBeat.motionPathRef ? ` · ${selectedBeat.motionPathRef}` : ""}. Seret titik pada canvas; panah keyboard juga bisa. Perubahan tersimpan bersama scene.</span></div>
+                {selectedMotionAction.path && <button type="button" className="button button-light full-button" onClick={() => setSelectedMotionBeatRef({ sceneId: selectedScene.sceneId, actionId: selectedMotionAction.id })}>Pilih jalur di canvas</button>}
+                <button type="button" className="button button-light full-button editor-motion-delete" onClick={() => {
+                  const remaining = selectedScene.motionActions.filter((action) => action.id !== selectedMotionAction.id);
+                  onChange(selectedScene.sceneId, { motionActions: remaining, motionStatus: remaining.length ? "ready_for_review" : "static", motionSummary: remaining.length ? `${remaining.length} Motion Beat tersimpan.` : "Belum ada Motion Beat." });
+                  setSelectedMotionBeatRef(null);
+                }}><Trash2 size={14} aria-hidden="true"/> Hapus beat</button>
+              </>}
+            </section>
             <label className="editor-field">Preset gerak<select value={motionPreset} onChange={(event) => setMotionPreset(event.target.value as MotionPreset)}><option value="static">Statis</option><option value="gentle">Gerak lembut</option><option value="pan-zoom">Pan & zoom</option><option value="process">Animasi proses</option><option value="particles">Aliran partikel</option></select></label>
             <button type="button" className="button button-primary full-button" onClick={applyMotion} disabled={busy}>Terapkan gerak</button>
             <div className="editor-info-box"><strong>{selectedScene.motionActions.length ? selectedScene.motionSummary : "Tidak ada gerak tambahan"}</strong><span>{selectedScene.motionActions.length} animasi · {selectedScene.motionTiming === "approximate" ? "waktu perkiraan" : "selaras narasi"}. Raster bergerak sebagai satu gambar.</span></div>
@@ -449,8 +602,9 @@ function sceneHasPrimaryIllustration(scene: VisualStoryboardScene) {
 
 const SceneThumbnail = React.memo(function SceneThumbnail({ scene, storyboard, preset }: { scene: ResearchPackage["scenes"][number]; storyboard: VisualStoryboard; preset: ResearchPackage["visualPreset"] }) {
   const visual = storyboard.scenes.find((item) => item.sceneId === scene.id)!;
+  const composition = storyboard.visualWorld?.composition ?? visual.composition;
   return <svg className="editor-scene-thumbnail" viewBox="0 0 1080 1920" role="img" aria-label={`Ilustrasi scene: ${scene.onScreenText}`}>
-    <VisualCompositionView scene={scene} composition={visual.composition} style={visualStyles[preset]} preset={preset} frame={Math.floor(scene.endSec * FPS * .4)} progress={.4}/>
+    <VisualCompositionView scene={scene} composition={composition} style={visualStyles[preset]} preset={preset} frame={Math.floor(scene.endSec * FPS * .4)} progress={.4}/>
     <rect x="50" y="40" width="980" height="400" rx="30" fill={storyboard.palette.canvas} opacity=".94"/>
     <foreignObject x="80" y="82" width="920" height="320"><div className="editor-thumbnail-headline">{visual.headline}</div></foreignObject>
   </svg>;

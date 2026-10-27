@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1.0",
+  "id": "volcano-formation-id",
+  "title": "Bagaimana Gunung Api Terbentuk dan Meletus?",
+  "category": "Sains & Antariksa",
+  "visualPreset": "cinematic-parallax",
+  "language": "id-ID",
+  "targetDurationSec": 30,
+  "aspectRatio": "9:16",
+  "narration": "Gunung api tumbuh dari material erupsi—berbeda dari pegunungan lipatan akibat tumbukan lempeng. Batuan meleleh sebagian; magma terkumpul sementara di satu atau beberapa zona penyimpanan. Sebagian magma naik lewat retakan dan saluran, didorong daya apung serta tekanan gas. Tekanan turun, gas mengembang. Magma mengalir sebagai lava atau meletus eksplosif; hasilnya bergantung pada sifat magma dan gas. Lava membeku; abu dan fragmen mengendap. Endapan berulang dapat membangun lapisan. Ini skema sederhana: sistem dan bentuk gunung api nyata sangat beragam.",
+  "references": [
+    {
+      "id": "usgs-about-volcanoes",
+      "title": "About Volcanoes",
+      "publisher": "U.S. Geological Survey",
+      "url": "https://www.usgs.gov/programs/VHP/about-volcanoes",
+      "checkedAt": "2026-10-27"
+    },
+    {
+      "id": "usgs-how-volcanoes-erupt",
+      "title": "How Do Volcanoes Erupt?",
+      "publisher": "U.S. Geological Survey",
+      "url": "https://www.usgs.gov/faqs/how-do-volcanoes-erupt",
+      "checkedAt": "2026-10-27"
+    },
+    {
+      "id": "usgs-volcanism-tectonic-settings",
+      "title": "Volcanism in a Plate Tectonics Perspective",
+      "publisher": "U.S. Geological Survey",
+      "url": "https://pubs.usgs.gov/gip/19/downloads/Appendixes/I_Volcanism%20in%20a%20Plate%20Tectonics%20Perspective.pdf",
+      "checkedAt": "2026-10-27"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "volcano-01-introduction",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 5,
+      "narrationText": "Gunung api tumbuh dari material erupsi—berbeda dari pegunungan lipatan akibat tumbukan lempeng.",
+      "onScreenText": "GUNUNG API PUNYA ASAL BERBEDA",
+      "templateId": "volcano",
+      "visualDescription": "Satu gunung api dan penampang geologi menjadi visual world vertikal yang konsisten; tampilkan reservoir dan conduit kosong sebagai dasar untuk overlay proses.",
+      "motionCues": ["fadeIn", "zoom"],
+      "sfxCues": [],
+      "referenceIds": ["usgs-about-volcanoes"]
+    },
+    {
+      "id": "volcano-02-magma-storage",
+      "order": 2,
+      "startSec": 5,
+      "endSec": 10,
+      "narrationText": "Batuan meleleh sebagian; magma terkumpul sementara di satu atau beberapa zona penyimpanan.",
+      "onScreenText": "MAGMA TERSIMPAN DI KEDALAMAN",
+      "templateId": "volcano",
+      "visualDescription": "Pertahankan gunung dan potongan lapisan yang sama; nyalakan overlay glow hanya di zona penyimpanan bawah permukaan.",
+      "motionCues": ["reveal", "pulse"],
+      "sfxCues": [],
+      "referenceIds": ["usgs-about-volcanoes", "usgs-volcanism-tectonic-settings"]
+    },
+    {
+      "id": "volcano-03-rising-magma",
+      "order": 3,
+      "startSec": 10,
+      "endSec": 15,
+      "narrationText": "Sebagian magma naik lewat retakan dan saluran, didorong daya apung serta tekanan gas.",
+      "onScreenText": "MAGMA BERGERAK KE ATAS",
+      "templateId": "volcano",
+      "visualDescription": "Gunakan visual world identik; overlay magma bergerak deterministik dari zona penyimpanan, mengikuti conduit menuju kawah.",
+      "motionCues": ["reveal", "pulse"],
+      "sfxCues": ["rumble"],
+      "referenceIds": ["usgs-about-volcanoes"]
+    },
+    {
+      "id": "volcano-04-eruption",
+      "order": 4,
+      "startSec": 15,
+      "endSec": 20,
+      "narrationText": "Tekanan turun, gas mengembang. Magma mengalir sebagai lava atau meletus eksplosif; hasilnya bergantung pada sifat magma dan gas.",
+      "onScreenText": "ERUPSI BISA BERBEDA",
+      "templateId": "volcano",
+      "visualDescription": "Pada visual world yang sama, animasikan jalur menuju kawah; tunjukkan keluarnya lava, dengan partikel letusan hanya bila dipilih sebagai overlay terpisah.",
+      "motionCues": ["reveal", "pulse"],
+      "sfxCues": ["rumble"],
+      "referenceIds": ["usgs-how-volcanoes-erupt"]
+    },
+    {
+      "id": "volcano-05-deposits",
+      "order": 5,
+      "startSec": 20,
+      "endSec": 25,
+      "narrationText": "Lava membeku; abu dan fragmen mengendap. Endapan berulang dapat membangun lapisan.",
+      "onScreenText": "ENDAPAN MEMBANGUN LAPISAN",
+      "templateId": "volcano",
+      "visualDescription": "Pertahankan gunung yang sama; tampilkan overlay lava lalu garis lapisan endapan, tanpa memisahkan isi raster menjadi objek palsu.",
+      "motionCues": ["reveal", "fadeIn"],
+      "sfxCues": [],
+      "referenceIds": ["usgs-about-volcanoes"]
+    },
+    {
+      "id": "volcano-06-conclusion",
+      "order": 6,
+      "startSec": 25,
+      "endSec": 30,
+      "narrationText": "Ini skema sederhana: sistem dan bentuk gunung api nyata sangat beragam.",
+      "onScreenText": "SETIAP GUNUNG API BERBEDA",
+      "templateId": "volcano",
+      "visualDescription": "Kembali ke visual world utuh yang sama; beri ruang headline dan subtitle, lalu tahan komposisi untuk kesimpulan.",
+      "motionCues": ["fadeIn", "zoom"],
+      "sfxCues": [],
+      "referenceIds": ["usgs-about-volcanoes", "usgs-how-volcanoes-erupt"]
+    }
+  ]
+}

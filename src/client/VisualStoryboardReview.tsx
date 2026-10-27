@@ -178,7 +178,6 @@ export function VisualStoryboardReview({ research, storyboard, gate, saved, busy
         const reference = previousImageScene && usePreviousReference[scene.sceneId] ? {
           sceneNumber: previousImageScene.scene.sceneNumber,
           name: previousImageScene.asset?.name ?? `Built-in ${previousImageScene.image.asset}`,
-          prompt: previousImageScene.asset?.prompt,
           style: previousImageScene.asset?.style ?? "clean-flat-2d",
         } : undefined;
         const illustrationPrompt = promptsByScene[scene.sceneId] ?? buildIllustrationPrompt({ research, storyboard, scene, previousReference: reference });

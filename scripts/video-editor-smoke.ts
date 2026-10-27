@@ -411,6 +411,11 @@ try {
   const singleImportedProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
   assert.deepEqual(singleImportedProject.visualStoryboard.scenes[1].composition, mountainProject.visualStoryboard.scenes[1].composition, "single-scene import leaves other scene composition unchanged");
   assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-scene-item:first-child .editor-scene-thumbnail image").length > 0), "single-scene import updates sidebar thumbnail immediately");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].some((button) => button.textContent?.includes("Gunakan ilustrasi ini untuk semua scene") && !button.disabled)), "shared Visual World action is enabled after upload");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Gunakan ilustrasi ini untuk semua scene"))?.click());
+  const sharedWorldConfirmation = await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "optional shared Visual World confirmation", 5).then(() => true).catch(() => false);
+  if (sharedWorldConfirmation) await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Visual World aktif"))), "shared Visual World is active before per-scene batch import");
 
   await waitFor(() => page.evaluate(() => {
     const button = [...document.querySelectorAll<HTMLButtonElement>(".google-flow-project-actions button")].find((item) => item.textContent?.includes("Import Semua Ilustrasi"));
@@ -458,6 +463,12 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "confirm batch replacement for existing artwork");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-batch-error")?.textContent?.trim())), "batch keeps per-file failure visible after successful files apply", 180);
+  const batchProgress = await page.evaluate(() => ({
+    text: document.querySelector(".google-flow-batch-progress")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    value: document.querySelector<HTMLElement>('.google-flow-batch-progress [role="progressbar"]')?.getAttribute("aria-valuenow") ?? "",
+  }));
+  assert.equal(batchProgress.value, "100", "completed partial batch exposes accessible completed progress");
+  assert.match(batchProgress.text, /3 berhasil · 1 gagal dari 4/);
   const partialBatch = await page.evaluate(() => ({ remainingRows: document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head)").length, error: document.querySelector(".google-flow-batch-error")?.textContent?.trim() ?? "" }));
   assert.equal(partialBatch.remainingRows, 2, "successful files leave review list while skipped and failed files remain");
   assert.match(partialBatch.error, /scene-04-corrupt\.png/);
@@ -472,6 +483,7 @@ try {
   assert.equal(batchSaveState.state, "Tersimpan", `batch scene artwork persists; toast=${batchSaveState.message}`);
   const flowImportedProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
   const importedFirstThree = flowImportedProject.visualStoryboard.scenes.slice(0, 3);
+  assert.equal(flowImportedProject.visualStoryboard.visualWorld, undefined, "per-scene Flow batch detaches shared Visual World before saving distinct scene compositions");
   assert.ok(importedFirstThree.every((scene: { flowStatus: string; composition: { layers: Array<{ nodes: Array<{ type: string; asset?: string }> }> } }) => scene.flowStatus === "illustration-imported" && scene.composition.layers.flatMap((layer) => layer.nodes).some((node) => node.type === "image" && node.asset?.startsWith("upload-"))), "all three POC scenes persist raster assets as imported artwork");
   assert.deepEqual(importedFirstThree.map((scene: { flowPrompt?: string }) => Boolean(scene.flowPrompt)), [true, true, true], "scene-specific prompts persist with imported raster artwork");
   await page.evaluate(() => {
@@ -486,6 +498,49 @@ try {
   assert.deepEqual(flowAfterReload.visualStoryboard.scenes.slice(0, 3).map((scene: { flowStatus: string }) => scene.flowStatus), ["illustration-imported", "illustration-imported", "illustration-imported"], "imported Flow fixture scene state survives project reload");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".editor-canvas-shell image").length > 0), true, "reloaded editor canvas renders persisted raster illustration");
   await captureViewport("mountain-google-flow-reloaded.png");
+
+  await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[0]?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-inspector-scene")?.textContent?.includes("SCENE 01") ?? false), "return to imported scene for shared Visual World test");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Gunakan ilustrasi ini untuk semua scene"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "shared Visual World warns before replacing imported scenes");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((node) => node.textContent?.includes("Visual World aktif"))), "shared Visual World applies to all scenes");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "shared Visual World saves");
+  const sharedWorldSaved = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  assert.ok(sharedWorldSaved.visualStoryboard.visualWorld?.elements.length > 0, "Visual World layer manifest persists with project");
+  assert.ok(sharedWorldSaved.visualStoryboard.scenes.every((scene: { composition: unknown }) => JSON.stringify(scene.composition) === JSON.stringify(sharedWorldSaved.visualStoryboard.visualWorld.composition)), "every persisted scene references the same base composition");
+
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Tambah beat jalur magma"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector('[data-motion-path-point="0"]') !== null), "authored Motion Beat exposes editable canvas handles");
+  const initialPoint = await page.evaluate(() => document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')?.getAttribute("aria-valuetext") ?? "");
+  await page.evaluate(() => {
+    const handle = document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')!;
+    handle.focus();
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  });
+  await waitFor(() => page.evaluate((before) => document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')?.getAttribute("aria-valuetext") !== before, initialPoint), "keyboard edits deterministic path coordinates");
+  const startBeforeTimelineNudge = await page.evaluate(() => document.querySelector<HTMLInputElement>('.editor-motion-beats input[type="number"]')?.value ?? "");
+  await page.evaluate(() => {
+    const clip = document.querySelector<HTMLButtonElement>(".editor-motion-clip")!;
+    clip.focus();
+    clip.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  });
+  await waitFor(() => page.evaluate((before) => document.querySelector<HTMLInputElement>('.editor-motion-beats input[type="number"]')?.value !== before, startBeforeTimelineNudge), "timeline keyboard nudge updates Motion Beat timing");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "Motion Beat path and timing save");
+  const motionBeatSaved = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  const persistedBeat = motionBeatSaved.visualStoryboard.scenes[0].motionActions[0];
+  assert.ok(persistedBeat?.path?.length >= 2 && persistedBeat.path[0].x !== 540, "canvas keyboard edit persists in authored path");
+  assert.equal(persistedBeat.startFrame, 40, "timeline keyboard nudge persists scene-relative start frame");
+  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before Visual World reload check");
+  await clickProject(mountainProject.researchPackage.title);
+  const sharedWorldAfterReload = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  assert.ok(sharedWorldAfterReload.visualStoryboard.visualWorld?.elements.length > 0, "Visual World survives editor reload");
+  assert.equal(sharedWorldAfterReload.visualStoryboard.scenes[0].motionActions[0].startFrame, 40, "edited Motion Beat survives editor reload");
+  assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length > 0), "reloaded editor timeline shows persisted Motion Beat");
 
   await page.goto({ url: viteUrl, timeout: 30_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before export flow");
@@ -553,7 +608,54 @@ try {
   const mp4FramePath = path.join(evidenceDir, "mountain-google-flow-mp4-frame.png");
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", mp4Path, "-frames:v", "1", "-y", mp4FramePath]);
   assert.ok((await readFile(mp4FramePath)).length > 1000, "rendered MP4 decodes to a non-empty image frame");
-  console.log(`PASS: Remotion editor scene switch, scrub, Flow prompt/style-lock/import/batch/reload, raster transform/motion preview, approval, fact review, full preview, and MP4 with local raster fixture. Evidence: ${evidenceDir}`);
+
+  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample shortcut");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api"))), "Create Video sample shortcut");
+  const sampleOpened = await page.evaluate(() => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("Gunakan sample gunung api"));
+    button?.click();
+    return Boolean(button);
+  });
+  assert.equal(sampleOpened, true, "dashboard volcano sample button exists");
+  const volcanoTitle = "Bagaimana Gunung Api Terbentuk dan Meletus?";
+  await waitFor(() => page.evaluate((title) => document.querySelector<HTMLInputElement>(".video-editor-title input")?.value === title && Boolean(document.querySelector(".video-editor-v2")), volcanoTitle), "volcano sample opens directly in Video Editor V2");
+  const volcanoProject = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<{ id: string; researchPackage: { title: string } }>) => projects.find((item) => item.researchPackage.title === volcanoTitle));
+  assert.ok(volcanoProject, "dashboard sample shortcut creates a saved volcano project");
+  projectIds.push(volcanoProject!.id);
+  const volcanoEditor = await page.evaluate(() => ({
+    scenes: document.querySelectorAll(".editor-scene-item").length,
+    beats: document.querySelectorAll(".editor-motion-clip").length,
+    world: [...document.querySelectorAll(".editor-info-box strong")].find((item) => item.textContent?.includes("Visual World aktif"))?.textContent?.trim() ?? "",
+    layers: [...document.querySelectorAll(".editor-advanced")].find((item) => item.querySelector("summary")?.textContent?.includes("Layer & peran Visual World"))?.querySelectorAll("li").length ?? 0,
+    draftNotice: [...document.querySelectorAll(".editor-info-box span")].some((item) => item.textContent?.includes("Draft prosedural, bukan ilustrasi Flow final.")),
+  }));
+  assert.deepEqual(volcanoEditor, { scenes: 6, beats: 6, world: "Visual World aktif · 11 stable layer", layers: 11, draftNotice: true }, `sample opens with shared draft world, layer roles, and six beats: ${JSON.stringify(volcanoEditor)}`);
+  await captureViewport("volcano-sample-visual-world-six-motion-beats.png");
+  await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-motion-clip")[2]?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector('[data-motion-path-point="0"]') !== null), "volcano Motion Beat opens path handles without Flow artwork");
+  const volcanoPathStart = await page.evaluate(() => document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')?.getAttribute("aria-valuetext") ?? "");
+  await page.evaluate(() => {
+    const handle = document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')!;
+    handle.focus();
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  });
+  await waitFor(() => page.evaluate((before) => document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')?.getAttribute("aria-valuetext") !== before, volcanoPathStart), "volcano draft path supports keyboard editing");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "volcano Motion Beat edit saves");
+  const volcanoSaved = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`).then((response) => response.json());
+  assert.equal(volcanoSaved.visualStoryboard.scenes.reduce((count: number, scene: { motionActions: unknown[] }) => count + scene.motionActions.length, 0), 6, "all six sample beats persist");
+  assert.ok(volcanoSaved.visualStoryboard.scenes.every((scene: { composition: unknown }) => JSON.stringify(scene.composition) === JSON.stringify(volcanoSaved.visualStoryboard.visualWorld.composition)), "all sample scenes persist same shared world");
+  assert.notEqual(volcanoSaved.visualStoryboard.scenes[2].motionActions[0].path[0].x, 535, "sample path edit persists without an image asset");
+  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample reload");
+  await clickProject(volcanoTitle);
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length === 6), "reloaded volcano editor shows all six Motion Beats");
+  const volcanoReloaded = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`).then((response) => response.json());
+  assert.equal(volcanoReloaded.visualStoryboard.scenes[2].motionActions[0].path[0].x, volcanoSaved.visualStoryboard.scenes[2].motionActions[0].path[0].x, "edited volcano path survives project reload");
+  assert.ok(await page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Visual World aktif"))), "shared draft Visual World remains visible after reload");
+  console.log(`PASS: Remotion editor scene switch, scrub, Flow prompt/style-lock/import/batch/reload, shared Visual World persistence, Motion Beat timeline/path editing, raster transform/motion preview, approval, fact review, full preview, MP4 fixture, and volcano sample direct-to-editor persistence. Evidence: ${evidenceDir}`);
 } finally {
   for (const projectId of projectIds.reverse()) {
     try { await fetch(`${apiUrl}/api/projects/${projectId}`, { method: "DELETE" }); } catch { /* isolated test server may already be stopped */ }

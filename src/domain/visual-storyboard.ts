@@ -139,6 +139,29 @@ export const visualStoryboardSceneSchema = z.object({
   return { ...scene, sceneToken, recommendedFilename: recommendedGoogleFlowFilename({ ...scene, sceneToken }), flowStatus };
 });
 
+export const visualWorldRoles = ["background", "mountain-exterior", "ground-cross-section", "magma-reservoir", "magma-conduit", "surface-crater", "lava", "smoke", "particles", "educational-overlay", "illustration-base", "other"] as const;
+export const visualWorldSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
+  name: z.string().trim().min(1).max(120),
+  sourceSceneId: z.string().trim().min(1).max(100),
+  sourceAssetId: z.string().trim().min(1).max(120).optional(),
+  composition: visualCompositionSchema,
+  elements: z.array(z.object({
+    layerId: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
+    semanticRole: z.enum(visualWorldRoles),
+  }).strict()).min(1).max(12),
+}).strict().superRefine((world, ctx) => {
+  if (world.sourceAssetId && !compositionNodes(world.composition).some((node) => node.type === "image" && node.asset === world.sourceAssetId)) {
+    ctx.addIssue({ code: "custom", message: "Source asset harus menjadi image node dalam Visual World", path: ["sourceAssetId"] });
+  }
+  const layerIds = world.composition.layers.map((layer) => layer.id);
+  const elementIds = world.elements.map((element) => element.layerId);
+  if (new Set(elementIds).size !== elementIds.length) ctx.addIssue({ code: "custom", message: "Visual World layer ID harus unik", path: ["elements"] });
+  if (layerIds.length !== elementIds.length || layerIds.some((id) => !elementIds.includes(id))) {
+    ctx.addIssue({ code: "custom", message: "Visual World harus mendeklarasikan setiap stable layer ID tepat satu kali", path: ["elements"] });
+  }
+});
+
 export const visualStoryboardSchema = z.object({
   schemaVersion: z.literal("1.0"),
   styleId: z.literal("clean-flat-2d"),
@@ -146,6 +169,7 @@ export const visualStoryboardSchema = z.object({
   typographyIntent: z.object({ heading: z.string().min(1).max(120), body: z.string().min(1).max(120), hierarchy: z.string().min(1).max(240) }).strict(),
   headlineStrategy: z.enum(["short-concept-first", "cause-then-effect"]),
   styleLock: googleFlowStyleLockSchema.default(defaultGoogleFlowStyleLock),
+  visualWorld: visualWorldSchema.optional(),
   reusableWorldObjects: z.array(objectIdSchema).max(visualObjectIds.length),
   scenes: z.array(visualStoryboardSceneSchema).min(1).max(30),
 }).strict().superRefine((storyboard, ctx) => {
@@ -154,6 +178,9 @@ export const visualStoryboardSchema = z.object({
   storyboard.scenes.forEach((scene, index) => {
     if (sceneIds.has(scene.sceneId)) ctx.addIssue({ code: "custom", message: "Scene ID storyboard harus unik", path: ["scenes", index, "sceneId"] });
     sceneIds.add(scene.sceneId);
+    if (storyboard.visualWorld && JSON.stringify(scene.composition) !== JSON.stringify(storyboard.visualWorld.composition)) {
+      ctx.addIssue({ code: "custom", message: "Semua scene Visual World harus memakai komposisi dasar yang sama", path: ["scenes", index, "composition"] });
+    }
     const objects = new Set<string>();
     scene.objects.forEach((object, objectIndex) => {
       if (objects.has(object.objectId)) ctx.addIssue({ code: "custom", message: "Object tidak boleh berulang dalam satu scene", path: ["scenes", index, "objects", objectIndex] });
@@ -172,6 +199,33 @@ export const visualStoryboardSchema = z.object({
 
 export type VisualStoryboard = z.infer<typeof visualStoryboardSchema>;
 export type VisualStoryboardScene = VisualStoryboard["scenes"][number];
+export type VisualWorld = z.infer<typeof visualWorldSchema>;
+
+export function buildVisualWorld(name: string, sourceScene: VisualStoryboardScene): VisualWorld {
+  const image = compositionNodes(sourceScene.composition).find((node) => node.type === "image");
+  return visualWorldSchema.parse({
+    id: "shared-visual-world",
+    name,
+    sourceSceneId: sourceScene.sceneId,
+    ...(image?.type === "image" ? { sourceAssetId: image.asset } : {}),
+    composition: sourceScene.composition,
+    elements: sourceScene.composition.layers.map((layer) => {
+      const id = layer.id.toLocaleLowerCase("id-ID");
+      const hasImage = layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"));
+      const semanticRole = id.includes("background") || id.includes("sky") ? "background"
+        : id.includes("mountain") || id.includes("volcano") || id.includes("cone") ? "mountain-exterior"
+          : id.includes("cross-section") || id.includes("geology") || id.includes("ground") || id.includes("rock") ? "ground-cross-section"
+            : id.includes("reservoir") || id.includes("chamber") ? "magma-reservoir"
+              : id.includes("conduit") || id.includes("vent") ? "magma-conduit"
+                : id.includes("crater") ? "surface-crater"
+                  : id.includes("lava") ? "lava"
+                    : id.includes("smoke") || id.includes("ash") ? "smoke"
+                      : id.includes("particle") ? "particles"
+                        : hasImage ? "illustration-base" : "other";
+      return { layerId: layer.id, semanticRole };
+    }),
+  });
+}
 
 export function illustrationSourceForScene(scene: Pick<VisualStoryboardScene, "illustrationSource" | "compositionSource" | "composition">): NonNullable<VisualStoryboardScene["illustrationSource"]> {
   if (scene.illustrationSource) return scene.illustrationSource;
@@ -282,6 +336,7 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
     typographyIntent: { heading: "Sans-serif tebal, kontras tinggi", body: "Sans-serif bersih untuk caption pendek", hierarchy: "Headline 1–2 baris; objek ilustrasi jadi fokus; narasi tetap caption." },
     headlineStrategy: "short-concept-first",
     styleLock: previous?.styleLock ?? defaultGoogleFlowStyleLock,
+    ...(previous?.visualWorld ? { visualWorld: previous.visualWorld } : {}),
     reusableWorldObjects,
     scenes,
   });
@@ -316,7 +371,8 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     if (visual.headline.length > 72) add(visual.sceneId, "Headline terlalu panjang untuk dibaca pada layar ponsel.");
     if (!visual.visualSummary.trim()) add(visual.sceneId, "Ringkasan visual kosong.");
     const illustrationSource = illustrationSourceForScene(visual);
-    const nodes = compositionNodes(visual.composition);
+    const composition = storyboard.visualWorld?.composition ?? visual.composition;
+    const nodes = compositionNodes(composition);
     const imageNodes = nodes.filter((node) => node.type === "image");
     const motionVectors = nodes.filter((node) => node.type !== "image" && node.type !== "text"
       && !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
@@ -346,7 +402,7 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     }
     if (imageNodes.length > 0 && !visual.authoringConfirmed) add(visual.sceneId, "Tinjau semantik, crop, dan provenance gambar lalu konfirmasi sebelum approval.");
     if (visual.authoringStatus === "needs_visual_authoring") add(visual.sceneId, `needs_visual_authoring: ${visual.missingVisuals.join(", ") || "komposisi belum menjelaskan konsep inti secara memadai"}.`);
-    if (visual.layout === "two-column-object-grid" || hasGenericIconCards(visual.composition)) add(visual.sceneId, "Scene masih memakai kartu ikon generik; author ilustrasi utuh.");
+    if (visual.layout === "two-column-object-grid" || hasGenericIconCards(composition)) add(visual.sceneId, "Scene masih memakai kartu ikon generik; author ilustrasi utuh.");
     const legacyMotionUnchanged = visual.motionStatus === "not_prepared" && visual.motionActions.length === 0;
     if (visual.approved && visual.approvedFingerprint !== visualApprovalFingerprint(visual)
       && !(legacyMotionUnchanged && visual.approvedFingerprint === legacyMotionApprovalFingerprint(visual))
@@ -356,7 +412,7 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     if (visual.motionStatus === "needs_review") reviewNotes.push(`Scene ${visual.sceneNumber}: Motion Plan dipertahankan setelah perubahan; tinjau ulang gerak.`);
     const motionDurationFrames = Math.floor(visual.durationSec * 30);
     visual.motionActions.forEach((action, actionIndex) => {
-      const target = motionTargetNode(visual.composition, action.targetNode);
+      const target = motionTargetNode(composition, action.targetNode);
       if (!target || action.startFrame + action.durationFrames > motionDurationFrames) add(visual.sceneId, `Motion action ${actionIndex + 1} memiliki target/timing tidak valid.`);
       if (target && !motionKeyframesWithinSafeCanvas(action, target)) add(visual.sceneId, `Motion action ${actionIndex + 1} keluar dari safe canvas.`);
     });
@@ -364,15 +420,15 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     if (visual.motionTiming === "approximate" && visual.motionActions.length) reviewNotes.push(`Scene ${visual.sceneNumber}: timing motion approximate berdasarkan durasi/narasi, bukan word-level audio alignment.`);
 
     const reviewFrame = Math.round(visual.durationSec * 15);
-    const layerMotions = new Map(visual.composition.layers.map((layer) => [layer.id, layerMotion(source?.motionPlan ?? [], layer.id, layer.depth, reviewFrame, 0.5)]));
-    const renderedBounds = renderedVisualBounds(visual.composition, research.visualPreset, { progress: 0.5, frame: reviewFrame, layerMotions });
+    const layerMotions = new Map(composition.layers.map((layer) => [layer.id, layerMotion(source?.motionPlan ?? [], layer.id, layer.depth, reviewFrame, 0.5)]));
+    const renderedBounds = renderedVisualBounds(composition, research.visualPreset, { progress: 0.5, frame: reviewFrame, layerMotions });
     const keyVisuals = nodes.filter((node) => node.type !== "text" && !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
     if (visual.objects.length === 0 && !visual.authoringConfirmed && visual.compositionSource !== "ai-vector" && imageNodes.length === 0) add(visual.sceneId, "Object plan belum menentukan konsep visual utama.");
     if (nodes.length > 32) add(visual.sceneId, "Komposisi terlalu padat untuk layar ponsel.");
     if (keyVisuals.length === 0) add(visual.sceneId, "Komposisi tidak memiliki ilustrasi yang terlihat.");
-    if (visual.visualFocus && !visual.authoringConfirmed && !compositionShowsObject(visual.composition, visual.visualFocus)) add(visual.sceneId, `Visual focus ${visualObjectLibrary[visual.visualFocus].label.toLocaleLowerCase("id-ID")} tidak tampak pada komposisi.`);
+    if (visual.visualFocus && !visual.authoringConfirmed && !compositionShowsObject(composition, visual.visualFocus)) add(visual.sceneId, `Visual focus ${visualObjectLibrary[visual.visualFocus].label.toLocaleLowerCase("id-ID")} tidak tampak pada komposisi.`);
     if (!visual.authoringConfirmed) for (const relationship of visual.relationships) {
-      if (!visualRelationshipIsVisible(relationship, visual.composition)) add(visual.sceneId, `Hubungan ${relationship.from} ${relationship.relation} ${relationship.to} belum tergambar.`);
+      if (!visualRelationshipIsVisible(relationship, composition)) add(visual.sceneId, `Hubungan ${relationship.from} ${relationship.relation} ${relationship.to} belum tergambar.`);
     }
     const bounds = keyVisuals.reduce((box, node) => {
       const rendered = renderedBounds.get(node);
@@ -380,7 +436,7 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     }, { left: 1080, top: 1920, right: 0, bottom: 0 });
     if ((bounds.right - bounds.left) * (bounds.bottom - bounds.top) < 120_000) add(visual.sceneId, "Ilustrasi utama terlalu kecil untuk frame ponsel.");
     const foregroundImageOutsideSafeArea = imageNodes.some((node) => {
-      const layer = visual.composition.layers.find((item) => item.nodes.some((entry) => entry === node));
+      const layer = composition.layers.find((item) => item.nodes.some((entry) => entry === node));
       if (layer && layer.depth <= 0.1) return false;
       const rendered = renderedBounds.get(node);
       return rendered && (rendered.top < 500 || rendered.bottom > 1510);
@@ -421,7 +477,8 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
       const layerPreference = visual.motionIntent === "particle-flow" ? ["river", "mineral", "charged-particles", "magnetic-field", "salt-ions"]
         : visual.motionIntent === "path-animation" ? ["rain", "runoff", "river", "water-vapor", "uv-rays", "volcano", "tectonic-plates"]
           : visual.motionIntent === "keyword-highlight" ? ["ozone", "salt-ions", "ocean"] : [];
-      const targetLayer = layerPreference.find((id) => visual.composition.layers.some((layer) => layer.id === id)) ?? "all";
+      const composition = storyboard.visualWorld?.composition ?? visual.composition;
+      const targetLayer = layerPreference.find((id) => composition.layers.some((layer) => layer.id === id)) ?? "all";
       const motionPlan = defaultMotionPlan(cues).map((plan, index) => ({
         ...plan,
         targetLayer: plan.cue === "fadeIn" || plan.cue === "zoom" ? "all" : targetLayer,
@@ -433,7 +490,7 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
         onScreenText: visual.headline,
         narrationText: visual.narrationText,
         visualDescription: visual.visualSummary,
-        visualComposition: visual.composition,
+        visualComposition: storyboard.visualWorld?.composition ?? visual.composition,
         motionActions: visual.motionActions,
         motionCues: cues,
         motionPlan,

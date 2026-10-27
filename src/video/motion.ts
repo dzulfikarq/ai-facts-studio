@@ -1,6 +1,6 @@
 import { interpolate, spring } from "remotion";
 import type { MotionCuePlan } from "../domain/visual-composition";
-import { motionActionProgress, motionActionValue, type MotionAction } from "../domain/motion-director";
+import { motionActionProgress, motionActionValue, motionPathProgress, type MotionAction } from "../domain/motion-director";
 
 export type LayerMotion = { opacity: number; translateX: number; translateY: number; scale: number; reveal: number };
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
@@ -48,6 +48,12 @@ export function sceneTransitionOpacity(plans: MotionCuePlan[], localFrame: numbe
   if (plans.some((plan) => plan.cue === "cut")) return 1;
   const dissolve = plans.find((plan) => plan.cue === "dissolve");
   return dissolve ? cueProgress(dissolve, localFrame) : 1;
+}
+
+export function carriedMotionProgress(sceneOrder: number, activationOrder: number, action: MotionAction | undefined, frame: number, fallback = 0) {
+  if (sceneOrder < activationOrder) return 0;
+  if (sceneOrder > activationOrder) return 1;
+  return action ? motionPathProgress(action, frame) : clamp01(fallback);
 }
 
 export function nodeMotion(actions: MotionAction[], targetNode: string, box: { x: number; y: number; width: number; height: number }, frame: number) {

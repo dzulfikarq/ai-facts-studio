@@ -7,7 +7,7 @@ import type { AnyZodObject } from "remotion";
 import { categories, motionCues, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
-import { applyVisualStoryboard, buildVisualStoryboard, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
@@ -23,6 +23,7 @@ import type { MotionPreparationJob } from "../domain/motion-preparation";
 import { planSceneMotion, type MotionIntensity } from "../domain/motion-director";
 import { durationInFrames } from "../domain/timeline";
 import { narrationScript } from "../domain/voice-timing";
+import { seedVolcanoVisualSample } from "../domain/volcano-visual-sample";
 import { previewInputProps } from "../video/video";
 import { VersionedVideo, type VideoProps } from "../video/root";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
@@ -30,7 +31,7 @@ import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
 import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
 import { VideoEditorV2 } from "./VideoEditorV2";
-import type { FlowBatchItem } from "./GoogleFlowPanel";
+import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
 import "./styles.css";
@@ -111,6 +112,33 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     throw error;
   }
   return body as T;
+}
+
+function apiWithUploadProgress<T>(url: string, body: FormData, onProgress: (progress: FlowBatchProgress) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let lastPercent = -1;
+    xhr.open("POST", url);
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        const percent = Math.round(event.loaded / event.total * 100);
+        if (percent !== lastPercent) { lastPercent = percent; onProgress({ stage: "uploading", percent }); }
+      }
+    });
+    xhr.upload.addEventListener("load", () => onProgress({ stage: "processing" }));
+    xhr.addEventListener("load", () => {
+      let response: Record<string, unknown> = {};
+      try { response = JSON.parse(xhr.responseText) as Record<string, unknown>; } catch { /* keep status fallback */ }
+      if (xhr.status >= 200 && xhr.status < 300) { resolve(response as T); return; }
+      const error = new Error(typeof response.error === "string" ? response.error : `Request gagal (${xhr.status})`) as Failure;
+      error.code = typeof response.code === "string" ? response.code : undefined;
+      error.issues = Array.isArray(response.issues) ? response.issues as Failure["issues"] : undefined;
+      reject(error);
+    });
+    xhr.addEventListener("error", () => reject(new Error("Koneksi terputus saat mengimpor batch.")));
+    xhr.addEventListener("abort", () => reject(new Error("Impor batch dibatalkan.")));
+    xhr.send(body);
+  });
 }
 
 const jsonRequest = (method: string, payload: unknown, signal?: AbortSignal): RequestInit => ({
@@ -484,10 +512,12 @@ function App() {
     if (!await saveBeforeLeavingWorkspace()) return;
     setBusy(true);
     try {
-      const researchPackage = await api<ResearchPackage>("/api/sample");
+      const researchPackage = await api<ResearchPackage>("/api/sample?topic=volcano-formation");
       const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage }));
+      const seeded = seedVolcanoVisualSample(created.visualStoryboard);
+      const prepared = await api<Project>(`/api/projects/${created.id}`, jsonRequest("PUT", { researchPackage: created.researchPackage, visualStoryboard: seeded }));
       await refresh();
-      await openProject(created.id);
+      await openProject(prepared.id, "Draft Visual World dan enam Motion Beat siap diuji. Ilustrasi Flow final belum tersedia.", true, "visual");
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }
@@ -577,6 +607,32 @@ function App() {
       ...project.visualStoryboard,
       scenes: project.visualStoryboard.scenes.map((scene) => scene.sceneId === sceneId ? nextScene : scene),
     };
+    if (project.visualStoryboard.visualWorld && compositionChanged && effectiveChange.composition) {
+      const source = nextScene;
+      const visualWorld = buildVisualWorld(project.visualStoryboard.visualWorld.name, source);
+      storyboard = {
+        ...storyboard,
+        visualWorld,
+        scenes: storyboard.scenes.map((scene) => {
+          return {
+            ...scene,
+            composition: effectiveChange.composition!,
+            compositionSource: source.compositionSource,
+            illustrationSource: source.illustrationSource,
+            illustrationWorkflow: source.illustrationWorkflow,
+            authoringConfirmed: false,
+            authoringStatus: "needs_review" as const,
+            approved: false,
+            approvedFingerprint: null,
+            motionActions: [],
+            motionStatus: "not_prepared" as const,
+            motionSummary: "Visual World berubah; buat ulang Motion Beat sebelum approval.",
+            flowStatus: "illustration-imported" as const,
+            warnings: [...scene.warnings.slice(0, 6), "Visual World berubah; tinjau ulang semua scene dan motion beat."],
+          };
+        }),
+      };
+    }
     if (effectiveChange.headline !== undefined || effectiveChange.narrationText !== undefined) {
       storyboard = buildVisualStoryboard(applyVisualStoryboard(research, storyboard), storyboard);
     }
@@ -681,6 +737,50 @@ function App() {
       setMessage(`Semantic plan ${result.cached ? "dipakai dari cache" : "dibuat provider terpilih"}; komposisi lokal siap ditinjau.`);
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setPlanningVisualSceneId(null); setBusy(false); }
+  }
+
+  async function setSharedVisualWorld(sceneId: string) {
+    if (!project || !research) return;
+    const source = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
+    if (!source || !source.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")))) {
+      setMessage("Impor ilustrasi dasar dulu sebelum menjadikannya Visual World bersama.");
+      return;
+    }
+    const replacingOtherArt = project.visualStoryboard.scenes.some((scene) => scene.approved || scene.motionActions.length > 0 || scene.sceneId !== sceneId && scene.compositionSource !== "procedural");
+    if (replacingOtherArt && !await askConfirmation({
+      title: "Gunakan ilustrasi ini untuk semua scene?",
+      message: "Satu visual world akan mengganti komposisi scene lain. Motion beat dan approval lama dibatalkan; setiap scene perlu ditinjau ulang.",
+      confirmLabel: "Gunakan Visual World",
+      cancelLabel: "Pertahankan semua scene",
+      tone: "warning",
+    })) return;
+    const visualWorld = buildVisualWorld(research.title, source);
+    const storyboard: VisualStoryboard = {
+      ...project.visualStoryboard,
+      visualWorld,
+      scenes: project.visualStoryboard.scenes.map((scene) => ({
+        ...scene,
+        composition: source.composition,
+        compositionSource: source.compositionSource,
+        illustrationSource: source.illustrationSource,
+        illustrationWorkflow: source.illustrationWorkflow,
+        authoringConfirmed: scene.sceneId === sceneId && source.authoringConfirmed,
+        authoringStatus: scene.sceneId === sceneId ? source.authoringStatus : "needs_review",
+        approved: false,
+        approvedFingerprint: null,
+        motionActions: [],
+        motionStatus: "not_prepared",
+        motionSummary: "Motion Beat scene ini belum disiapkan.",
+        flowStatus: "illustration-imported",
+        warnings: [...scene.warnings.slice(0, 6), "Memakai Visual World bersama; tinjau kecocokan untuk tahap narasi ini."],
+      })),
+    };
+    setProject((current) => current ? { ...current, visualStoryboard: storyboard } : current);
+    setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
+    setSaved(false);
+    setPreviewReviewed(false);
+    setPreviewStarted(false);
+    setMessage("Visual World dipakai bersama. Tinjau tiap beat, lalu simpan.");
   }
 
   async function generateVectorScene(sceneId: string) {
@@ -949,17 +1049,20 @@ function App() {
     finally { setBusy(false); }
   }
 
-  async function applyFlowBatch(items: FlowBatchItem[]) {
+  async function applyFlowBatch(items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) {
     const empty = { appliedIds: [] as string[], failures: [] as Array<{ id: string; fileName: string; message: string }> };
     if (!project || busy || !items.length) return empty;
     const targets = items.map((item) => project.visualStoryboard.scenes.find((scene) => scene.sceneId === item.sceneId));
     if (targets.some((scene) => !scene) || new Set(items.map((item) => item.sceneId)).size !== items.length) {
       return { ...empty, failures: items.map((item) => ({ id: item.id, fileName: item.file.name, message: "Assignment scene tidak valid atau duplikat." })) };
     }
-    const replacing = targets.filter((scene) => scene!.approved || scene!.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
-    if (replacing.length && !await askConfirmation({
-      title: "Ganti ilustrasi scene?",
-      message: `${replacing.length} scene memiliki ilustrasi atau approval. File baru mengganti komposisi scene terkait saja dan approval-nya menjadi stale. Scene lain tetap.` ,
+    const replacing = targets.filter((scene) => scene!.approved || scene!.motionActions.length > 0 || scene!.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
+    const sharedWorld = project.visualStoryboard.visualWorld;
+    if ((sharedWorld || replacing.length) && !await askConfirmation({
+      title: sharedWorld ? "Impor ilustrasi per scene?" : "Ganti ilustrasi scene?",
+      message: sharedWorld
+        ? `Batch impor melepas Visual World bersama agar scene dapat memakai ilustrasi berbeda. ${replacing.length} scene target memiliki ilustrasi, Motion Beat, atau approval yang perlu ditinjau ulang; scene lain mempertahankan komposisi lama.`
+        : `${replacing.length} scene target memiliki ilustrasi, Motion Beat, atau approval. File baru mengganti komposisi dan membatalkan Motion Beat serta approval pada scene tersebut. Scene lain tetap.`,
       confirmLabel: "Impor dan ganti",
       cancelLabel: "Batal",
       tone: "warning",
@@ -970,24 +1073,29 @@ function App() {
     const uploaded: Array<{ item: FlowBatchItem; scene: VisualStoryboardScene; asset: VisualAsset }> = [];
     let storedAssets = project.visualAssets;
     try {
-      for (const item of items) {
+      const form = new FormData();
+      const metadata = items.map((item) => {
         const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
-        try {
-          const form = new FormData();
-          form.append("illustration", item.file);
-          form.append("name", item.file.name.replace(/\.[^.]+$/, "").slice(0, 120) || scene.headline);
-          form.append("source", "ai-generated");
-          form.append("license", "User-provided; Google Flow output imported manually");
-          form.append("style", project.visualStoryboard.styleId);
-          form.append("provider", "Google Flow (manual import)");
-          form.append("model", "Google Flow");
-          form.append("prompt", item.prompt);
-          form.append("semanticTags", scene.objects.map((object) => object.label).join(","));
-          form.append("supportedConcepts", [scene.semanticPlan?.primaryVisualConcept, scene.visualSummary].filter(Boolean).join(","));
-          const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
-          storedAssets = result.project.visualAssets;
-          uploaded.push({ item, scene, asset: result.asset });
-        } catch (error) { failures.push({ id: item.id, fileName: item.file.name, message: friendlyError(error) }); }
+        form.append("illustrations", item.file, item.file.name);
+        return {
+          name: item.file.name.replace(/\.[^.]+$/, "").slice(0, 120) || scene.headline,
+          source: "ai-generated", license: "User-provided; Google Flow output imported manually", style: project.visualStoryboard.styleId,
+          provider: "Google Flow (manual import)", model: "Google Flow", prompt: item.prompt,
+          semanticTags: scene.objects.map((object) => object.label),
+          supportedConcepts: [scene.semanticPlan?.primaryVisualConcept, scene.visualSummary].filter(Boolean),
+        };
+      });
+      form.append("metadata", JSON.stringify(metadata));
+      const result = await apiWithUploadProgress<{ project: Project; results: Array<{ index: number; asset: VisualAsset }>; failures: Array<{ index: number; fileName: string; message: string }> }>(`/api/projects/${project.id}/visual-assets/batch`, form, onProgress);
+      storedAssets = result.project.visualAssets;
+      for (const entry of result.results) {
+        const item = items[entry.index]!;
+        const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
+        uploaded.push({ item, scene, asset: entry.asset });
+      }
+      for (const failure of result.failures) {
+        const item = items[failure.index];
+        failures.push({ id: item?.id ?? failure.fileName, fileName: failure.fileName, message: failure.message });
       }
       if (uploaded.length) {
         const importedByScene = new Map(uploaded.map((entry) => [entry.scene.sceneId, entry]));
@@ -1010,8 +1118,13 @@ function App() {
               approved: false, approvedFingerprint: null, flowStatus: "illustration-imported" as const,
             };
           });
+        const storyboardBase = { ...project.visualStoryboard };
+        if (storyboardBase.visualWorld) {
+          // ponytail: different per-scene artwork cannot remain one shared base; untouched scenes keep their composition.
+          delete storyboardBase.visualWorld;
+        }
         const storyboard: VisualStoryboard = {
-          ...project.visualStoryboard,
+          ...storyboardBase,
           scenes,
           reusableWorldObjects: visualObjectIds.filter((objectId) => scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1),
         };
@@ -1021,7 +1134,7 @@ function App() {
         setPreviewReviewed(false);
         setPreviewStarted(false);
       }
-      setMessage(`${uploaded.length} ilustrasi dipasang ke scene${failures.length ? `; ${failures.length} gagal—file sukses tetap tersimpan di Asset Library` : ""}. Tinjau lalu simpan perubahan.`);
+      setMessage(`${uploaded.length} ilustrasi dipasang ke scene${uploaded.length && sharedWorld ? "; Visual World dilepas, scene lain mempertahankan komposisi lama" : ""}${failures.length ? `; ${failures.length} gagal—file sukses tetap tersimpan di Asset Library` : ""}. Tinjau lalu simpan perubahan.`);
       return { appliedIds: uploaded.map(({ item }) => item.id), failures };
     } finally { setBusy(false); }
   }
@@ -1509,7 +1622,7 @@ function App() {
       {view === "dashboard" && <Dashboard projects={projects} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
         <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Generate draft dari topik bebas, impor Research Package v1.0/v1.1, atau gunakan sample. Versi lama otomatis di-upgrade.</p></div>
-          <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung</button>
+          <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung api</button>
         </div>
         <div className="create-mode-switch" role="tablist" aria-label="Cara membuat video">
           <button type="button" role="tab" aria-selected={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>Generate with AI</button>
@@ -1604,6 +1717,7 @@ function App() {
             onChange={updateVisualScene}
             onGenerate={regenerateVisualScene}
             onUseCurrentComposition={useAuthoredComposition}
+            onSetSharedVisualWorld={setSharedVisualWorld}
             librarySceneId={librarySceneId}
             onOpenLibrary={(sceneId, tab) => void openVisualLibrary(sceneId, tab)}
             onCloseLibrary={() => setLibrarySceneId(null)}

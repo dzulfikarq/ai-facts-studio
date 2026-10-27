@@ -171,6 +171,11 @@ try {
   settingsDb.close();
 
   const research = await fetch(`${baseUrl}/api/sample`).then((response) => response.json());
+  const volcanoSampleResponse = await fetch(`${baseUrl}/api/sample?topic=volcano-formation`);
+  assert.equal(volcanoSampleResponse.status, 200, "volcano education sample is available through explicit topic selection");
+  const volcanoSample = await volcanoSampleResponse.json();
+  assert.equal(volcanoSample.id, "volcano-formation-id");
+  assert.equal(volcanoSample.scenes.length, 6);
   const approveScene = (scene: VisualStoryboardScene) => {
     const approved = { ...scene, authoringStatus: scene.authoringStatus === "needs_review" ? "ready_for_review" : scene.authoringStatus, approved: true };
     return { ...approved, approvedFingerprint: visualApprovalFingerprint(approved) };
@@ -316,6 +321,28 @@ try {
   assert.match(uploadedVisual.asset.originalSha256, /^[a-f0-9]{64}$/);
   assetUploadPath = path.resolve("public/visual-assets", uploadedVisual.asset.file);
   assert.equal((await fetch(`${baseUrl}/visual-assets/${uploadedVisual.asset.file}`)).status, 200, "content-hash image route serves uploaded asset");
+
+  const batchColors = ["red", "blue", "green", "yellow", "purple"];
+  const batchForm = new FormData();
+  const batchMetadata = [];
+  for (const [index, color] of batchColors.entries()) {
+    const batchPath = path.join(tempDir, `batch-${index}.png`);
+    await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${color}:s=128x96:d=1`, "-frames:v", "1", "-y", batchPath]);
+    batchForm.append("illustrations", new Blob([await readFile(batchPath)], { type: "image/png" }), `flow-scene-${index + 1}.png`);
+    batchMetadata.push({ name: `Flow batch ${index + 1}`, source: "ai-generated", prompt: `Prompt scene ${index + 1}`, provider: "Google Flow (manual import)", model: "Google Flow", license: "User-provided; Google Flow output imported manually", semanticTags: [`scene-${index + 1}`], supportedConcepts: [`concept-${index + 1}`] });
+  }
+  batchForm.append("illustrations", new Blob([Buffer.from("invalid image bytes")], { type: "image/png" }), "flow-scene-invalid.png");
+  batchMetadata.push({ name: "Invalid scene", source: "ai-generated", prompt: "Invalid fixture", provider: "Google Flow (manual import)" });
+  batchForm.append("metadata", JSON.stringify(batchMetadata));
+  const batchResponse = await fetch(`${baseUrl}/api/projects/${assetProject.id}/visual-assets/batch`, { method: "POST", body: batchForm });
+  const batchUpload = await batchResponse.json();
+  assert.equal(batchResponse.status, 201, batchUpload.error);
+  assert.equal(batchUpload.results.length, 5, "six-file batch persists every valid image");
+  assert.equal(batchUpload.failures.length, 1, "one invalid image does not discard successful batch imports");
+  assert.equal(batchUpload.failures[0].index, 5, "partial failure maps to original file order");
+  assert.equal(batchUpload.project.visualAssets.length, uploadedVisual.project.visualAssets.length + 5, "batch response includes all project assets");
+  assert.deepEqual(batchUpload.results.map((entry: { index: number }) => entry.index), [0, 1, 2, 3, 4], "batch results preserve file order");
+  assert.ok(batchUpload.results.every((entry: { asset: { source: string; provider: string; prompt: string } }, index: number) => entry.asset.source === "ai-generated" && entry.asset.provider === "Google Flow (manual import)" && entry.asset.prompt === `Prompt scene ${index + 1}`), "batch keeps per-file Flow metadata");
 
   const flowPngPath = path.join(tempDir, "flow-fixture.png");
   await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=purple:s=128x96:d=1", "-frames:v", "1", "-y", flowPngPath]);

@@ -45,6 +45,7 @@ const visualAssetDir = path.resolve(root, "public/visual-assets");
 const jobDir = path.join(dataDir, "jobs");
 const renderDir = path.resolve(root, "renders");
 const samplePath = path.resolve(root, "samples/mountain-formation.json");
+const volcanoSamplePath = path.resolve(root, "samples/volcano-formation.json");
 const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir, "visual-assets": visualAssetDir };
 type CleanupRoot = keyof typeof cleanupRoots;
 const maxUploadMb = Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 100));
@@ -82,6 +83,14 @@ const audioUpload = multer({
 const illustrationUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, done) => {
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.mimetype)) return done(new Error("Unggah PNG, JPEG, atau WebP. SVG tidak didukung."));
+    done(null, true);
+  },
+});
+const illustrationBatchUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 30, fields: 1, parts: 31, fieldSize: 1024 * 1024 },
   fileFilter: (_request, file, done) => {
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.mimetype)) return done(new Error("Unggah PNG, JPEG, atau WebP. SVG tidak didukung."));
     done(null, true);
@@ -512,6 +521,14 @@ function illustrationUploadMiddleware(request: express.Request, response: expres
   });
 }
 
+function illustrationBatchUploadMiddleware(request: express.Request, response: express.Response, next: express.NextFunction) {
+  illustrationBatchUpload.array("illustrations", 30)(request, response, (error) => {
+    if (!error) return next();
+    const status = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    apiError(response, status, error instanceof Error ? error.message : "Batch ilustrasi gagal diunggah.", { code: "invalid-illustration-upload" });
+  });
+}
+
 async function sha256File(filePath: string) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
@@ -643,16 +660,21 @@ function searchVisualAssetCatalog(query: string, filters: Record<string, string>
   return { assets, total, page, pageSize, pageCount: Math.ceil(total / pageSize), facets };
 }
 
-async function persistVisualAsset(projectId: string, asset: VisualAsset, bytes: Buffer) {
+async function writeVisualAssetFile(asset: VisualAsset, bytes: Buffer) {
   const expectedHash = createHash("sha256").update(bytes).digest("hex");
   if (expectedHash !== asset.sha256 || asset.file !== `${expectedHash}.${asset.format === "jpeg" ? "jpg" : asset.format}`) throw new Error("Hash file visual tidak cocok dengan metadata.");
   const destination = path.join(visualAssetDir, asset.file);
-  let createdFile = false;
+  try { await writeFile(destination, bytes, { flag: "wx" }); return true; }
+  catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== expectedHash) throw error;
+    return false;
+  }
+}
+
+async function persistVisualAsset(projectId: string, asset: VisualAsset, bytes: Buffer) {
+  const createdFile = await writeVisualAssetFile(asset, bytes);
+  const destination = path.join(visualAssetDir, asset.file);
   try {
-    try { await writeFile(destination, bytes, { flag: "wx" }); createdFile = true; }
-    catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== expectedHash) throw error;
-    }
     const row = projectRow(projectId);
     if (!row) throw new Error("Project tidak ditemukan.");
     const project = projectFromRow(row);
@@ -670,6 +692,52 @@ async function persistVisualAsset(projectId: string, asset: VisualAsset, bytes: 
     }
     throw error;
   }
+}
+
+async function prepareVisualAssetUpload(file: Express.Multer.File, metadata: Record<string, unknown>) {
+  const processed = await validateAndOptimizeRasterImage(file.buffer, file.mimetype);
+  const image = processed.image;
+  const sha256 = createHash("sha256").update(processed.buffer).digest("hex");
+  const assetFile = `${sha256}.${image.extension}`;
+  const name = typeof metadata.name === "string" && metadata.name.trim()
+    ? metadata.name.trim().slice(0, 120)
+    : path.basename(file.originalname, path.extname(file.originalname)).slice(0, 120) || "Ilustrasi pengguna";
+  const listField = (value: unknown, max: number, maxLength: number) => {
+    const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+    return [...new Set(values.map((item) => String(item).trim()).filter(Boolean).map((item) => item.slice(0, maxLength)))].slice(0, max);
+  };
+  const source = metadata.source === "ai-generated" ? "ai-generated" : "user-upload";
+  const prompt = typeof metadata.prompt === "string" ? metadata.prompt.trim().slice(0, 4000) : "";
+  const provider = typeof metadata.provider === "string" && metadata.provider.trim() ? metadata.provider.trim().slice(0, 120) : "external-manual-import";
+  const model = typeof metadata.model === "string" && metadata.model.trim() ? metadata.model.trim().slice(0, 120) : undefined;
+  const asset = visualAssetSchema.parse({
+    id: `upload-${assetFile}`, name, visualCategory: "user-illustration", assetType: "illustration",
+    semanticTags: listField(metadata.semanticTags, 20, 60), supportedConcepts: listField(metadata.supportedConcepts, 12, 80),
+    role: source === "ai-generated" ? "Ilustrasi AI eksternal yang diimpor manual; kecocokan menunggu review manusia." : "Ilustrasi pengguna; kecocokan menunggu review manusia.",
+    format: image.format, aspectRatio: image.width / image.height, source,
+    license: typeof metadata.license === "string" && metadata.license.trim() ? metadata.license.trim().slice(0, 160) : "User-provided; license/provenance not specified",
+    style: typeof metadata.style === "string" && metadata.style.trim() ? metadata.style.trim().slice(0, 120) : "clean-flat-2d",
+    ...(source === "ai-generated" ? { prompt, provider, ...(model ? { model } : {}) } : {}),
+    originalName: path.basename(file.originalname).slice(0, 255) || "illustration-upload",
+    originalMimeType: file.mimetype,
+    originalBytes: file.size,
+    originalSha256: createHash("sha256").update(file.buffer).digest("hex"),
+    ...(provider.toLocaleLowerCase("en-US").includes("google flow") ? { usageMetadata: "Google Flow output reported by user; imported manually; provider origin not independently verified." } : {}),
+    sha256, bytes: processed.buffer.length, width: image.width, height: image.height, file: assetFile,
+  });
+  return { asset, buffer: processed.buffer, optimized: processed.optimized, originalBytes: processed.originalBytes };
+}
+
+async function mapConcurrent<T, R>(items: readonly T[], concurrency: number, action: (item: T, index: number) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await action(items[index]!, index);
+    }
+  }));
+  return results;
 }
 
 async function availableHfImageModels(forceRefresh = false) {
@@ -1034,8 +1102,11 @@ app.get("/api/tts/voices", async (request, response) => {
   }
 });
 
-app.get("/api/sample", async (_request, response) => {
-  response.json(JSON.parse(await readFile(samplePath, "utf8")));
+app.get("/api/sample", async (request, response) => {
+  const topic = request.query.topic;
+  if (topic !== undefined && topic !== "volcano-formation") return response.status(404).json({ error: "Sample tidak ditemukan." });
+  const sourcePath = topic === "volcano-formation" ? volcanoSamplePath : samplePath;
+  response.json(JSON.parse(await readFile(sourcePath, "utf8")));
 });
 
 app.get("/api/docs/github-actions", async (_request, response) => {
@@ -1552,39 +1623,9 @@ app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async 
   let createdFile = false;
   let asset: VisualAsset | undefined;
   try {
-    const processed = await validateAndOptimizeRasterImage(request.file.buffer, request.file.mimetype);
-    const image = processed.image;
-    const sha256 = createHash("sha256").update(processed.buffer).digest("hex");
-    const file = `${sha256}.${image.extension}`;
-    const name = typeof request.body?.name === "string" && request.body.name.trim()
-      ? request.body.name.trim().slice(0, 120)
-      : path.basename(request.file.originalname, path.extname(request.file.originalname)).slice(0, 120) || "Ilustrasi pengguna";
-    const listField = (value: unknown, max: number) => typeof value === "string" ? [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 80)))].slice(0, max) : [];
-    const source = request.body?.source === "ai-generated" ? "ai-generated" : "user-upload";
-    const prompt = typeof request.body?.prompt === "string" ? request.body.prompt.trim().slice(0, 4000) : "";
-    const provider = typeof request.body?.provider === "string" && request.body.provider.trim() ? request.body.provider.trim().slice(0, 120) : "external-manual-import";
-    const model = typeof request.body?.model === "string" && request.body.model.trim() ? request.body.model.trim().slice(0, 120) : undefined;
-    asset = visualAssetSchema.parse({
-      id: `upload-${file}`, name, visualCategory: "user-illustration",
-      assetType: "illustration",
-      semanticTags: listField(request.body?.semanticTags, 20), supportedConcepts: listField(request.body?.supportedConcepts, 12),
-      role: source === "ai-generated" ? "Ilustrasi AI eksternal yang diimpor manual; kecocokan menunggu review manusia." : "Ilustrasi pengguna; kecocokan menunggu review manusia.",
-      format: image.format, aspectRatio: image.width / image.height, source,
-      license: typeof request.body?.license === "string" && request.body.license.trim() ? request.body.license.trim().slice(0, 160) : "User-provided; license/provenance not specified",
-      style: typeof request.body?.style === "string" && request.body.style.trim() ? request.body.style.trim().slice(0, 120) : "clean-flat-2d",
-      ...(source === "ai-generated" ? { prompt, provider, ...(model ? { model } : {}) } : {}),
-      originalName: path.basename(request.file.originalname).slice(0, 255) || "illustration-upload",
-      originalMimeType: request.file.mimetype,
-      originalBytes: request.file.size,
-      originalSha256: createHash("sha256").update(request.file.buffer).digest("hex"),
-      ...(provider.toLocaleLowerCase("en-US").includes("google flow") ? { usageMetadata: "Google Flow output reported by user; imported manually; provider origin not independently verified." } : {}),
-      sha256, bytes: processed.buffer.length, width: image.width, height: image.height, file,
-    });
-    const destination = path.join(visualAssetDir, file);
-    try { await writeFile(destination, processed.buffer, { flag: "wx" }); createdFile = true; }
-    catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== sha256) throw error;
-    }
+    const processed = await prepareVisualAssetUpload(request.file, request.body ?? {});
+    asset = processed.asset;
+    createdFile = await writeVisualAssetFile(asset, processed.buffer);
     const current = projectFromRow(row);
     if (!current.visualAssets.some((item) => item.id === asset!.id)) current.visualAssets.push(asset);
     saveProject(id, current);
@@ -1599,6 +1640,68 @@ app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async 
       if (!referenced) await rm(path.join(visualAssetDir, asset.file), { force: true });
     }
     apiError(response, 400, error instanceof Error ? error.message : "Ilustrasi gagal divalidasi.", { code: "invalid-illustration" });
+  } finally { activeProjectTasks.delete(id); }
+});
+
+app.post("/api/projects/:id/visual-assets/batch", illustrationBatchUploadMiddleware, async (request, response) => {
+  const id = String(request.params.id);
+  const files = Array.isArray(request.files) ? request.files : [];
+  if (!files.length) return apiError(response, 400, "File ilustrasi tidak ditemukan.", { code: "missing-illustration" });
+  let metadata: Record<string, unknown>[];
+  try {
+    const payload = typeof request.body?.metadata === "string" ? JSON.parse(request.body.metadata) as unknown : null;
+    if (!Array.isArray(payload) || payload.length !== files.length || payload.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+      return apiError(response, 400, "Metadata batch harus cocok dengan urutan dan jumlah file.", { code: "invalid-illustration-batch" });
+    }
+    metadata = payload as Record<string, unknown>[];
+  } catch {
+    return apiError(response, 400, "Metadata batch tidak valid.", { code: "invalid-illustration-batch" });
+  }
+  if (!projectRow(id)) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(id)) return apiError(response, 409, "Aset tidak dapat diubah saat render atau snapshot berjalan.");
+  activeProjectTasks.add(id);
+  try {
+    const processed = await mapConcurrent(files, 3, async (file, index) => {
+      try { return { index, fileName: file.originalname, upload: await prepareVisualAssetUpload(file, metadata[index]!) }; }
+      catch (error) { return { index, fileName: file.originalname, error: error instanceof Error ? error.message : "Ilustrasi gagal divalidasi." }; }
+    });
+    const prepared: Array<{ index: number; fileName: string; upload: Awaited<ReturnType<typeof prepareVisualAssetUpload>>; createdFile: boolean }> = [];
+    const results: Array<{ index: number; asset: VisualAsset; optimized: boolean; originalBytes: number }> = [];
+    const failures: Array<{ index: number; fileName: string; message: string }> = [];
+    for (const entry of processed) {
+      if ("error" in entry) { failures.push({ index: entry.index, fileName: entry.fileName, message: entry.error ?? "Ilustrasi gagal divalidasi." }); continue; }
+      try {
+        const createdFile = await writeVisualAssetFile(entry.upload.asset, entry.upload.buffer);
+        prepared.push({ ...entry, createdFile });
+      } catch (error) {
+        failures.push({ index: entry.index, fileName: entry.fileName, message: error instanceof Error ? error.message : "Ilustrasi gagal disimpan." });
+      }
+    }
+    if (prepared.length) {
+      try {
+        const currentRow = projectRow(id);
+        if (!currentRow) throw new Error("Project tidak ditemukan.");
+        const current = projectFromRow(currentRow);
+        for (const entry of prepared) {
+          const assetIndex = current.visualAssets.findIndex((asset) => asset.id === entry.upload.asset.id);
+          if (assetIndex < 0) current.visualAssets.push(entry.upload.asset);
+          else current.visualAssets[assetIndex] = entry.upload.asset;
+        }
+        withTransaction(() => {
+          saveProject(id, current);
+          for (const entry of prepared) upsertVisualAssetCatalog(db, entry.upload.asset);
+        });
+        invalidateBundleCache();
+        for (const entry of prepared) results.push({ index: entry.index, asset: entry.upload.asset, optimized: entry.upload.optimized, originalBytes: entry.upload.originalBytes });
+      } catch (error) {
+        for (const entry of prepared) failures.push({ index: entry.index, fileName: entry.fileName, message: error instanceof Error ? error.message : "Batch ilustrasi gagal disimpan." });
+        for (const file of new Set(prepared.flatMap((entry) => entry.createdFile ? [entry.upload.asset.file] : []))) {
+          const referenced = projectReferencesVisualAsset(file) || snapshotReferencesVisualAsset(file) || reusableSceneReferencesVisualAsset(file);
+          if (!referenced) await rm(path.join(visualAssetDir, file), { force: true });
+        }
+      }
+    }
+    response.status(201).json({ project: getProject(id), results, failures });
   } finally { activeProjectTasks.delete(id); }
 });
 

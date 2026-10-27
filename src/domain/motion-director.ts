@@ -13,13 +13,18 @@ const motionKeyframeSchema = z.object({
 
 export const motionActionSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/),
+  description: z.string().trim().min(1).max(180).optional(),
   kind: z.enum(["fade", "translate", "scale", "rotate", "follow-path", "draw", "particle-flow", "reveal", "repeat", "focus-shift", "state-transition"]),
   targetNode: z.string().regex(/^[a-z][a-z0-9-]{0,39}\/\d+(?:\.\d+)?$/),
+  targetLayerId: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional(),
+  targetRole: z.string().trim().min(1).max(80).optional(),
   startFrame: z.number().int().min(0).max(3600),
   durationFrames: z.number().int().min(1).max(3600),
   easing: z.enum(["linear", "easeIn", "easeOut", "easeInOut"]),
   keyframes: z.array(motionKeyframeSchema).max(8).optional(),
   path: z.array(motionPointSchema).min(2).max(8).optional(),
+  motionPathRef: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/).optional(),
+  pathStyle: z.enum(["magma", "lava", "smoke", "highlight", "particles"]).optional(),
   particleCount: z.number().int().min(1).max(8).optional(),
   repeatCount: z.number().int().min(2).max(6).optional(),
 }).strict().superRefine((action, ctx) => {
@@ -39,6 +44,10 @@ export const motionActionSchema = z.object({
   }
   if ((action.kind === "follow-path" || action.kind === "particle-flow") && (!action.path || action.path.length < 2)) {
     ctx.addIssue({ code: "custom", message: "Gerak path membutuhkan lintasan", path: ["path"] });
+  }
+  if (action.pathStyle && !action.path) ctx.addIssue({ code: "custom", message: "Gaya overlay membutuhkan lintasan", path: ["path"] });
+  if (action.targetLayerId && action.targetLayerId !== action.targetNode.split("/")[0]) {
+    ctx.addIssue({ code: "custom", message: "Target layer harus cocok dengan layer node", path: ["targetLayerId"] });
   }
   if (action.kind === "particle-flow" && !action.particleCount) ctx.addIssue({ code: "custom", message: "Particle flow membutuhkan jumlah partikel terbatas", path: ["particleCount"] });
   if (action.kind === "repeat" && !action.repeatCount) ctx.addIssue({ code: "custom", message: "Repeated motion membutuhkan repeatCount", path: ["repeatCount"] });
@@ -294,6 +303,12 @@ export function motionActionProgress(action: MotionAction, frame: number) {
   else if (action.easing === "easeOut") progress = 1 - (1 - progress) ** 2;
   else if (action.easing === "easeInOut") progress = progress * progress * (3 - 2 * progress);
   return progress;
+}
+
+export function motionPathProgress(action: MotionAction, frame: number) {
+  if (frame <= action.startFrame) return 0;
+  if (frame >= action.startFrame + action.durationFrames) return 1;
+  return motionActionProgress(action, frame) ?? 0;
 }
 
 export function motionActionValue(action: MotionAction, frame: number, initial: { x: number; y: number; scale: number; rotation: number; opacity: number }) {

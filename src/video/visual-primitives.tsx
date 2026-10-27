@@ -5,8 +5,8 @@ import type { Scene, VisualPreset } from "../domain/research";
 import { layerMotion } from "./motion";
 import { resolveVisualColor, type VisualStyle } from "./style-config";
 import { visualBackdropLayerOffset, visualCompositionCamera, visualCompositionFrame } from "../domain/visual-geometry";
-import { motionActionProgress, type MotionAction } from "../domain/motion-director";
-import { nodeMotion, pointAlongPolyline } from "./motion";
+import { motionActionProgress, motionPathProgress, type MotionAction } from "../domain/motion-director";
+import { carriedMotionProgress, nodeMotion, pointAlongPolyline } from "./motion";
 import type { VisualImageTransform } from "../domain/visual-composition";
 import type { VideoEditorInteractions } from "./types";
 
@@ -123,7 +123,7 @@ function Diagram({ kind, labels, color, accent }: { kind: string; labels: string
   </>;
 }
 
-function LeafNode({ node, style, frame, progress, id, actions = [], editor }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number; id: string; actions?: MotionAction[]; editor?: VideoEditorInteractions }) {
+function LeafNode({ node, style, frame, progress, processProgress, id, actions = [], editor }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number; processProgress?: number; id: string; actions?: MotionAction[]; editor?: VideoEditorInteractions }) {
   const gesture = React.useRef<{ mode: "move" | "resize"; pointerId: number; inverse: DOMMatrix; startPoint: DOMPoint; start: VisualImageTransform; latest: VisualImageTransform } | null>(null);
   const [draftTransform, setDraftTransform] = React.useState<VisualImageTransform | null>(null);
   const image = node.type === "image" ? node : null;
@@ -214,7 +214,7 @@ function LeafNode({ node, style, frame, progress, id, actions = [], editor }: { 
       if (node.shape === "polygon") return <g {...wrapperProps}>{fillDefinition}<polygon points={node.points!.map(point=>`${point.x*node.width},${point.y*node.height}`).join(" ")} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
       return <g {...wrapperProps}>{fillDefinition}<rect width={node.width} height={node.height} rx={node.radius ?? 0} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
     case "path": {
-      const drawProgress = semanticMotion.drawProgress ?? (node.motion === "draw" ? progress : undefined);
+      const drawProgress = semanticMotion.drawProgress ?? (node.motion === "draw" ? processProgress ?? progress : undefined);
       return <g {...wrapperProps}>{fillDefinition}<svg width={node.width} height={node.height} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={node.d} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth} fillRule={node.fillRule} pathLength={drawProgress !== undefined ? 1 : undefined} strokeDasharray={drawProgress !== undefined ? 1 : undefined} strokeDashoffset={drawProgress !== undefined ? 1 - drawProgress : undefined}/></svg></g>;
     }
     case "text": {
@@ -254,50 +254,160 @@ function LeafNode({ node, style, frame, progress, id, actions = [], editor }: { 
   }
 }
 
+function MotionPathOverlay({ actions, frame, editor, style }: { actions: MotionAction[]; frame: number; editor?: VideoEditorInteractions; style: VisualStyle }) {
+  const selected = editor?.selectedMotionPath;
+  const [draftPoints, setDraftPoints] = React.useState<NonNullable<MotionAction["path"]> | null>(null);
+  const gesture = React.useRef<{ index: number; pointerId: number; inverse: DOMMatrix; start: NonNullable<MotionAction["path"]>[number] } | null>(null);
+  React.useEffect(() => setDraftPoints(null), [selected?.actionId]);
+  const pointFromEvent = (event: React.PointerEvent<SVGCircleElement>, inverse: DOMMatrix) => {
+    const point = event.currentTarget.ownerSVGElement?.createSVGPoint();
+    if (!point) return null;
+    point.x = event.clientX; point.y = event.clientY;
+    const local = point.matrixTransform(inverse);
+    return { x: Math.round(Math.max(0, Math.min(1080, local.x))), y: Math.round(Math.max(0, Math.min(1920, local.y))) };
+  };
+  const movePoint = (index: number, point: { x: number; y: number }) => {
+    if (!selected) return;
+    setDraftPoints((current) => (current ?? selected.points).map((entry, entryIndex) => entryIndex === index ? point : entry));
+  };
+  const finishPoint = (event: React.PointerEvent<SVGCircleElement>) => {
+    const active = gesture.current;
+    if (!active || active.pointerId !== event.pointerId || !selected) return;
+    const point = pointFromEvent(event, active.inverse);
+    gesture.current = null;
+    if (point && (point.x !== active.start.x || point.y !== active.start.y)) editor?.onTransformMotionPathPoint?.(active.index, point);
+    setDraftPoints(null);
+  };
+  const visiblePoints = selected ? draftPoints ?? selected.points : [];
+  return <g className="motion-path-overlays">
+    {actions.filter((action) => action.path && action.pathStyle).map((action) => {
+      const p = motionPathProgress(action, frame);
+      const fadeOut = Math.max(0, Math.min(1, (action.startFrame + action.durationFrames + 12 - frame) / 12));
+      if (fadeOut <= 0) return null;
+      const points = action.path!.map((point) => `${point.x},${point.y}`).join(" ");
+      const color = action.pathStyle === "smoke" ? "#c8d0d8" : action.pathStyle === "highlight" ? style.palette.accent : "#ff7a2d";
+      const width = action.pathStyle === "lava" ? 54 : action.pathStyle === "magma" ? 24 : 12;
+      if (action.pathStyle === "smoke" || action.pathStyle === "particles") return <g key={action.id} pointerEvents="none">
+        {action.pathStyle === "smoke" && Array.from({ length: 6 }, (_, index) => {
+          const age = p - index * 0.13;
+          if (age < 0 || age > 0.52) return null;
+          const life = age / 0.52;
+          const point = pointAlongPolyline(action.path!, age);
+          return <circle key={index} cx={point.x + Math.sin(frame / 19 + index) * (4 + life * 8)} cy={point.y - life * 12} r={12 + life * 15} fill={color} opacity={Math.sin(life * Math.PI) * 0.48 * fadeOut}/>;
+        })}
+      </g>;
+      return <g key={action.id} pointerEvents="none" style={{ filter: "drop-shadow(0 0 14px rgba(255, 116, 35, .62))" }}>
+        <polyline points={points} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - p} opacity={(action.pathStyle === "highlight" ? .72 : .82) * fadeOut}/>
+        {action.pathStyle === "magma" && <polyline points={points} fill="none" stroke="#ffd080" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - p} opacity={fadeOut}/>}
+      </g>;
+    })}
+    {selected && visiblePoints.length > 1 && <g aria-label="Titik jalur gerak terpilih">
+      <polyline points={visiblePoints.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={style.palette.accent} strokeWidth="8" strokeDasharray="16 12" strokeLinecap="round" strokeLinejoin="round" opacity=".85" pointerEvents="none"/>
+      {visiblePoints.map((point, index) => <circle key={index} cx={point.x} cy={point.y} r="24" fill={style.palette.canvas} stroke={style.palette.primary} strokeWidth="8" role="slider" aria-valuemin={0} aria-valuemax={1080} aria-valuenow={point.x} aria-valuetext={`x ${point.x}, y ${point.y}`} tabIndex={0} aria-label={`Titik jalur ${index + 1}: x ${point.x}, y ${point.y}. Seret atau gunakan tombol panah untuk mengubah.`} data-motion-path-point={index} style={{ cursor: "grab", touchAction: "none" }}
+        onPointerDown={(event) => {
+          if (!event.isPrimary || event.button !== 0) return;
+          const parent = event.currentTarget.parentElement as SVGGraphicsElement | null;
+          const transform = parent?.getScreenCTM();
+          if (!transform) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          gesture.current = { index, pointerId: event.pointerId, inverse: transform.inverse(), start: point };
+        }}
+        onPointerMove={(event) => { const active = gesture.current; if (active?.pointerId === event.pointerId) { const next = pointFromEvent(event, active.inverse); if (next) movePoint(index, next); } }}
+        onPointerUp={finishPoint} onPointerCancel={(event) => {
+          if (gesture.current?.pointerId !== event.pointerId) return;
+          gesture.current = null;
+          setDraftPoints(null);
+        }}
+        onKeyDown={(event) => {
+          const delta = event.shiftKey ? 1 : 10;
+          const x = point.x + (event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0);
+          const y = point.y + (event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0);
+          if (!event.key.startsWith("Arrow")) return;
+          event.preventDefault();
+          editor?.onTransformMotionPathPoint?.(index, { x: Math.max(0, Math.min(1080, x)), y: Math.max(0, Math.min(1920, y)) });
+        }}
+      />)}
+    </g>}
+  </g>;
+}
+
 export function VisualCompositionView({ scene, composition, style, preset, frame, progress, editor }: { scene: Scene; composition: VisualComposition; style: VisualStyle; preset: VisualPreset; frame: number; progress: number; editor?: VideoEditorInteractions }) {
   const layers = [...composition.layers].sort((a,b)=>a.depth-b.depth);
   const foregroundLayers = layers.filter((layer) => layer.depth > 0.1);
   const contentLayers = foregroundLayers.length ? foregroundLayers : layers;
   const backdropLayers = foregroundLayers.length ? layers.filter((layer) => layer.depth <= 0.1) : [];
   const framing = visualCompositionFrame(composition);
-  const camera = visualCompositionCamera(preset, progress);
+  const actions = scene.motionActions ?? [];
+  const volcanoWorld = composition.layers.some((layer) => layer.id === "magma-reservoir") && composition.layers.some((layer) => layer.id === "magma-conduit");
+  const cameraProgress = volcanoWorld ? Math.max(0, Math.min(1, (scene.order - 1 + progress) / 5)) : progress;
+  const camera = visualCompositionCamera(preset, cameraProgress);
+  const carried = (order: number, actionId: string) => carriedMotionProgress(scene.order, order, actions.find((action) => action.id === actionId), frame, progress);
+  const reservoirProgress = volcanoWorld ? carried(2, "magma-storage-glow") : 0;
+  const magmaProgress = volcanoWorld ? carried(3, "magma-rises") : 0;
+  const eruptionProgress = volcanoWorld ? carried(4, "eruption-gas-plume") : 0;
+  const lavaProgress = volcanoWorld ? carried(5, "lava-and-deposits") : 0;
+  const depositProgress = Math.max(0, Math.min(1, (lavaProgress - 0.32) / 0.68));
   const renderLayer = (layer: VisualComposition["layers"][number]) => {
-    const motion = layerMotion(scene.motionPlan, layer.id, layer.depth, frame, progress);
-    const backdropOffset = visualBackdropLayerOffset(preset, layer.depth, progress);
+    const motion = layerMotion(volcanoWorld ? [] : scene.motionPlan, layer.id, layer.depth, frame, progress);
+    const backdropOffset = visualBackdropLayerOffset(preset, layer.depth, cameraProgress);
     motion.translateX += backdropOffset.x;
     motion.translateY += backdropOffset.y;
     motion.scale = Math.min(1.2, motion.scale * backdropOffset.scale);
+    if (volcanoWorld && layer.id === "ash-cloud") {
+      const smokeOpacity = scene.order < 4 ? 0 : scene.order === 4 ? 0.08 + eruptionProgress * 0.62 : scene.order === 5 ? 0.7 - lavaProgress * 0.38 : 0.32;
+      motion.opacity *= smokeOpacity;
+      motion.translateY -= (1 - eruptionProgress) * 36;
+    }
     if (style.backdrop === "grid") {
-      const entrance = Math.max(0, Math.min(1, (progress - layer.depth * 0.08) / 0.18));
+      const entrance = Math.max(0, Math.min(1, (cameraProgress - layer.depth * 0.08) / 0.18));
       motion.opacity *= 0.72 + 0.28 * entrance;
     }
     const clipId = `reveal-${safeId(scene.id)}-${safeId(layer.id)}`;
+    const reservoirShapeClipId = `reservoir-shape-${safeId(scene.id)}`;
+    const reservoirFillClipId = `reservoir-fill-${safeId(scene.id)}`;
+    const processProgress = layer.id === "magma-core" ? magmaProgress : layer.id === "lava-flow" ? lavaProgress : layer.id === "deposits" ? depositProgress : undefined;
     const transform = `translate(${motion.translateX} ${motion.translateY}) translate(540 960) scale(${motion.scale}) translate(-540 -960)`;
     const nodes = layer.nodes.map((node, index) => ({ node, index })).sort((a,b)=>(a.node.zIndex??0)-(b.node.zIndex??0));
-    const actions = scene.motionActions ?? [];
     const semanticActions = actions.filter((action) => action.targetNode.split("/")[0] === layer.id);
     const particles = semanticActions.flatMap((action) => {
       const count = action.particleCount ?? 0;
-      if (action.kind !== "particle-flow" || !action.path || !count) return [];
-      const actionProgress = motionActionProgress(action, frame);
-      if (actionProgress === null) return [];
-      return Array.from({ length: count }, (_, index) => {
-        const phase = (actionProgress - index / count + 1) % 1;
-        return { action, index, ...pointAlongPolyline(action.path!, phase) };
+      if (action.kind !== "particle-flow" || !action.path || !count || action.pathStyle === "highlight") return [];
+        const actionProgress = motionActionProgress(action, frame);
+        if (actionProgress === null) return [];
+        return Array.from({ length: count }, (_, index) => {
+          const phase = actionProgress * 1.45 - index * 0.14;
+          if (phase < 0 || phase > 1) return null;
+          const opacity = Math.max(0, Math.min(1, phase / 0.08, (1 - phase) / 0.08, (1 - actionProgress) / 0.12));
+          return { action, index, opacity, ...pointAlongPolyline(action.path!, phase) };
+        }).filter((particle): particle is NonNullable<typeof particle> => particle !== null);
       });
-    });
     const depthShadow = layer.depth > 0.25 ? `drop-shadow(0 ${Math.round(4 + layer.depth * 8)}px ${Math.round(4 + layer.depth * 6)}px rgba(4, 22, 31, 0.2))` : undefined;
-    return <g key={layer.id} opacity={motion.opacity} transform={transform} style={depthShadow ? { filter: depthShadow } : undefined}>
+    const reservoirGlow = volcanoWorld && layer.id === "magma-reservoir" && reservoirProgress > 0
+      ? `drop-shadow(0 0 ${Math.round(8 + reservoirProgress * 18)}px rgba(255, 112, 48, ${0.22 + reservoirProgress * 0.38}))`
+      : undefined;
+    const filters = [depthShadow, reservoirGlow].filter(Boolean).join(" ");
+    const reservoirClip = volcanoWorld && layer.id === "magma-reservoir";
+    const fillTop = 1635 - 175 * reservoirProgress;
+    return <g key={layer.id} opacity={motion.opacity} transform={transform} style={filters ? { filter: filters } : undefined}>
       {motion.reveal < 1 && <defs><clipPath id={clipId}><rect x="0" y="0" width={1080*motion.reveal} height="1920"/></clipPath></defs>}
+      {reservoirClip && <defs>
+        <clipPath id={reservoirShapeClipId}><ellipse cx="540" cy="1547.5" rx="170" ry="87.5"/></clipPath>
+        <clipPath id={reservoirFillClipId}><rect x="350" y={fillTop} width="380" height={Math.max(0, 175 * reservoirProgress)}/></clipPath>
+      </defs>}
       <g clipPath={motion.reveal < 1 ? `url(#${clipId})` : undefined}>
+       <g clipPath={reservoirClip ? `url(#${reservoirShapeClipId})` : undefined}>
+        <g clipPath={reservoirClip ? `url(#${reservoirFillClipId})` : undefined}>
         {nodes.map(({ node, index })=>{
-            if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} id={`${layer.id}/${index}`} node={node} style={style} frame={frame} progress={progress} actions={actions} editor={editor}/>;
-           const groupRef = `${layer.id}/${index}`;
-           const groupMotion = nodeMotion(actions, groupRef, node, frame);
-           const groupTransform = `translate(${node.x + groupMotion.translateX} ${node.y + groupMotion.translateY}) rotate(${(node.rotation??0) + groupMotion.rotation} ${node.width/2} ${node.height/2}) translate(${node.width/2} ${node.height/2}) scale(${groupMotion.scale}) translate(${-node.width/2} ${-node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
-            return <g key={`group-${index}`} transform={groupTransform} opacity={(node.opacity??1) * groupMotion.opacity}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} id={`${layer.id}/${index}.${childIndex}`} node={child} style={style} frame={frame} progress={progress} actions={actions} editor={editor}/>)}</g>;
-        })}
-        {particles.map((particle) => <circle key={`${particle.action.id}-${particle.index}`} cx={particle.x} cy={particle.y} r={particle.action.id.includes("uv") ? 6 : 8} fill={resolveVisualColor("accent", style)} opacity=".92" pointerEvents="none"/>)}
+            if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} id={`${layer.id}/${index}`} node={node} style={style} frame={frame} progress={progress} processProgress={processProgress} actions={actions} editor={editor}/>;
+            const groupRef = `${layer.id}/${index}`;
+            const groupMotion = nodeMotion(actions, groupRef, node, frame);
+            const groupTransform = `translate(${node.x + groupMotion.translateX} ${node.y + groupMotion.translateY}) rotate(${(node.rotation??0) + groupMotion.rotation} ${node.width/2} ${node.height/2}) translate(${node.width/2} ${node.height/2}) scale(${groupMotion.scale}) translate(${-node.width/2} ${-node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
+             return <g key={`group-${index}`} transform={groupTransform} opacity={(node.opacity??1) * groupMotion.opacity}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} id={`${layer.id}/${index}.${childIndex}`} node={child} style={style} frame={frame} progress={progress} actions={actions} editor={editor}/>)}</g>;
+         })}
+        {particles.map((particle) => <circle key={`${particle.action.id}-${particle.index}`} cx={particle.x} cy={particle.y} r={particle.action.pathStyle === "magma" || particle.action.pathStyle === "lava" ? 12 : particle.action.pathStyle === "smoke" ? 7 : particle.action.id.includes("uv") ? 6 : 8} fill={particle.action.pathStyle === "magma" || particle.action.pathStyle === "lava" ? "#ffd080" : particle.action.pathStyle === "smoke" ? "#d7dde2" : resolveVisualColor("accent", style)} opacity={particle.opacity * 0.92} pointerEvents="none"/>)}
+        </g>
+       </g>
       </g>
     </g>;
   };
@@ -306,6 +416,7 @@ export function VisualCompositionView({ scene, composition, style, preset, frame
     {backdropLayers.map(renderLayer)}
     <g transform={`translate(${540 + camera.x} ${990 + camera.y}) scale(${camera.scale}) translate(-540 -990) translate(${framing.translateX} ${framing.translateY}) scale(${framing.scale})`}>
       {contentLayers.map(renderLayer)}
+      <MotionPathOverlay actions={scene.motionActions ?? []} frame={frame} editor={editor} style={style}/>
     </g>
   </>;
 }

@@ -8,7 +8,7 @@ export function buildIllustrationPrompt({ research, storyboard, scene, styleLock
   storyboard: VisualStoryboard;
   scene: VisualStoryboardScene;
   styleLock?: GoogleFlowStyleLock;
-  previousReference?: { sceneNumber: number; name: string; prompt?: string; style: string };
+  previousReference?: { sceneNumber: number; name: string; style: string };
 }) {
   const lock = styleLockFor(styleLock ?? storyboard.styleLock);
   const objectLabels = scene.objects.map((object) => `${object.label} (${object.role})`);
@@ -41,7 +41,7 @@ export function buildIllustrationPrompt({ research, storyboard, scene, styleLock
     "NEGATIVE INSTRUCTIONS: no text, letters, labels, captions, subtitles, or scene numbering; no watermark or logo; no collage; no multi-panel storyboard, split screen, or comic panels; no generic icon cards or UI panels; no oversized empty background or unrelated detached icons; no scientifically incorrect scale/relationships or invented causal steps.",
     lock.referenceAssetIds.length ? `Project visual reference asset IDs: ${lock.referenceAssetIds.join(", ")}. These are stored locally only and are NOT attached to Google Flow. Upload them manually to Flow as visual references if useful; use them only for style/palette, never copy their subject.` : "No project reference image attached. Text-only style consistency is approximate and cannot guarantee identical output across scenes.",
     previousReference
-      ? `Optional previous-scene style reference: scene ${previousReference.sceneNumber}, “${previousReference.name}”, style ${previousReference.style}. If manually supplied to Flow, use only as a palette, lighting, outline, and texture guide; do not copy its subject. Previous prompt: ${previousReference.prompt ?? "not recorded"}. Consistency is approximate, not guaranteed.`
+      ? `Optional previous-scene style reference: scene ${previousReference.sceneNumber}, “${previousReference.name}”, style ${previousReference.style}. If manually supplied to Flow, use only as a palette, lighting, outline, and texture guide; do not copy its subject. Consistency is approximate, not guaranteed.`
       : "Use project Style Lock; visual consistency across independent generations is approximate, not guaranteed.",
   ].join("\n\n");
 }

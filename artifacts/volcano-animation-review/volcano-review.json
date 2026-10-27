@@ -1,0 +1,36 @@
+{
+  "classification": "silent animation fixture; not production art or approved narration",
+  "artwork": "procedural VisualWorld draft; no local Google Flow portrait assets",
+  "narration": "none; approximate beat timing",
+  "preview": {
+    "file": "volcano-process-preview-10s.mp4",
+    "durationSec": 10.048,
+    "width": 1080,
+    "height": 1920,
+    "audio": "silent-expected"
+  },
+  "full": {
+    "file": "volcano-six-beat-fixture-30s.mp4",
+    "durationSec": 30.058667,
+    "width": 1080,
+    "height": 1920,
+    "audio": "silent-expected"
+  },
+  "frames": [
+    "frame-sequence/01-reservoir-before.png",
+    "frame-sequence/02-reservoir-filling.png",
+    "frame-sequence/03-reservoir-settled.png",
+    "frame-sequence/04-magma-enters-conduit.png",
+    "frame-sequence/05-magma-mid-conduit.png",
+    "frame-sequence/06-magma-reaches-crater.png",
+    "frame-sequence/07-eruption-smoke-and-fragments.png",
+    "frame-sequence/08-lava-flow-and-deposits.png",
+    "frame-sequence/09-conclusion-carries-process-state.png"
+  ],
+  "editor": {
+    "visualWorldScreenshot": "volcano-visualworld-editor.png",
+    "timelinePathScreenshot": "volcano-timeline-path-editor.png",
+    "timingAndPathSaved": true,
+    "editsSurvivedReload": true
+  }
+}

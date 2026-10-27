@@ -13,7 +13,7 @@ import { parseResearchPackage } from "../src/domain/research";
 import { ApiError, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai";
 import { GeminiSpeechProvider, type GeminiSdkClient } from "../src/server/tts/gemini-provider";
 import { DEFAULT_TTS_MODEL, FREE_TIER_TTS_MODELS, GEMINI_TTS_LOCALES, ttsCacheKey } from "../src/server/tts/provider";
-import { cueProgress, layerMotion, nodeMotion, pointAlongPolyline, sceneTransitionOpacity } from "../src/video/motion";
+import { carriedMotionProgress, cueProgress, layerMotion, nodeMotion, pointAlongPolyline, sceneTransitionOpacity } from "../src/video/motion";
 import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
 import { renderedVisualBounds, visualCompositionFrame } from "../src/domain/visual-geometry";
@@ -24,7 +24,7 @@ import { buildIllustrationPrompt } from "../src/domain/illustration-prompt";
 import { googleFlowPromptPack, matchGoogleFlowFiles, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken, validGoogleFlowAssignments } from "../src/domain/google-flow";
 import { visualAssetSchema, validateRasterImage } from "../src/domain/visual-assets";
 import { visualSemanticPlanSchema } from "../src/domain/visual-semantic-plan";
-import { applyVisualStoryboard, buildVisualStoryboard, illustrationSourceForScene, legacyMotionApprovalFingerprint, legacyVisualApprovalFingerprint, visualApprovalFingerprint, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, illustrationSourceForScene, legacyMotionApprovalFingerprint, legacyVisualApprovalFingerprint, visualApprovalFingerprint, visualStoryboardQualityGate, visualStoryboardSchema, visualWorldSchema, type VisualStoryboard, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
 import { composeVisualScene, hasGenericIconCards, visualRelationshipIsVisible } from "../src/domain/visual-composer";
 import { visualObjectIds, visualObjectLibrary } from "../src/domain/visual-objects";
 import { prepareSmartVisual, type ReusableCandidate } from "../src/server/visual-orchestrator";
@@ -43,9 +43,11 @@ import { fillEmptyGeminiTextEnvironment } from "../src/server/environment";
 import { resolveTheme } from "../src/client/theme-system";
 import { assetFtsExpression, indexTablerIcons, isPublicInternetAddress, openverseResultIsCached, sanitizedTablerSvg, searchTablerIcons, upsertVisualAssetCatalog } from "../src/server/asset-library";
 import { openverseLicenseIds } from "../src/domain/asset-library";
-import { motionActionProgress, motionActionSchema, planSceneMotion } from "../src/domain/motion-director";
+import { motionActionProgress, motionActionSchema, motionPathProgress, motionTargetExists, planSceneMotion } from "../src/domain/motion-director";
+import { motionBeatFromAction, updateMotionBeat } from "../src/domain/motion-beats";
+import { seedVolcanoVisualSample } from "../src/domain/volcano-visual-sample";
 
-const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
+const samples = ["mountain-formation", "volcano-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
 assert.equal(resolveTheme("system", true), "dark", "System theme follows dark OS preference");
 assert.equal(resolveTheme("system", false), "light", "System theme follows light OS preference");
 assert.equal(resolveTheme("dark", false), "dark", "Explicit theme ignores OS preference");
@@ -118,6 +120,24 @@ const mountain = parsedSamples[0]!;
 const seaSalt = parsedSamples.find((sample) => sample.id === "why-seawater-is-salty-id")!;
 const solarProtection = parsedSamples.find((sample) => sample.id === "earth-solar-protection-id")!;
 const rainbow = parsedSamples.find((sample) => sample.id === "how-rainbows-form-id")!;
+const volcano = parsedSamples.find((sample) => sample.id === "volcano-formation-id")!;
+assert.equal(volcano.scenes.length, 6, "volcano sample covers six requested beats");
+assert.equal(volcano.targetDurationSec, 30, "volcano sample targets a 30-second edit");
+assert.ok(volcano.narration.trim().split(/\s+/).length <= 80, "volcano narration stays concise for a 30-second voice track");
+assert.ok(volcano.scenes[0]!.narrationText.includes("berbeda dari pegunungan lipatan"), "volcano sample distinguishes volcanic growth from folded mountain formation");
+assert.ok(volcano.scenes[1]!.narrationText.includes("satu atau beberapa zona penyimpanan"), "sample avoids implying one universal fixed magma chamber");
+assert.ok(volcano.scenes[3]!.narrationText.includes("lava atau meletus eksplosif"), "sample explains effusive and explosive eruption outcomes");
+assert.ok(volcano.scenes[5]!.narrationText.includes("beragam"), "sample states real volcanic systems and forms vary");
+const volcanoVisualSample = seedVolcanoVisualSample(buildVisualStoryboard(volcano));
+assert.equal(volcanoVisualSample.visualWorld?.elements.length, volcanoVisualSample.visualWorld?.composition.layers.length, "volcano sample declares every stable shared-world layer");
+assert.equal(volcanoVisualSample.scenes.reduce((count, scene) => count + scene.motionActions.length, 0), 6, "volcano sample seeds six persisted Motion Beats");
+assert.ok(volcanoVisualSample.scenes.every((scene) => !scene.approved && scene.compositionSource === "procedural" && scene.flowStatus === "awaiting-illustration"), "sample Visual World remains an unapproved procedural draft until final artwork is imported");
+assert.ok(volcanoVisualSample.scenes.every((scene) => JSON.stringify(scene.composition) === JSON.stringify(volcanoVisualSample.visualWorld!.composition)), "all six sample scenes share same Visual World composition");
+assert.ok(volcanoVisualSample.scenes.every((scene) => scene.motionActions.every((action) => motionTargetExists(scene.composition, action.targetNode) && (action.kind !== "particle-flow" || (action.path?.length ?? 0) >= 2))), "sample Motion Beats target real nodes and expose editable paths where applicable");
+const reservoirBeat = volcanoVisualSample.scenes[1]!.motionActions[0]!;
+assert.equal(carriedMotionProgress(1, 2, reservoirBeat, reservoirBeat.startFrame + 20), 0, "magma reservoir stays hidden before storage beat");
+assert.equal(carriedMotionProgress(2, 2, reservoirBeat, reservoirBeat.startFrame + reservoirBeat.durationFrames / 2), 0.5, "reservoir fill follows deterministic beat progress");
+assert.equal(carriedMotionProgress(3, 2, undefined, 0), 1, "completed reservoir state carries into later scene");
 const mountainStoryboard = buildVisualStoryboard(mountain);
 assert.ok(mountainStoryboard.styleLock.illustrationStyle.includes("Premium 2D"));
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.illustrationWorkflow === "google-flow"), "new and legacy scenes default to persisted Google Flow workflow");
@@ -235,6 +255,18 @@ for (const [board, plan] of [[saltStoryboard, riverMotion], [solarStoryboard, oz
   assert.ok(plan.motionActions.every((action) => action.startFrame >= 0 && action.startFrame + action.durationFrames <= scene.durationSec * 30), "semantic action timing stays within scene duration");
 }
 assert.equal(motionActionSchema.safeParse({ id: "bad-motion", kind: "particle-flow", targetNode: "missing/0", startFrame: 0, durationFrames: 20, easing: "linear", path: [{ x: -1, y: 0 }, { x: 20, y: 20 }], particleCount: 99 }).success, false, "motion schema rejects unsafe path bounds and excessive particles");
+assert.equal(motionActionSchema.safeParse({ id: "mismatched-layer", kind: "particle-flow", targetNode: "lava/0", targetLayerId: "magma", startFrame: 0, durationFrames: 20, easing: "linear", path: [{ x: 300, y: 800 }, { x: 400, y: 600 }], particleCount: 3 }).success, false, "Motion Beat layer reference must match persisted target node");
+const authoredMagmaAction = motionActionSchema.parse({ id: "magma-rise", description: "Magma naik", kind: "particle-flow", targetNode: "imported-illustration/0", targetLayerId: "imported-illustration", targetRole: "magma", startFrame: 10, durationFrames: 60, easing: "linear", path: [{ x: 400, y: 1200 }, { x: 500, y: 850 }], motionPathRef: "path-magma-rise", pathStyle: "magma", particleCount: 4 });
+const authoredMagmaBeat = motionBeatFromAction(authoredMagmaAction);
+assert.equal(authoredMagmaBeat.startTimeSec, 10 / 30, "Motion Beat projects persisted start frame to scene-relative seconds");
+assert.equal(authoredMagmaBeat.targetRole, "magma", "Motion Beat exposes semantic target role");
+assert.equal(motionPathProgress(authoredMagmaAction, 9), 0, "overlay path stays hidden before its start frame");
+assert.equal(motionPathProgress(authoredMagmaAction, 40), 0.5, "overlay path progress is deterministic at midpoint");
+assert.equal(motionPathProgress(authoredMagmaAction, 71), 1, "overlay path remains complete after end frame");
+const editedMagmaAction = updateMotionBeat(authoredMagmaAction, { description: "Magma naik lewat saluran", startTimeSec: 1.2, durationSec: 2, path: [{ x: 450, y: 1300 }, { x: 530, y: 700 }] }, 5);
+assert.deepEqual([editedMagmaAction.startFrame, editedMagmaAction.durationFrames], [36, 60], "Motion Beat edits round-trip to deterministic frame timing");
+assert.equal(editedMagmaAction.description, "Magma naik lewat saluran", "Motion Beat description persists on source action");
+assert.deepEqual(editedMagmaAction.path?.[0], { x: 450, y: 1300 }, "Motion Beat path edit persists in action data");
 const riverAction = riverMotion.motionActions.find((action) => action.kind === "particle-flow")!;
 const riverDrawAction = riverMotion.motionActions.find((action) => action.kind === "draw")!;
 assert.notEqual(motionActionProgress(riverAction, riverAction.startFrame + 5), motionActionProgress(riverAction, riverAction.startFrame + 15), "semantic motion progress is a pure function of frame");
@@ -298,6 +330,20 @@ Object.assign(rasterScene, {
   composition: visualCompositionSchema.parse({ background: saltStoryboard.palette.canvas, layers: [{ id: "imported-illustration", depth: 0.72, nodes: [{ type: "image", asset: aiImportAsset.id, x: 40, y: 520, width: 1000, height: 900, fit: "contain", position: "center" }] }] }),
 });
 assert.equal(illustrationSourceForScene(rasterScene), "ai-image");
+const rasterWorld = buildVisualWorld("Shared river world", rasterScene);
+assert.equal(rasterWorld.sourceAssetId, aiImportAsset.id, "Visual World tracks imported base raster asset");
+assert.deepEqual(rasterWorld.elements.map((element) => element.layerId), rasterWorld.composition.layers.map((layer) => layer.id), "Visual World exposes every composition layer by stable ID");
+assert.equal(visualWorldSchema.safeParse(rasterWorld).success, true, "stable Visual World layer manifest passes schema");
+const sharedWorldBoard = structuredClone(rasterStoryboard);
+sharedWorldBoard.visualWorld = rasterWorld;
+sharedWorldBoard.scenes.forEach((scene) => { scene.composition = rasterWorld.composition; });
+sharedWorldBoard.reusableWorldObjects = visualObjectIds.filter((objectId) => sharedWorldBoard.scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1);
+const sharedWorldParse = visualStoryboardSchema.safeParse(sharedWorldBoard);
+assert.equal(sharedWorldParse.success, true, `shared Visual World persists with identical base composition in every scene: ${sharedWorldParse.success ? "" : JSON.stringify(sharedWorldParse.error.issues)}`);
+const splitWorldBoard = structuredClone(sharedWorldBoard);
+splitWorldBoard.scenes[0]!.composition = saltStoryboard.scenes[0]!.composition;
+assert.equal(visualStoryboardSchema.safeParse(splitWorldBoard).success, false, "shared Visual World rejects scene-specific base composition drift");
+assert.ok(applyVisualStoryboard(seaSalt, sharedWorldBoard).scenes.every((scene) => JSON.stringify(scene.visualComposition) === JSON.stringify(rasterWorld.composition)), "Remotion research projection uses shared base world across scenes");
 assert.ok(visualStoryboardQualityGate(seaSalt, rasterStoryboard, [aiImportAsset]).scenes[rasterScene.sceneId]?.some((issue) => issue.includes("Tinjau semantik")), "raster illustration requires explicit semantic/provenance review before approval");
 rasterScene.authoringConfirmed = true;
 const rasterGate = visualStoryboardQualityGate(seaSalt, rasterStoryboard, [aiImportAsset]);
@@ -333,6 +379,18 @@ const rasterMarkup = renderToStaticMarkup(React.createElement("svg", null, React
   scene: seaSalt.scenes[2]!, composition: rasterScene.composition, style: visualStyles[seaSalt.visualPreset], preset: seaSalt.visualPreset, frame: 45, progress: 0.42,
 })));
 assert.match(rasterMarkup, /preserveAspectRatio="xMidYMid meet"/);
+const magmaOverlayScene = { ...seaSalt.scenes[2]!, motionActions: [authoredMagmaAction] };
+const magmaOverlayMarkup = renderToStaticMarkup(React.createElement("svg", null, React.createElement(VisualCompositionView, {
+  scene: magmaOverlayScene, composition: rasterScene.composition, style: visualStyles[seaSalt.visualPreset], preset: seaSalt.visualPreset,
+  frame: 40, progress: 0.5,
+  editor: {
+    sceneId: magmaOverlayScene.id, selectedImageId: null, onSelectImage: () => {}, onTransformImage: () => {},
+    selectedMotionPath: { actionId: authoredMagmaAction.id, points: authoredMagmaAction.path!, pathStyle: "magma" },
+    onTransformMotionPathPoint: () => {},
+  },
+})));
+assert.match(magmaOverlayMarkup, /data-motion-path-point="0"/, "selected Motion Beat exposes canvas path handles");
+assert.match(magmaOverlayMarkup, /role="slider"[^>]+aria-valuetext="x 400, y 1200"/, "canvas path handle exposes keyboard-editable coordinates");
 const preMotionV2Scene = structuredClone(seaSalt.scenes[2]!) as unknown as Record<string, unknown>;
 delete preMotionV2Scene.motionActions;
 const preMotionV2Markup = renderToStaticMarkup(React.createElement("svg", null, React.createElement(VisualCompositionView, {
@@ -352,6 +410,10 @@ assert.match(rasterPrompt, /Narasi|Scene narration/);
 assert.match(rasterPrompt, /NEGATIVE INSTRUCTIONS: no text.*no watermark.*no collage.*no multi-panel storyboard.*no generic icon cards/s);
 assert.match(rasterPrompt, /palette/);
 assert.match(rasterPrompt, /SUNGAI flows-to LAUT.*SUNGAI carries MINERAL/s, "river prompt encodes mineral flow from mountain river toward sea");
+const oversizedPreviousReference = { sceneNumber: 1, name: "Previous scene", style: mountainStoryboard.styleLock.illustrationStyle, prompt: `PREVIOUS_PROMPT_MUST_NOT_BE_COPIED ${"previous prompt content ".repeat(600)}` };
+const followupPrompt = buildIllustrationPrompt({ research: mountain, storyboard: mountainStoryboard, scene: mountainStoryboard.scenes[1]!, previousReference: oversizedPreviousReference });
+assert.ok(followupPrompt.length <= 12000, "previous Flow prompt is not recursively copied into the next scene prompt");
+assert.equal(followupPrompt.includes("PREVIOUS_PROMPT_MUST_NOT_BE_COPIED"), false, "scene reference keeps only concise style context");
 const ozonePrompt = buildIllustrationPrompt({ research: solarProtection, storyboard: solarStoryboard, scene: solarStoryboard.scenes[2]! });
 assert.match(ozonePrompt, /LAPISAN OZON filters SINAR UV/, "ozone prompt encodes UV absorption before radiation reaches Earth");
 assert.match(ozonePrompt, /Premium 2D Editorial Educational Illustration.*one connected environment/s);

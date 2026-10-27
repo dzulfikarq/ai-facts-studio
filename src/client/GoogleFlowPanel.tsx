@@ -10,6 +10,7 @@ import type { VisualStoryboard, VisualStoryboardScene } from "../domain/visual-s
 const GOOGLE_FLOW_URL = "https://flow.google.com/";
 type BatchRow = { id: string; file: File; previewUrl: string; sceneId: string | null; reason: string; matchStatus: string; skipped: boolean; manual: boolean };
 export type FlowBatchItem = { id: string; file: File; sceneId: string; prompt: string };
+export type FlowBatchProgress = { stage: "uploading"; percent: number } | { stage: "processing" };
 
 export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onFlowPromptChange, onStyleLockChange, onPreparePrompts, onApplyStyleLock, onUploadReference, onUploadIllustration, onApplyBatch }: {
   research: ResearchPackage;
@@ -23,7 +24,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
   onApplyStyleLock: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
   onUploadReference: (file: File) => Promise<VisualAsset | null>;
   onUploadIllustration: (sceneId: string, file: File, metadata: { source: "ai-generated"; prompt: string; license: string; provider: string; model: string }) => Promise<boolean>;
-  onApplyBatch: (items: FlowBatchItem[]) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
+  onApplyBatch: (items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
 }) {
   const [promptDraft, setPromptDraft] = useState<{ sceneId: string; value: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -34,6 +35,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
   const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
   const [batchError, setBatchError] = useState("");
   const [batchApplying, setBatchApplying] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<FlowBatchProgress | { stage: "complete"; total: number; successful: number; failed: number } | null>(null);
   const [flowNotice, setFlowNotice] = useState("");
   const [promptExpanded, setPromptExpanded] = useState(false);
   const urls = useRef(new Set<string>());
@@ -81,7 +83,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
     const index = storyboard.scenes.findIndex((item) => item.sceneId === target.sceneId);
     const previous = storyboard.scenes.slice(0, index).reverse().find((item) => item.flowPrompt || item.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image")));
     return buildIllustrationPrompt({ research, storyboard, scene: target, styleLock: storyboard.styleLock,
-      ...(previous ? { previousReference: { sceneNumber: previous.sceneNumber, name: previous.headline, prompt: previous.flowPrompt, style: storyboard.styleLock.illustrationStyle } } : {}),
+      ...(previous ? { previousReference: { sceneNumber: previous.sceneNumber, name: previous.headline, style: storyboard.styleLock.illustrationStyle } } : {}),
     });
   };
   const preparePrompt = () => {
@@ -115,6 +117,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
   };
   const addBatchFiles = (files: FileList | readonly File[]) => {
     setBatchError("");
+    setBatchProgress(null);
     if (files.length > 30) { setBatchError("Maksimal 30 file per batch; tidak ada file yang ditambahkan."); return; }
     const candidates = [...files];
     const invalid = candidates.find((file) => !validImageFile(file));
@@ -135,13 +138,15 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
     if (!items.length) return;
     setBatchApplying(true);
     setBatchError("");
+    setBatchProgress({ stage: "uploading", percent: 0 });
     try {
-      const result = await onApplyBatch(items);
+      const result = await onApplyBatch(items, setBatchProgress);
+      setBatchProgress({ stage: "complete", total: items.length, successful: result.appliedIds.length, failed: result.failures.length });
       const success = new Set(result.appliedIds);
       setBatchRows((rows) => rows.filter((row) => !success.has(row.id)));
       setBatchError(result.failures.map((failure) => `${failure.fileName}: ${failure.message}`).join(" · "));
       if (result.appliedIds.length && !result.failures.length) setBatchOpen(false);
-    } catch (error) { setBatchError(error instanceof Error ? error.message : "Batch import gagal."); }
+    } catch (error) { setBatchProgress(null); setBatchError(error instanceof Error ? error.message : "Batch import gagal."); }
     finally { setBatchApplying(false); }
   };
   const uploadOne = async () => {
@@ -196,7 +201,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
         <button type="button" className="button button-light" onClick={() => download("md")}><Download size={15} aria-hidden="true"/> Export Markdown</button>
         <button type="button" className="button button-light" onClick={() => download("json")}><Download size={15} aria-hidden="true"/> Export JSON</button>
         <button type="button" className="button button-primary" onClick={() => onApplyStyleLock(makeAllPrompts())} disabled={busy}><RefreshCw size={15} aria-hidden="true"/> Apply Style Lock to All Prompts</button>
-        <button type="button" className="button button-light" onClick={() => { setBatchError(""); setBatchRows([]); setBatchOpen(true); }} disabled={busy}><Upload size={15} aria-hidden="true"/> Import Semua Ilustrasi</button>
+        <button type="button" className="button button-light" onClick={() => { setBatchError(""); setBatchProgress(null); setBatchRows([]); setBatchOpen(true); }} disabled={busy}><Upload size={15} aria-hidden="true"/> Import Semua Ilustrasi</button>
       </div>
       <details className="google-flow-style-lock"><summary>Global Style Lock · {storyboard.styleLock.illustrationStyle}</summary>
         <div className="google-flow-style-fields">
@@ -219,7 +224,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, onF
     </details>
     {flowNotice && <p className="google-flow-live" role="status">{flowNotice}</p>}{copied && <span className="sr-only" role="status">Disalin</span>}
 
-    {batchOpen && <GoogleFlowBatchDialog ref={batchDialogRef} rows={batchRows} scenes={sceneIdentities} missingScenes={missingScenes} error={batchError} applying={batchApplying || busy} inputRef={batchInput} onFiles={addBatchFiles} onRowChange={updateBatchRow} onApply={() => void applyBatch()} onClose={() => { if (!batchApplying) { setBatchOpen(false); setBatchError(""); } }} validAssignments={assignments}/>}
+    {batchOpen && <GoogleFlowBatchDialog ref={batchDialogRef} rows={batchRows} scenes={sceneIdentities} missingScenes={missingScenes} error={batchError} progress={batchProgress} applying={batchApplying || busy} inputRef={batchInput} onFiles={addBatchFiles} onRowChange={updateBatchRow} onApply={() => void applyBatch()} onClose={() => { if (!batchApplying) { setBatchOpen(false); setBatchError(""); } }} validAssignments={assignments}/>}
   </section>;
 }
 
@@ -228,6 +233,7 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
   scenes: GoogleFlowMatchScene[];
   missingScenes: VisualStoryboardScene[];
   error: string;
+  progress: FlowBatchProgress | { stage: "complete"; total: number; successful: number; failed: number } | null;
   applying: boolean;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onFiles: (files: FileList | readonly File[]) => void;
@@ -235,13 +241,23 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
   onApply: () => void;
   onClose: () => void;
   validAssignments: boolean[];
-}>(function GoogleFlowBatchDialog({ rows, scenes, missingScenes, error, applying, inputRef, onFiles, onRowChange, onApply, onClose, validAssignments }, ref) {
+}>(function GoogleFlowBatchDialog({ rows, scenes, missingScenes, error, progress, applying, inputRef, onFiles, onRowChange, onApply, onClose, validAssignments }, ref) {
   const validCount = validAssignments.filter(Boolean).length;
-  return <dialog ref={ref} className="google-flow-batch-dialog" aria-labelledby="google-flow-batch-title" onClose={onClose} onCancel={(event) => { if (applying) event.preventDefault(); }}>
-      <header><div><h3 id="google-flow-batch-title">Review batch import</h3><p>{rows.length} file · {validCount} siap diterapkan · {missingScenes.length} scene belum dipasangkan</p></div><button type="button" className="button button-light icon-button" onClick={onClose} disabled={applying} aria-label="Tutup batch import"><X size={16} aria-hidden="true"/></button></header>
-      <div className="google-flow-batch-drop" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onFiles([...event.dataTransfer.files]); }}><span>Drop PNG, JPEG, atau WebP · maksimal 30 file, 10 MB per file</span><input ref={inputRef} type="file" multiple accept="image/png,image/jpeg,image/webp" onChange={(event) => { if (event.currentTarget.files?.length) onFiles(event.currentTarget.files); event.currentTarget.value = ""; }}/></div>
+  const progressLabel = progress?.stage === "uploading" ? `Mengirim file · ${progress.percent}%` : progress?.stage === "processing" ? "File terkirim · memvalidasi dan mengoptimasi gambar…" : progress?.stage === "complete" ? `Selesai · ${progress.successful} berhasil · ${progress.failed} gagal dari ${progress.total}` : "";
+  return <dialog ref={ref} className="google-flow-batch-dialog" aria-labelledby="google-flow-batch-title" aria-busy={applying} onClose={onClose} onCancel={(event) => { if (applying) event.preventDefault(); }}>
+      <header><div><span className="google-flow-batch-eyebrow">GOOGLE FLOW · BATCH</span><h3 id="google-flow-batch-title">Tinjau impor ilustrasi</h3><p>{rows.length} file dipilih <span aria-hidden="true">·</span> {validCount} siap diterapkan <span aria-hidden="true">·</span> {missingScenes.length} scene belum dipasangkan</p></div><button type="button" className="button button-light icon-button" onClick={onClose} disabled={applying} aria-label="Tutup batch import"><X size={16} aria-hidden="true"/></button></header>
+      <div className={`google-flow-batch-drop ${applying ? "is-disabled" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!applying) onFiles([...event.dataTransfer.files]); }}>
+        <FileImage size={21} aria-hidden="true"/><div><strong>Lepas gambar di sini atau pilih file</strong><span>PNG, JPEG, atau WebP · maksimal 30 file, 10 MB per file</span></div>
+        <input ref={inputRef} type="file" multiple accept="image/png,image/jpeg,image/webp" hidden disabled={applying} aria-label="Pilih gambar untuk batch import" onChange={(event) => { if (event.currentTarget.files?.length) onFiles(event.currentTarget.files); event.currentTarget.value = ""; }}/>
+        <button type="button" className="button button-light" onClick={() => inputRef.current?.click()} disabled={applying}>Pilih file</button>
+      </div>
+      {progress && <div className={`google-flow-batch-progress ${progress.stage}`}>
+        <div className="google-flow-batch-progress-heading"><strong role="status" aria-live="polite">{progress.stage === "uploading" ? "Mengirim batch" : progress.stage === "processing" ? "Memproses ilustrasi" : "Impor selesai"}</strong><span>{progressLabel}</span></div>
+        <div className={`google-flow-batch-progress-track ${progress.stage === "processing" ? "indeterminate" : ""}`} role="progressbar" aria-label={progress.stage === "uploading" ? "Progres pengiriman file" : progress.stage === "processing" ? "Proses validasi dan optimasi gambar" : "Hasil batch import"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.stage === "uploading" ? progress.percent : progress.stage === "complete" ? 100 : undefined} aria-valuetext={progressLabel}><i style={progress.stage === "uploading" ? { width: `${progress.percent}%` } : progress.stage === "complete" ? { width: "100%" } : undefined}/></div>
+        {progress.stage === "processing" && <small>Validasi tetap berjalan per file. Waktu bergantung ukuran dan format gambar.</small>}
+      </div>}
       {rows.length > 0 ? <div className="google-flow-batch-table" role="table" aria-label="Pemetaan ilustrasi batch">
-        <div className="google-flow-batch-row google-flow-batch-head" role="row"><span role="columnheader">Preview / filename</span><span role="columnheader">Scene tujuan</span><span role="columnheader">Alasan / status</span><span role="columnheader">Aksi</span></div>
+        <div className="google-flow-batch-row google-flow-batch-head" role="row"><span role="columnheader">Pratinjau & nama file</span><span role="columnheader">Scene tujuan</span><span role="columnheader">Pencocokan</span><span role="columnheader">Aksi</span></div>
         {rows.map((row, index) => {
           const valid = validAssignments[index];
           const sceneConflict = !row.skipped && row.sceneId && !valid;
@@ -256,10 +272,10 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
             <div role="cell"><button type="button" className="button button-light" disabled={applying} onClick={() => onRowChange(row.id, { skipped: !row.skipped })}>{row.skipped ? "Pulihkan" : "Lewati"}</button></div>
           </div>;
         })}
-      </div> : <div className="google-flow-batch-empty"><FileImage size={25} aria-hidden="true"/><strong>Belum ada file</strong><span>Pilih beberapa file atau drop di area import.</span></div>}
-      <div className="google-flow-batch-missing"><strong>Scene belum dipasangkan:</strong> {missingScenes.length ? missingScenes.map((scene) => `Scene ${scene.sceneNumber}`).join(", ") : "tidak ada"}</div>
+      </div> : <div className="google-flow-batch-empty"><FileImage size={25} aria-hidden="true"/><strong>Belum ada file</strong><span>Pilih beberapa file atau lepas di area impor.</span></div>}
+      <div className={`google-flow-batch-missing ${missingScenes.length ? "needs-match" : "all-matched"}`}><strong>{missingScenes.length ? "Scene belum dipasangkan" : "Semua scene terpasang"}</strong><span>{missingScenes.length ? missingScenes.map((scene) => `Scene ${scene.sceneNumber}`).join(", ") : "Semua file valid punya tujuan unik."}</span></div>
       {error && <p className="google-flow-batch-error" role="alert">{error}</p>}
-      <footer><button type="button" className="button button-light" onClick={onClose} disabled={applying}>Batal</button><button type="button" className="button button-primary" onClick={onApply} disabled={!validCount || applying}>{applying ? "Mengimpor…" : `Terapkan Semua yang Valid (${validCount})`}</button></footer>
+      <footer><button type="button" className="button button-light" onClick={onClose} disabled={applying}>Batal</button><button type="button" className="button button-primary" onClick={onApply} disabled={!validCount || applying}>{applying ? "Mengimpor…" : `Impor ${validCount} ilustrasi`}</button></footer>
   </dialog>;
 });
 

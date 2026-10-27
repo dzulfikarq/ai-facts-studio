@@ -211,10 +211,13 @@ function apiError(response: express.Response, status: number, message: string, e
 
 function missingVisualAssetReferences(storyboard: ReturnType<typeof buildVisualStoryboard>, assets: readonly VisualAsset[]) {
   const available = new Set(assets.map((asset) => asset.id));
-  return storyboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => {
+  return [
+    ...storyboard.styleLock.referenceAssetIds.filter((assetId) => !available.has(assetId)),
+    ...storyboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => {
     const candidates = node.type === "group" ? node.children : [node];
     return candidates.flatMap((candidate) => candidate.type === "image" && candidate.asset.startsWith("upload-") && !available.has(candidate.asset) ? [candidate.asset] : []);
-  })));
+    }))),
+  ];
 }
 
 function writeVisualPreparationJob(job: VisualPreparationJob, insert = false, requestSha256 = "") {
@@ -556,7 +559,7 @@ function reusableSceneReferencesVisualAsset(file: string) {
 }
 
 function visualAssetReferencedByStoryboard(storyboard: VisualStoryboard, assetId: string) {
-  return storyboard.scenes.some((scene) => scene.composition.layers.some((layer) => layer.nodes.some((node) => {
+  return storyboard.styleLock.referenceAssetIds.includes(assetId) || storyboard.scenes.some((scene) => scene.composition.layers.some((layer) => layer.nodes.some((node) => {
     const candidates = node.type === "group" ? node.children : [node];
     return candidates.some((candidate) => candidate.type === "image" && candidate.asset === assetId);
   })));
@@ -597,6 +600,7 @@ function visualAssetUsageIndex() {
     try {
       const project = JSON.parse(row.data_json) as StoredProject;
       for (const asset of project.visualAssets ?? []) add(asset.id, row.id, 0);
+      for (const assetId of project.visualStoryboard?.styleLock?.referenceAssetIds ?? []) add(assetId, row.id);
       for (const scene of project.visualStoryboard.scenes) for (const layer of scene.composition.layers) for (const node of layer.nodes) {
         const nodes = node.type === "group" ? node.children : [node];
         for (const candidate of nodes) if (candidate.type === "image" && candidate.asset.startsWith("upload-")) add(candidate.asset, row.id);
@@ -1569,6 +1573,11 @@ app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async 
       license: typeof request.body?.license === "string" && request.body.license.trim() ? request.body.license.trim().slice(0, 160) : "User-provided; license/provenance not specified",
       style: typeof request.body?.style === "string" && request.body.style.trim() ? request.body.style.trim().slice(0, 120) : "clean-flat-2d",
       ...(source === "ai-generated" ? { prompt, provider, ...(model ? { model } : {}) } : {}),
+      originalName: path.basename(request.file.originalname).slice(0, 255) || "illustration-upload",
+      originalMimeType: request.file.mimetype,
+      originalBytes: request.file.size,
+      originalSha256: createHash("sha256").update(request.file.buffer).digest("hex"),
+      ...(provider.toLocaleLowerCase("en-US").includes("google flow") ? { usageMetadata: "Google Flow output reported by user; imported manually; provider origin not independently verified." } : {}),
       sha256, bytes: processed.buffer.length, width: image.width, height: image.height, file,
     });
     const destination = path.join(visualAssetDir, file);
@@ -1665,7 +1674,7 @@ app.delete("/api/projects/:id/visual-assets/:assetId", async (request, response)
   const project = projectFromRow(row);
   const asset = project.visualAssets.find((item) => item.id === assetId);
   if (!asset) return apiError(response, 404, "Aset tidak ditemukan di project.");
-  if (visualAssetReferencedByStoryboard(project.visualStoryboard, asset.id)) return apiError(response, 409, "Aset masih digunakan scene. Ganti ilustrasi scene sebelum menghapus aset.", { code: "visual-asset-in-use" });
+  if (visualAssetReferencedByStoryboard(project.visualStoryboard, asset.id)) return apiError(response, 409, "Aset masih digunakan scene atau Style Lock. Lepas referensi sebelum menghapus aset.", { code: "visual-asset-in-use" });
   if (snapshotReferencesVisualAsset(asset.file)) return apiError(response, 409, "Aset masih dirujuk snapshot render; hapus project/snapshot terkait sebelum melepas aset.", { code: "visual-asset-snapshot-in-use" });
   project.visualAssets = project.visualAssets.filter((item) => item.id !== assetId);
   try {

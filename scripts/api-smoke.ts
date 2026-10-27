@@ -80,6 +80,7 @@ let jobAudioPath: string | undefined;
 let jobSnapshotPath: string | undefined;
 let projectUploadPath: string | undefined;
 let assetUploadPath: string | undefined;
+let flowAssetPath: string | undefined;
 let jobId: string | undefined;
 let renderOutputPath: string | undefined;
 
@@ -309,8 +310,36 @@ try {
   assert.ok(["png", "webp"].includes(uploadedVisual.asset.format), "valid raster upload may retain or optimize to WebP");
   assert.equal(uploadedVisual.asset.width, 128);
   assert.equal(uploadedVisual.asset.source, "user-upload");
+  assert.equal(uploadedVisual.asset.originalName, "ocean.png");
+  assert.equal(uploadedVisual.asset.originalMimeType, "image/png");
+  assert.equal(uploadedVisual.asset.originalBytes, pngBytes.length);
+  assert.match(uploadedVisual.asset.originalSha256, /^[a-f0-9]{64}$/);
   assetUploadPath = path.resolve("public/visual-assets", uploadedVisual.asset.file);
   assert.equal((await fetch(`${baseUrl}/visual-assets/${uploadedVisual.asset.file}`)).status, 200, "content-hash image route serves uploaded asset");
+
+  const flowPngPath = path.join(tempDir, "flow-fixture.png");
+  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=purple:s=128x96:d=1", "-frames:v", "1", "-y", flowPngPath]);
+  const flowPngBytes = await readFile(flowPngPath);
+  const flowForm = new FormData();
+  flowForm.append("illustration", new Blob([flowPngBytes], { type: "image/png" }), "flow-scene-01.png");
+  flowForm.append("name", "Flow scene one fixture");
+  flowForm.append("source", "ai-generated");
+  flowForm.append("provider", "Google Flow (manual import)");
+  flowForm.append("model", "Google Flow");
+  flowForm.append("prompt", "One premium editorial illustration for scene one.");
+  flowForm.append("license", "User-provided; Google Flow output imported manually");
+  const flowUpload = await fetch(`${baseUrl}/api/projects/${assetProject.id}/visual-assets`, { method: "POST", body: flowForm });
+  const flowVisual = await flowUpload.json();
+  assert.equal(flowUpload.status, 201, flowVisual.error);
+  assert.equal(flowVisual.asset.source, "ai-generated");
+  assert.equal(flowVisual.asset.provider, "Google Flow (manual import)");
+  assert.equal(flowVisual.asset.prompt, "One premium editorial illustration for scene one.");
+  assert.equal(flowVisual.asset.originalName, "flow-scene-01.png");
+  assert.equal(flowVisual.asset.originalMimeType, "image/png");
+  assert.equal(flowVisual.asset.originalBytes, flowPngBytes.length);
+  assert.match(flowVisual.asset.originalSha256, /^[a-f0-9]{64}$/);
+  assert.match(flowVisual.asset.usageMetadata, /imported manually; provider origin not independently verified/);
+  flowAssetPath = path.resolve("public/visual-assets", flowVisual.asset.file);
 
   const wrongMimeForm = new FormData();
   wrongMimeForm.append("illustration", new Blob([pngBytes], { type: "image/jpeg" }), "spoof.jpg");
@@ -319,17 +348,54 @@ try {
 
   const imageScene = uploadedVisual.project.visualStoryboard.scenes[0];
   const imageBoard = structuredClone(uploadedVisual.project.visualStoryboard);
+  imageBoard.styleLock.referenceAssetIds = [flowVisual.asset.id];
   const imageComposition = (assetId: string) => ({ background: imageBoard.palette.canvas, layers: [{ id: "user-illustration", depth: 0.72, nodes: [{ type: "image", asset: assetId, x: 100, y: 510, width: 880, height: 900 }] }] });
-  imageBoard.scenes[0] = { ...imageScene, composition: imageComposition(`upload-${"f".repeat(64)}.png`), compositionSource: "manual", layout: "existing-composition", authoringStatus: "needs_review", authoringConfirmed: false, approved: false, approvedFingerprint: null, relationships: [] };
+  imageBoard.scenes[0] = { ...imageScene, flowPrompt: "One finished raster illustration; do not render text.", flowStatus: "illustration-imported", composition: imageComposition(`upload-${"f".repeat(64)}.png`), compositionSource: "manual", layout: "existing-composition", authoringStatus: "needs_review", authoringConfirmed: false, approved: false, approvedFingerprint: null, relationships: [] };
   const unknownAssetSave = await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: uploadedVisual.project.researchPackage, visualStoryboard: imageBoard }),
   });
   assert.equal(unknownAssetSave.status, 400, "project cannot reference an asset it does not own");
-  imageBoard.scenes[0] = { ...imageBoard.scenes[0], composition: imageComposition(uploadedVisual.asset.id) };
+  imageBoard.scenes[0] = { ...imageBoard.scenes[0], composition: imageComposition(flowVisual.asset.id) };
   const validAssetSave = await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: uploadedVisual.project.researchPackage, visualStoryboard: imageBoard }),
   });
   assert.equal(validAssetSave.status, 200, "owned upload persists in Visual Storyboard");
+  const reopenedFlowProject = await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json());
+  assert.equal(reopenedFlowProject.visualStoryboard.styleLock.referenceAssetIds[0], flowVisual.asset.id, "project Style Lock reference persists through SQLite");
+  assert.equal(reopenedFlowProject.visualStoryboard.scenes[0].flowPrompt, imageBoard.scenes[0].flowPrompt, "edited Flow prompt persists through SQLite");
+  assert.equal(reopenedFlowProject.visualStoryboard.scenes[0].sceneToken, imageScene.sceneToken, "stable scene token survives project save/reload");
+  assert.equal(reopenedFlowProject.visualStoryboard.scenes[0].flowStatus, "illustration-imported");
+  const invalidReferenceBoard = structuredClone(reopenedFlowProject.visualStoryboard);
+  invalidReferenceBoard.styleLock.referenceAssetIds = [`upload-${"e".repeat(64)}.webp`];
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: reopenedFlowProject.researchPackage, visualStoryboard: invalidReferenceBoard }),
+  })).status, 400, "Style Lock cannot reference another project's or missing asset");
+  const approvedFlowBoard = structuredClone(reopenedFlowProject.visualStoryboard);
+  approvedFlowBoard.scenes[0] = approveScene(approvedFlowBoard.scenes[0]);
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: reopenedFlowProject.researchPackage, visualStoryboard: approvedFlowBoard }),
+  })).status, 200, "imported illustration can be approved after review");
+  const approvedFlowProject = await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json());
+  const promptOnlyEdit = structuredClone(approvedFlowProject.visualStoryboard);
+  promptOnlyEdit.scenes[0].flowPrompt += "\nOptional hand-edited details.";
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: approvedFlowProject.researchPackage, visualStoryboard: promptOnlyEdit }),
+  })).status, 200, "editing external prompt does not stale approval for unchanged rendered art");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json())).visualStoryboard.scenes[0].approved, true);
+  const replaceFlowBoard = structuredClone(promptOnlyEdit);
+  replaceFlowBoard.scenes[0] = { ...replaceFlowBoard.scenes[0], composition: imageComposition(uploadedVisual.asset.id), approved: false, approvedFingerprint: null, authoringConfirmed: false, flowStatus: "illustration-imported" };
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: approvedFlowProject.researchPackage, visualStoryboard: replaceFlowBoard }),
+  })).status, 200, "replacing imported raster persists only after explicit approval invalidation");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json())).visualStoryboard.scenes[0].approved, false, "new artwork requires fresh scene approval");
+  const styleOnlyBoard = structuredClone(replaceFlowBoard);
+  styleOnlyBoard.scenes[0] = { ...styleOnlyBoard.scenes[0], composition: imageComposition(uploadedVisual.asset.id) };
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: approvedFlowProject.researchPackage, visualStoryboard: styleOnlyBoard }),
+  })).status, 200);
+  const protectedStyleReference = await fetch(`${baseUrl}/api/projects/${assetProject.id}/visual-assets/${encodeURIComponent(flowVisual.asset.id)}`, { method: "DELETE" });
+  assert.equal(protectedStyleReference.status, 409, "Style Lock visual reference prevents deleting its source asset");
+  assert.equal((await protectedStyleReference.json()).code, "visual-asset-in-use");
   assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}/generate`, { method: "POST" })).status, 409, "manual upload still requires review and approval");
   const sourceScene = assetProject.visualStoryboard.scenes[0];
   const sourceResearchScene = assetProject.researchPackage.scenes[0];
@@ -520,6 +586,7 @@ try {
   if (reusableTargetId) await fetch(`${baseUrl}/api/projects/${reusableTargetId}`, { method: "DELETE" }).catch(() => {});
   if (jobAudioPath) await rm(jobAudioPath, { force: true });
   if (assetUploadPath) await rm(assetUploadPath, { force: true });
+  if (flowAssetPath) await rm(flowAssetPath, { force: true });
   if (renderOutputPath) await rm(path.dirname(renderOutputPath), { recursive: true, force: true });
   viteServer?.kill();
   if (viteServer) await new Promise<void>((resolve) => {

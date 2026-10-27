@@ -1,0 +1,499 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Player } from "@remotion/player";
+import type { PlayerRef } from "@remotion/player";
+import type { AnyZodObject } from "remotion";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, ImagePlus, Pause, Play, RotateCcw, Upload } from "lucide-react";
+import { applyVisualStoryboard, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import type { GoogleFlowStyleLock } from "../domain/google-flow";
+import { buildIllustrationPrompt } from "../domain/illustration-prompt";
+import { captionSegmentsForScene } from "../domain/captions";
+import { durationInFrames, FPS, sceneTimes, timelineDuration } from "../domain/timeline";
+import { visualImageNodes, updateVisualImageNode, type VisualImageNode, type VisualImageTransform, type VisualImageUpdate } from "../domain/visual-composition";
+import type { ResearchPackage } from "../domain/research";
+import type { MotionIntensity } from "../domain/motion-director";
+import type { VisualAsset } from "../domain/visual-assets";
+import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
+import type { MotionPreparationJob } from "../domain/motion-preparation";
+import type { VisualPreparationJob } from "../domain/visual-preparation";
+import { SmartAssetLibraryDialog, type AssetPlacement, type ReusableSceneEntry } from "./SmartAssetLibraryDialog";
+import { GoogleFlowPanel, type FlowBatchItem } from "./GoogleFlowPanel";
+import { visualStyles } from "../video/style-config";
+import { VisualCompositionView } from "../video/visual-primitives";
+import { VersionedVideo, type VideoProps } from "../video/root";
+import { previewInputProps } from "../video/video";
+import type { VideoEditorInteractions } from "../video/types";
+import "./video-editor-v2.css";
+
+type IllustrationImportInfo = { source: "user-upload" | "ai-generated"; prompt?: string; license: string; provider?: string; model?: string };
+type AiImageProviderCatalog = {
+  status: "Not Configured" | "Ready" | "Generating" | "Rate Limited" | "Quota Exhausted" | "Failed";
+  configured: boolean;
+  providers: Array<{ id: string; displayName: string; models: Array<{ id: string; license: string | null }>; selectedModel: string; supportedAspectRatios: string[]; resolutions: string[]; estimatedCost: null; costDisclosure: string }>;
+  message: string | null;
+  retryAt: string | null;
+};
+type EditorAudio = { file: string; name: string; durationSec: number; timingMode: "scaled" | "estimated"; source: "upload" | "tts"; tts?: { voiceName: string; locale: string } } | null;
+type InspectorTab = "visual" | "text" | "motion" | "audio";
+type MotionPreset = "static" | "gentle" | "pan-zoom" | "process" | "particles";
+type IllustrationWorkflow = VisualStoryboardScene["illustrationWorkflow"];
+type ImageBaseline = VisualImageTransform & Pick<VisualImageNode, "fit" | "position">;
+
+export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onApplyFlowBatch }: {
+  research: ResearchPackage;
+  storyboard: VisualStoryboard;
+  gate: VisualQualityGate;
+  saved: boolean;
+  busy: boolean;
+  generatingSceneId: string | null;
+  assets: VisualAsset[];
+  projectId: string;
+  audio: EditorAudio;
+  selectedSceneId: string | null;
+  imageProviderCatalog: AiImageProviderCatalog | null;
+  preparation: VisualPreparationJob | null;
+  motionPreparation: MotionPreparationJob | null;
+  aiMode: "development" | "production" | null;
+  plannerAvailable: boolean;
+  models: Array<{ id: string; name: string }>;
+  selectedModel: string;
+  planningSceneId: string | null;
+  vectorAvailable: boolean;
+  vectorizingSceneId: string | null;
+  librarySceneId: string | null;
+  libraryInitialTab: "mine" | "scenes";
+  onChange: (sceneId: string, change: Partial<VisualStoryboardScene>) => void;
+  onTitleChange: (title: string) => void;
+  onSelectScene: (sceneId: string) => void;
+  onBack: () => void;
+  onExport: () => void;
+  onSave: () => void;
+  onGenerate: (sceneId: string) => void;
+  onUseCurrentComposition: (sceneId: string) => void;
+  onOpenLibrary: (sceneId: string, tab?: "mine" | "scenes") => void;
+  onCloseLibrary: () => void;
+  onDeleteAsset: (assetId: string) => void;
+  onUploadAsset: (sceneId: string, file: File, metadata: IllustrationImportInfo) => Promise<boolean>;
+  onUseAsset: (sceneId: string, assetId: string, placement: AssetPlacement) => void;
+  onApplyGeneratedAiImage: (sceneId: string, asset: VisualAsset, fit: "cover" | "contain") => void;
+  onImportOpenverse: (sceneId: string, image: OpenverseImage, placement: AssetPlacement) => void;
+  onImportTabler: (sceneId: string, icon: TablerIconEntry, placement: AssetPlacement) => void;
+  onUseReusableScene: (sceneId: string, scene: ReusableSceneEntry) => void;
+  onSaveReusableScene: (sceneId: string, scene: Omit<ReusableSceneInput, "thumbnailDataUrl"> & { thumbnailDataUrl: string }) => Promise<void>;
+  onConfirmUserAsset: (sceneId: string) => void;
+  onSelectModel: (model: string) => void;
+  onPlan: (sceneId: string) => void;
+  onGenerateVector: (sceneId: string) => void;
+  onPrepareIssues: (sceneIds: string[]) => void;
+  onGenerateMotion: (sceneId: string, intensity: MotionIntensity) => void;
+  onMotionPreset: (sceneId: string, preset: MotionPreset) => void;
+  onPrepareMotion: (intensity: MotionIntensity) => void;
+  onCancelMotion: () => void;
+  onRetryMotion: (sceneIds: string[], intensity: MotionIntensity) => void;
+  onSelectAiImageSource: (sceneId: string) => Promise<boolean>;
+  onGenerateAiImage: (sceneId: string, provider: string, model: string, prompt: string, resolution: string) => Promise<VisualAsset | null>;
+  onFlowPromptChange: (sceneId: string, prompt: string) => void;
+  onStyleLockChange: (styleLock: GoogleFlowStyleLock) => void;
+  onPrepareFlowPrompts: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
+  onApplyStyleLock: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
+  onUploadFlowReference: (file: File) => Promise<VisualAsset | null>;
+  onImportFlowIllustration: (sceneId: string, file: File, metadata: { source: "ai-generated"; prompt: string; license: string; provider: string; model: string }) => Promise<boolean>;
+  onApplyFlowBatch: (items: FlowBatchItem[]) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
+}) {
+  const [tab, setTab] = useState<InspectorTab>("visual");
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [imageBaseline, setImageBaseline] = useState<ImageBaseline | null>(null);
+  const [safeGuides, setSafeGuides] = useState(false);
+  const [sourceSceneId, setSourceSceneId] = useState<string | null>(null);
+  const [motionPreset, setMotionPreset] = useState<MotionPreset>("gentle");
+  const [prompts, setPrompts] = useState<Record<string, string>>({});
+  const [providers, setProviders] = useState<Record<string, string>>({});
+  const [modelsByScene, setModelsByScene] = useState<Record<string, string>>({});
+  const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  const [imageFits, setImageFits] = useState<Record<string, "cover" | "contain">>({});
+  const [candidates, setCandidates] = useState<Record<string, VisualAsset>>({});
+  const [generatingImage, setGeneratingImage] = useState(false);
+  const [generationError, setGenerationError] = useState("");
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [frame, setFrame] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [scenePreviewEnd, setScenePreviewEnd] = useState<number | null>(null);
+  const playerRef = useRef<PlayerRef>(null);
+  const selectedSceneRef = useRef(selectedSceneId);
+  const lastUiFrame = useRef(0);
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const selectedScene = storyboard.scenes.find((scene) => scene.sceneId === selectedSceneId) ?? storyboard.scenes[0]!;
+  const visualResearch = useMemo(() => applyVisualStoryboard(research, storyboard), [research, storyboard]);
+  const sourceResearchScene = visualResearch.scenes.find((scene) => scene.id === selectedScene.sceneId)!;
+  const sceneImages = useMemo(() => visualImageNodes(selectedScene.composition), [selectedScene.composition]);
+  const selectedImage = sceneImages.find((entry) => entry.id === selectedImageId) ?? sceneImages[0];
+  const selectedAsset = assets.find((asset) => asset.id === selectedImage?.node.asset);
+  const previewDurationSec = timelineDuration(research, audio?.durationSec);
+  const frameCount = durationInFrames(research, audio?.durationSec);
+  const currentTime = Math.min(previewDurationSec, frame / FPS);
+  const sceneSpan = (scene: ResearchPackage["scenes"][number]) => sceneTimes(research, scene, previewDurationSec, audio?.timingMode);
+  const selectedSpan = sceneSpan(sourceResearchScene);
+  const scenePreviewFrame = (span: { startSec: number; endSec: number }) => Math.min(frameCount - 1, Math.floor((span.startSec + Math.min(1, (span.endSec - span.startSec) / 2)) * FPS));
+  const sceneIssueList = gate.scenes[selectedScene.sceneId] ?? [];
+  const hasPrimaryArtwork = sceneHasPrimaryIllustration(selectedScene);
+  const needsArtwork = !hasPrimaryArtwork;
+  const primaryIllustrationsReady = gate.ready && storyboard.scenes.every(sceneHasPrimaryIllustration);
+  const illustrationStatus = selectedScene.approved ? "Approved"
+    : !hasPrimaryArtwork ? "Perlu Ilustrasi"
+      : selectedScene.flowStatus === "illustration-imported" ? "Ilustrasi Diimport"
+        : selectedScene.authoringConfirmed ? "Siap Ditinjau" : "Perlu Ditinjau";
+  const selectedPrompt = prompts[selectedScene.sceneId] ?? buildIllustrationPrompt({ research, storyboard, scene: selectedScene });
+  const providerId = providers[selectedScene.sceneId] ?? imageProviderCatalog?.providers[0]?.id ?? "";
+  const provider = imageProviderCatalog?.providers.find((entry) => entry.id === providerId);
+  const imageModel = modelsByScene[selectedScene.sceneId] ?? provider?.selectedModel ?? "";
+  const imageResolution = resolutions[selectedScene.sceneId] ?? provider?.resolutions[0] ?? "";
+  const selectedFit = imageFits[selectedScene.sceneId] ?? "contain";
+  const candidate = candidates[selectedScene.sceneId];
+  const libraryScene = storyboard.scenes.find((scene) => scene.sceneId === librarySceneId);
+  const safe = visualStyles[research.visualPreset].safeArea;
+  const captionsAvailable = research.scenes.some((scene) => Boolean(scene.narrationText.trim()));
+
+  useEffect(() => { selectedSceneRef.current = selectedSceneId; }, [selectedSceneId]);
+  useEffect(() => {
+    const images = visualImageNodes(selectedScene.composition);
+    const first = images[0];
+    if (!first) { setSelectedImageId(null); setImageBaseline(null); return; }
+    if (!images.some((image) => image.id === selectedImageId)) setSelectedImageId(first.id);
+  }, [selectedScene.sceneId, selectedScene.composition, selectedImageId]);
+  useEffect(() => {
+    if (!selectedImage) { setImageBaseline(null); return; }
+    setImageBaseline({ x: selectedImage.node.x, y: selectedImage.node.y, width: selectedImage.node.width, height: selectedImage.node.height, fit: selectedImage.node.fit, position: selectedImage.node.position });
+  }, [selectedImage?.id, selectedScene.sceneId]);
+  useEffect(() => {
+    const preset: MotionPreset = selectedScene.motionIntent === "focus-shift" ? "pan-zoom"
+      : selectedScene.motionIntent === "path-animation" ? "process"
+        : selectedScene.motionIntent === "particle-flow" ? "particles"
+          : selectedScene.motionStatus === "static" && !selectedScene.motionActions.length ? "static" : "gentle";
+    setMotionPreset(preset);
+  }, [selectedScene.sceneId, selectedScene.motionActions.length, selectedScene.motionIntent, selectedScene.motionStatus]);
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    const onFrame = ({ detail }: { detail: { frame: number } }) => {
+      if (!player.isPlaying() || Math.abs(detail.frame - lastUiFrame.current) >= 3) {
+        lastUiFrame.current = detail.frame;
+        setFrame(detail.frame);
+      }
+      const time = detail.frame / FPS;
+      const scene = research.scenes.find((item) => {
+        const span = sceneTimes(research, item, previewDurationSec, audio?.timingMode);
+        return time >= span.startSec && time < span.endSec;
+      }) ?? research.scenes.at(-1);
+      if (scene && scene.id !== selectedSceneRef.current) {
+        selectedSceneRef.current = scene.id;
+        onSelectScene(scene.id);
+      }
+      if (scenePreviewEnd !== null && detail.frame >= scenePreviewEnd) {
+        player.pause();
+        setScenePreviewEnd(null);
+      }
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    player.addEventListener("frameupdate", onFrame);
+    player.addEventListener("play", onPlay);
+    player.addEventListener("pause", onPause);
+    onFrame({ detail: { frame: player.getCurrentFrame() } });
+    return () => {
+      player.removeEventListener("frameupdate", onFrame);
+      player.removeEventListener("play", onPlay);
+      player.removeEventListener("pause", onPause);
+    };
+  }, [audio?.timingMode, onSelectScene, previewDurationSec, research, scenePreviewEnd]);
+
+  const seekTo = useCallback((nextFrame: number) => {
+    const safeFrame = Math.max(0, Math.min(frameCount - 1, Math.round(nextFrame)));
+    lastUiFrame.current = safeFrame;
+    setFrame(safeFrame);
+    playerRef.current?.seekTo(safeFrame);
+  }, [frameCount]);
+  const selectScene = (sceneId: string) => {
+    const scene = research.scenes.find((item) => item.id === sceneId);
+    if (!scene) return;
+    onSelectScene(sceneId);
+    selectedSceneRef.current = sceneId;
+    const span = sceneSpan(scene);
+    seekTo(scenePreviewFrame(span));
+    setSelectedImageId(null);
+  };
+  const editImage = useCallback((nodeId: string, update: VisualImageUpdate) => {
+    const scene = storyboard.scenes.find((item) => item.sceneId === selectedSceneRef.current);
+    if (!scene) return;
+    onChange(scene.sceneId, { composition: updateVisualImageNode(scene.composition, nodeId, update) });
+  }, [onChange, storyboard.scenes]);
+  const editorInteractions = useMemo<VideoEditorInteractions>(() => ({
+    sceneId: selectedScene.sceneId,
+    selectedImageId,
+    onSelectImage: setSelectedImageId,
+    onTransformImage: (nodeId, transform) => editImage(nodeId, transform),
+  }), [editImage, selectedImageId, selectedScene.sceneId]);
+  const playerInputProps = useMemo<VideoProps>(() => ({
+    ...previewInputProps(visualResearch, audio?.file, audio?.durationSec, audio?.timingMode),
+    editor: editorInteractions,
+  }), [audio?.durationSec, audio?.file, audio?.timingMode, editorInteractions, visualResearch]);
+  const setImage = (update: VisualImageUpdate) => selectedImage && editImage(selectedImage.id, update);
+  const setImageFit = (fit: "cover" | "contain") => {
+    setImage({ fit });
+    setImageFits((current) => ({ ...current, [selectedScene.sceneId]: fit }));
+  };
+  const chooseIllustrationWorkflow = (workflow: IllustrationWorkflow) => {
+    if (workflow === "ai-image-api") {
+      void onSelectAiImageSource(selectedScene.sceneId);
+      return;
+    }
+    onChange(selectedScene.sceneId, { illustrationWorkflow: workflow });
+  };
+  const seekScene = (direction: -1 | 1) => {
+    const index = research.scenes.findIndex((scene) => scene.id === selectedScene.sceneId);
+    const next = research.scenes[Math.max(0, Math.min(research.scenes.length - 1, index + direction))];
+    if (next) selectScene(next.id);
+  };
+  const previewSingleScene = () => {
+    const start = Math.floor(selectedSpan.startSec * FPS);
+    setScenePreviewEnd(Math.floor(selectedSpan.endSec * FPS));
+    seekTo(start);
+    playerRef.current?.play();
+  };
+  const imageScale = selectedImage && imageBaseline ? Math.round(Math.min(selectedImage.node.width / imageBaseline.width, selectedImage.node.height / imageBaseline.height) * 100) : 100;
+  const setImageScale = (value: number) => {
+    if (!selectedImage || !imageBaseline) return;
+    const factor = value / 100;
+    const width = Math.min(1080, imageBaseline.width * factor);
+    const height = Math.min(1920, imageBaseline.height * factor);
+    const x = Math.max(0, Math.min(1080 - width, imageBaseline.x + imageBaseline.width / 2 - width / 2));
+    const y = Math.max(0, Math.min(1920 - height, imageBaseline.y + imageBaseline.height / 2 - height / 2));
+    setImage({ x, y, width, height });
+  };
+  const applyMotion = () => { onMotionPreset(selectedScene.sceneId, motionPreset); };
+  const startAiImage = async () => {
+    setGeneratingImage(true);
+    setGenerationError("");
+    try {
+      const asset = await onGenerateAiImage(selectedScene.sceneId, providerId, imageModel, selectedPrompt, imageResolution);
+      if (asset) setCandidates((current) => ({ ...current, [selectedScene.sceneId]: asset }));
+    } catch (error) { setGenerationError(error instanceof Error ? error.message : "Generasi ilustrasi gagal."); }
+    finally { setGeneratingImage(false); }
+  };
+  const selectedTrackIndex = research.scenes.findIndex((scene) => scene.id === selectedScene.sceneId);
+
+  return <section className="video-editor-v2" aria-label="Editor video">
+    <header className="video-editor-toolbar">
+      <div className="video-editor-title-group">
+        <button type="button" className="button button-light editor-back-button" onClick={onBack}><ArrowLeft size={16} aria-hidden="true"/><span>Materi</span></button>
+        <label className="video-editor-title"><span className="sr-only">Judul video</span><input maxLength={120} value={research.title} onChange={(event) => onTitleChange(event.target.value)} aria-label="Judul video" /></label>
+        <span className={`editor-save-state ${saved ? "saved" : "unsaved"}`} role="status"><i />{saved ? "Tersimpan" : "Belum disimpan"}</span>
+      </div>
+      <div className="video-editor-toolbar-actions">
+        <button type="button" className="button button-light" onClick={onSave} disabled={saved || busy}><Check size={15} aria-hidden="true"/> Simpan</button>
+        <button type="button" className="button button-light" onClick={() => playerRef.current?.toggle()}><Play size={15} aria-hidden="true"/>{playing ? "Jeda" : "Pratinjau video"}</button>
+        <button type="button" className="button button-primary" onClick={onExport} disabled={busy}>Ekspor MP4 <span aria-hidden="true">→</span></button>
+      </div>
+    </header>
+
+    {(preparation || motionPreparation) && <div className="editor-job-status" role="status" aria-live="polite">
+      {preparation && <span>{preparation.status === "running" ? `Menyiapkan ilustrasi ${preparation.processed}/${preparation.total}` : `Persiapan ilustrasi: ${preparation.status === "completed" ? "selesai" : preparation.status.replaceAll("_", " ")}`}</span>}
+      {motionPreparation && <span>{motionPreparation.status === "running" ? `Menyiapkan gerak ${motionPreparation.processed}/${motionPreparation.total}` : `Motion Director: ${motionPreparation.status === "completed" ? "selesai" : motionPreparation.status.replaceAll("_", " ")}`}</span>}
+    </div>}
+
+    <div className="video-editor-layout">
+      <aside className="video-editor-scenes" aria-label="Daftar scene">
+        <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div>
+        <div className="editor-scene-list">
+          {storyboard.scenes.map((scene, index) => {
+            const source = visualResearch.scenes[index]!;
+            const status = sceneIllustrationStatus(scene);
+            const span = sceneSpan(source);
+            return <button type="button" key={scene.sceneId} className={`editor-scene-item ${scene.sceneId === selectedScene.sceneId ? "selected" : ""}`} aria-pressed={scene.sceneId === selectedScene.sceneId} onClick={() => selectScene(scene.sceneId)}>
+              <SceneThumbnail scene={source} storyboard={storyboard} preset={research.visualPreset} />
+              <span className="editor-scene-copy"><strong>{String(index + 1).padStart(2, "0")} · {scene.headline}</strong><small>{(span.endSec - span.startSec).toFixed(1)} dtk · {status}</small></span>
+            </button>;
+          })}
+        </div>
+        <div className="editor-approval-summary"><span>{storyboard.scenes.filter((scene) => scene.approved).length} / {storyboard.scenes.length} scene disetujui</span><span className={primaryIllustrationsReady ? "ready" : "attention"}>{primaryIllustrationsReady ? "Ilustrasi siap" : "Perlu ilustrasi utama"}</span></div>
+      </aside>
+
+      <main className="video-editor-center">
+        <div className="editor-canvas-toolbar"><div><strong>Pratinjau video</strong><span>9:16 · 1080 × 1920</span></div><button type="button" className={`button button-light ${safeGuides ? "selected" : ""}`} aria-pressed={safeGuides} onClick={() => setSafeGuides((value) => !value)}>Panduan aman</button></div>
+        <div className="editor-canvas-shell">
+          <Player<AnyZodObject, VideoProps> ref={playerRef} component={VersionedVideo} inputProps={playerInputProps} durationInFrames={frameCount} compositionWidth={1080} compositionHeight={1920} fps={FPS} initialFrame={scenePreviewFrame(selectedSpan)} loop={false} controls={false} clickToPlay={false} style={{ width: "100%", height: "100%" }} />
+          {safeGuides && <div className="editor-safe-guide" aria-hidden="true" style={{ left: `${safe.left / 1080 * 100}%`, right: `${safe.right / 1080 * 100}%`, top: `${safe.top / 1920 * 100}%`, bottom: `${safe.bottom / 1920 * 100}%` }} />}
+        </div>
+        <div className="editor-transport">
+          <button type="button" className="button button-light icon-button" onClick={() => seekScene(-1)} aria-label="Scene sebelumnya" title="Scene sebelumnya"><ChevronLeft size={17} aria-hidden="true"/></button>
+          <button type="button" className="button button-primary editor-play-button" onClick={() => playerRef.current?.toggle()} aria-label={playing ? "Jeda video" : "Putar video"}>{playing ? <Pause size={17} aria-hidden="true"/> : <Play size={17} aria-hidden="true"/>}</button>
+          <button type="button" className="button button-light icon-button" onClick={() => seekScene(1)} aria-label="Scene berikutnya" title="Scene berikutnya"><ChevronRight size={17} aria-hidden="true"/></button>
+          <span className="editor-time-readout">{formatTime(currentTime)} <i>/</i> {formatTime(previewDurationSec)}</span>
+          <button type="button" className="button button-light" onClick={previewSingleScene}>Pratinjau scene</button>
+        </div>
+
+        <section className="editor-timeline" aria-label="Timeline video">
+          <div className="editor-timeline-heading"><strong>Timeline</strong><span>{formatTime(currentTime)} / {formatTime(previewDurationSec)}</span></div>
+          <label className="sr-only" htmlFor="editor-playhead">Geser playhead</label>
+          <input id="editor-playhead" className="editor-playhead" type="range" min={0} max={Math.max(0, frameCount - 1)} step={1} value={Math.min(frame, frameCount - 1)} onChange={(event) => seekTo(Number(event.target.value))} aria-valuetext={`${formatTime(currentTime)} dari ${formatTime(previewDurationSec)}`} />
+          <div className="editor-timeline-ruler" aria-hidden="true">{Array.from({ length: Math.ceil(previewDurationSec / 5) + 1 }, (_, index) => <span key={index} style={{ left: `${Math.min(100, index * 5 / previewDurationSec * 100)}%` }}>{formatTime(Math.min(previewDurationSec, index * 5))}</span>)}</div>
+          <div className="editor-track-row"><span>Scene</span><div className="editor-track-rail">{research.scenes.map((scene, index) => {
+            const span = sceneSpan(scene);
+            return <button type="button" key={scene.id} className={`editor-track-clip ${scene.id === selectedScene.sceneId ? "selected" : ""}`} style={{ left: `${span.startSec / previewDurationSec * 100}%`, width: `${Math.max(0.5, (span.endSec - span.startSec) / previewDurationSec * 100)}%` }} onClick={() => selectScene(scene.id)} aria-label={`Pilih scene ${index + 1}: ${scene.onScreenText}`}><strong>{String(index + 1).padStart(2, "0")}</strong><small>{(span.endSec - span.startSec).toFixed(1)}s</small></button>;
+          })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
+          {audio && <div className="editor-track-row"><span>Narasi</span><div className="editor-track-rail"><div className="editor-audio-clip" style={{ left: 0, width: `${Math.min(100, audio.durationSec / previewDurationSec * 100)}%` }} title={audio.name}>{audio.name}</div></div></div>}
+          {captionsAvailable && <div className="editor-track-row"><span>Subtitle</span><div className="editor-track-rail">{research.scenes.map((scene) => {
+            const span = sceneSpan(scene);
+            return captionSegmentsForScene(scene).map((segment, index) => <i key={`${scene.id}-${index}`} className="editor-caption-clip" style={{ left: `${(span.startSec + (span.endSec - span.startSec) * segment.startProgress) / previewDurationSec * 100}%`, width: `${Math.max(0.2, (span.endSec - span.startSec) * (segment.endProgress - segment.startProgress) / previewDurationSec * 100)}%` }} title={segment.text}/>);
+          })}</div></div>}
+        </section>
+      </main>
+
+      <aside className="video-editor-inspector" aria-label="Pengaturan scene terpilih">
+        <div className="editor-inspector-scene"><span>SCENE {String(selectedTrackIndex + 1).padStart(2, "0")}</span><strong>{selectedScene.headline}</strong><small>{selectedScene.durationSec.toFixed(1)} detik</small></div>
+        <div className="editor-inspector-tabs" role="tablist" aria-label="Panel scene">
+          {([ ["visual", "Visual"], ["text", "Teks"], ["motion", "Gerak"], ["audio", "Audio"] ] as const).map(([id, label]) => <button type="button" role="tab" key={id} aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}
+        </div>
+        <div className="editor-inspector-content">
+          {tab === "visual" && <>
+            <section className="editor-illustration-section" aria-labelledby="editor-illustration-title">
+              <div className="editor-illustration-heading"><h3 id="editor-illustration-title">Ilustrasi Scene</h3><span className={selectedScene.approved ? "approved" : needsArtwork ? "attention" : "review"}>{illustrationStatus}</span></div>
+              <label className="editor-field">Sumber ilustrasi<select value={selectedScene.illustrationWorkflow} onChange={(event) => chooseIllustrationWorkflow(event.target.value as IllustrationWorkflow)}>
+                <option value="google-flow">Google Flow</option><option value="asset-library">Asset Library</option><option value="upload-image">Upload Gambar</option><option value="ai-vector">AI Vector</option><option value="ai-image-api">AI Image API (Advanced)</option>
+              </select></label>
+              <div className="editor-illustration-current">
+                <SceneThumbnail scene={sourceResearchScene} storyboard={storyboard} preset={research.visualPreset}/>
+                <div><strong>{illustrationStatus}</strong>{needsArtwork ? <small>Visual draft tersedia; belum menjadi ilustrasi utama.</small> : <small>{selectedScene.approved ? "Versi visual ini telah disetujui." : "Tinjau gambar, crop, dan akurasi sebelum approval."}</small>}</div>
+              </div>
+              {needsArtwork && selectedScene.illustrationWorkflow !== "google-flow" && <button type="button" className="button button-primary full-button" onClick={() => chooseIllustrationWorkflow("google-flow")}><ImagePlus size={15} aria-hidden="true"/> Buat dengan Google Flow</button>}
+            </section>
+
+            {selectedScene.illustrationWorkflow === "google-flow" && <GoogleFlowPanel key={selectedScene.sceneId} research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} onFlowPromptChange={onFlowPromptChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onApplyBatch={onApplyFlowBatch}/>}
+            {selectedScene.illustrationWorkflow === "asset-library" && <div className="editor-source-card"><strong>Asset Library</strong><span>Pilih ilustrasi yang tersimpan atau gunakan aset project.</span><button type="button" className="button button-primary full-button" onClick={() => onOpenLibrary(selectedScene.sceneId, "mine")} disabled={busy}><ImagePlus size={15} aria-hidden="true"/> Pilih dari Asset Library</button></div>}
+            {selectedScene.illustrationWorkflow === "upload-image" && <div className="editor-source-card"><strong>Upload Gambar</strong><span>PNG, JPEG, atau WebP. File divalidasi dan disimpan melalui pipeline aset project.</span><input ref={uploadInput} type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={busy} onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void onUploadAsset(selectedScene.sceneId, file, { source: "user-upload", license: "User-provided; license/provenance not specified" }); event.currentTarget.value = ""; }}/><button type="button" className="button button-primary full-button" onClick={() => uploadInput.current?.click()} disabled={busy}><Upload size={15} aria-hidden="true"/> Pilih gambar</button></div>}
+            {selectedScene.illustrationWorkflow === "ai-vector" && <div className="editor-source-card"><strong>AI Vector</strong><span>{vectorAvailable ? "Buat diagram atau visual proses yang dapat diedit sebagai vector." : "AI Vector memerlukan model OpenCode Development yang tersedia."}</span><button type="button" className="button button-primary full-button" onClick={() => onGenerateVector(selectedScene.sceneId)} disabled={!vectorAvailable || busy || vectorizingSceneId !== null}>{vectorizingSceneId === selectedScene.sceneId ? "Membuat AI Vector…" : "Buat AI Vector"}</button></div>}
+            {selectedScene.illustrationWorkflow === "ai-image-api" && <details className="editor-advanced editor-ai-advanced" open>
+              <summary>AI Image API · Advanced</summary>
+              <IllustrationPromptPanel prompt={selectedPrompt} providerCatalog={imageProviderCatalog} providerId={providerId} model={imageModel} resolution={imageResolution} candidate={candidate} fit={selectedFit} generating={generatingImage} error={generationError} copied={copiedPrompt} onPrompt={(value) => setPrompts((current) => ({ ...current, [selectedScene.sceneId]: value }))} onProvider={(value) => setProviders((current) => ({ ...current, [selectedScene.sceneId]: value }))} onModel={(value) => setModelsByScene((current) => ({ ...current, [selectedScene.sceneId]: value }))} onResolution={(value) => setResolutions((current) => ({ ...current, [selectedScene.sceneId]: value }))} onFit={(value) => setImageFits((current) => ({ ...current, [selectedScene.sceneId]: value }))} onGenerate={() => void startAiImage()} onCopy={() => void navigator.clipboard.writeText(selectedPrompt).then(() => setCopiedPrompt(true)).catch(() => setCopiedPrompt(false))} onApply={() => candidate && onApplyGeneratedAiImage(selectedScene.sceneId, candidate, selectedFit)}/>
+            </details>}
+
+            {sceneImages.length > 0 && !selectedScene.authoringConfirmed && <button type="button" className="button button-light full-button" onClick={() => onConfirmUserAsset(selectedScene.sceneId)} disabled={busy}>Saya sudah meninjau ilustrasi</button>}
+            {sceneImages.length > 0 && <details className="editor-advanced editor-image-controls"><summary>Posisi, skala & crop</summary>
+              {sceneImages.length > 1 && <label className="editor-field">Layer ilustrasi<select value={selectedImage?.id ?? ""} onChange={(event) => setSelectedImageId(event.target.value)}>{sceneImages.map((entry) => <option key={entry.id} value={entry.id}>{entry.layerId.replaceAll("-", " ")} · gambar</option>)}</select></label>}
+              <label className="editor-field">Tampilan gambar<select value={selectedImage?.node.fit ?? "contain"} onChange={(event) => setImageFit(event.target.value as "cover" | "contain")}><option value="contain">Contain · seluruh gambar</option><option value="cover">Cover · isi area, crop gambar</option></select></label>
+              <label className="editor-field">Posisi gambar<select value={selectedImage?.node.position ?? "center"} onChange={(event) => setImage({ position: event.target.value as NonNullable<typeof selectedImage.node.position> })}>{["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].map((position) => <option key={position} value={position}>{position.replaceAll("-", " ")}</option>)}</select></label>
+              <label className="editor-range-field">Skala · {imageScale}%<input type="range" min={25} max={200} step={1} value={Math.max(25, Math.min(200, imageScale))} onChange={(event) => setImageScale(Number(event.target.value))} aria-label="Skala ilustrasi"/></label>
+              <small className="editor-hint">Klik dan seret gambar pada canvas untuk memindahkan. Tarik handle sudut untuk mengubah ukuran; rasio gambar dipertahankan.</small>
+              <button type="button" className="button button-light full-button" onClick={() => { if (selectedImage && imageBaseline) setImage({ x: imageBaseline.x, y: imageBaseline.y, width: imageBaseline.width, height: imageBaseline.height, fit: imageBaseline.fit, position: imageBaseline.position }); }} disabled={!imageBaseline}><RotateCcw size={14} aria-hidden="true"/> Reset transform</button>
+            </details>}
+
+            <details className="editor-advanced"><summary>Advanced · diagnostics & authoring</summary>
+              <p>Sumber aktif: {illustrationSourceForScene(selectedScene)} · {selectedScene.compositionSource}</p>
+              {selectedAsset && <p>Asset: {selectedAsset.name} · {selectedAsset.provider ?? "provider lokal"}{selectedAsset.model ? ` · ${selectedAsset.model}` : ""}</p>}
+              {sceneIssueList.length > 0 && <ul>{sceneIssueList.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+              {selectedScene.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+              <button type="button" className="button button-light full-button" onClick={() => onGenerate(selectedScene.sceneId)} disabled={busy || generatingSceneId !== null}>{generatingSceneId === selectedScene.sceneId ? "Menyiapkan…" : "Composer lokal"}</button>
+              <button type="button" className="button button-light full-button" onClick={() => onUseCurrentComposition(selectedScene.sceneId)} disabled={busy}>Gunakan visual dari Materi</button>
+              <label className="editor-field">Model perencana AI<select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={!models.length}>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
+              <small>{aiMode === "development" ? plannerAvailable ? "AI Text tersedia setelah tindakan eksplisit." : "Pilih model OpenCode yang tersedia." : "AI planner perlu konfigurasi Development."}</small>
+              <button type="button" className="button button-light full-button" onClick={() => onPlan(selectedScene.sceneId)} disabled={!plannerAvailable || busy || planningSceneId !== null}>{planningSceneId === selectedScene.sceneId ? "Merencanakan…" : "Rencana visual AI Text"}</button>
+            </details>
+          </>}
+
+          {tab === "text" && <>
+            <label className="editor-field">Headline<input maxLength={120} value={selectedScene.headline} onChange={(event) => onChange(selectedScene.sceneId, { headline: event.target.value })}/></label>
+            <label className="editor-field">Narasi<textarea rows={8} maxLength={2000} value={selectedScene.narrationText} onChange={(event) => onChange(selectedScene.sceneId, { narrationText: event.target.value })}/></label>
+            <div className="editor-info-box"><strong>Tampilan teks</strong><span>Headline dan subtitle mengikuti template Remotion aktif. Mengubah naskah dapat membuat audio AI perlu disetujui ulang.</span></div>
+          </>}
+
+          {tab === "motion" && <>
+            <label className="editor-field">Preset gerak<select value={motionPreset} onChange={(event) => setMotionPreset(event.target.value as MotionPreset)}><option value="static">Statis</option><option value="gentle">Gerak lembut</option><option value="pan-zoom">Pan & zoom</option><option value="process">Animasi proses</option><option value="particles">Aliran partikel</option></select></label>
+            <button type="button" className="button button-primary full-button" onClick={applyMotion} disabled={busy}>Terapkan gerak</button>
+            <div className="editor-info-box"><strong>{selectedScene.motionActions.length ? selectedScene.motionSummary : "Tidak ada gerak tambahan"}</strong><span>{selectedScene.motionActions.length} animasi · {selectedScene.motionTiming === "approximate" ? "waktu perkiraan" : "selaras narasi"}. Raster bergerak sebagai satu gambar.</span></div>
+            <button type="button" className="button button-light full-button" onClick={previewSingleScene}>Pratinjau gerak scene</button>
+            <label className="editor-field">Intensitas<select id="editor-motion-intensity" value={selectedScene.motionIntensity} onChange={(event) => onGenerateMotion(selectedScene.sceneId, event.target.value as MotionIntensity)} disabled={busy}><option value="subtle">Subtle</option><option value="balanced">Balanced</option><option value="expressive">Expressive</option></select></label>
+            <button type="button" className="button button-light full-button" onClick={() => onPrepareMotion(selectedScene.motionIntensity)} disabled={!saved || busy || motionPreparation?.status === "running"}>Siapkan gerak semua scene</button>
+            {motionPreparation?.status === "running" && <button type="button" className="button button-light full-button" onClick={onCancelMotion}>Batalkan persiapan gerak</button>}
+            {motionPreparation && ["failed", "partial_failure", "cancelled"].includes(motionPreparation.status) && <button type="button" className="button button-light full-button" onClick={() => onRetryMotion(motionPreparation.scenes.filter((item) => ["failed", "cancelled"].includes(item.status)).map((item) => item.sceneId), motionPreparation.intensity)} disabled={!saved || busy}>Coba ulang scene gagal</button>}
+          </>}
+
+          {tab === "audio" && <>
+            {audio ? <><div className="editor-info-box"><strong>{audio.source === "tts" ? audio.tts?.voiceName ?? "AI Voice" : audio.name}</strong><span>{audio.durationSec.toFixed(1)} detik · {audio.timingMode === "estimated" ? "timing perkiraan" : "durasi disesuaikan"}</span></div><audio className="editor-audio-preview" controls preload="metadata" src={`/${audio.file.split("/").map(encodeURIComponent).join("/")}`} aria-label="Pratinjau audio narasi"/><small>Audio aktif project. Timing per kata tidak tersedia untuk semua sumber.</small></> : <div className="editor-info-box"><strong>Audio belum tersedia</strong><span>Render tanpa narasi memerlukan konfirmasi eksplisit.</span></div>}
+            <div className="editor-info-box"><strong>Subtitle</strong><span>{sourceResearchScene.captionSegments?.length ? `${sourceResearchScene.captionSegments.length} segmen tersimpan.` : "Dibentuk dari narasi scene saat preview dan render."}</span></div>
+          </>}
+        </div>
+        <footer className="editor-inspector-footer">
+          {sceneIssueList.length > 0 && <details className="editor-advanced editor-validation"><summary>{needsArtwork ? "Masalah visual" : `${sceneIssueList.length} pemeriksaan`}</summary>{needsArtwork && <p>Ilustrasi belum tersedia.</p>}{!needsArtwork && <ul>{sceneIssueList.map((issue) => <li key={issue}>{issue}</li>)}</ul>}</details>}
+          <button type="button" className={`button ${selectedScene.approved ? "button-light" : "button-primary"} full-button`} onClick={() => onChange(selectedScene.sceneId, { approved: !selectedScene.approved })} disabled={busy || (!selectedScene.approved && (needsArtwork || sceneIssueList.length > 0))}>{selectedScene.approved ? "Batalkan persetujuan" : "Setujui scene"}</button>
+        </footer>
+      </aside>
+    </div>
+
+    {libraryScene && <SmartAssetLibraryDialog open={Boolean(librarySceneId)} scene={libraryScene} research={research} storyboard={storyboard} projectId={projectId} busy={busy} initialTab={libraryInitialTab} onClose={onCloseLibrary} onUseAsset={onUseAsset} onImportOpenverse={onImportOpenverse} onImportTabler={onImportTabler} onUseReusableScene={onUseReusableScene} onSaveReusableScene={onSaveReusableScene} onDeleteAsset={onDeleteAsset}/>}
+  </section>;
+}
+
+function formatTime(seconds: number) {
+  const whole = Math.floor(Math.max(0, seconds));
+  return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+function sceneIllustrationStatus(scene: VisualStoryboardScene) {
+  if (scene.approved) return "Approved";
+  if (!sceneHasPrimaryIllustration(scene)) return "Perlu Ilustrasi";
+  if (scene.flowStatus === "illustration-imported") return "Ilustrasi Diimport";
+  return scene.authoringConfirmed ? "Siap Ditinjau" : "Perlu Ditinjau";
+}
+
+function sceneHasPrimaryIllustration(scene: VisualStoryboardScene) {
+  return visualImageNodes(scene.composition).length > 0 || scene.compositionSource === "ai-vector";
+}
+
+const SceneThumbnail = React.memo(function SceneThumbnail({ scene, storyboard, preset }: { scene: ResearchPackage["scenes"][number]; storyboard: VisualStoryboard; preset: ResearchPackage["visualPreset"] }) {
+  const visual = storyboard.scenes.find((item) => item.sceneId === scene.id)!;
+  return <svg className="editor-scene-thumbnail" viewBox="0 0 1080 1920" role="img" aria-label={`Ilustrasi scene: ${scene.onScreenText}`}>
+    <VisualCompositionView scene={scene} composition={visual.composition} style={visualStyles[preset]} preset={preset} frame={Math.floor(scene.endSec * FPS * .4)} progress={.4}/>
+    <rect x="50" y="40" width="980" height="400" rx="30" fill={storyboard.palette.canvas} opacity=".94"/>
+    <foreignObject x="80" y="82" width="920" height="320"><div className="editor-thumbnail-headline">{visual.headline}</div></foreignObject>
+  </svg>;
+});
+
+function IllustrationPromptPanel({ prompt, providerCatalog, providerId, model, resolution, candidate, fit, generating, error, copied, onPrompt, onProvider, onModel, onResolution, onFit, onGenerate, onCopy, onApply }: {
+  prompt: string;
+  providerCatalog: AiImageProviderCatalog | null;
+  providerId: string;
+  model: string;
+  resolution: string;
+  candidate?: VisualAsset;
+  fit: "cover" | "contain";
+  generating: boolean;
+  error: string;
+  copied: boolean;
+  onPrompt: (value: string) => void;
+  onProvider: (value: string) => void;
+  onModel: (value: string) => void;
+  onResolution: (value: string) => void;
+  onFit: (value: "cover" | "contain") => void;
+  onGenerate: () => void;
+  onCopy: () => void;
+  onApply: () => void;
+}) {
+  const provider = providerCatalog?.providers.find((entry) => entry.id === providerId);
+  const ready = Boolean(providerCatalog?.configured && provider?.models.some((entry) => entry.id === model));
+  return <section className="editor-ai-image-panel" aria-label="Buat ilustrasi AI Image">
+    <div><strong>Prompt ilustrasi</strong><small>AI Image API hanya berjalan setelah konfigurasi dan konfirmasi biaya.</small></div>
+    <label className="editor-field">Prompt<textarea rows={7} maxLength={12000} value={prompt} onChange={(event) => onPrompt(event.target.value)}/></label>
+    <button type="button" className="button button-light full-button" onClick={onCopy}>Salin prompt</button>{copied && <small role="status">Prompt disalin.</small>}
+    {!providerCatalog && <p className="editor-ai-config-message" role="status">Memeriksa konfigurasi AI Image API…</p>}
+    {providerCatalog && !providerCatalog.configured && <p className="editor-ai-config-message" role="status">AI Image API belum dikonfigurasi. Atur `HF_TOKEN`, `HF_IMAGE_GENERATION_ENABLED=true`, dan `HF_IMAGE_ALLOW_PAID=true` di server. Google Flow manual tidak perlu HF_TOKEN.</p>}
+    {providerCatalog?.configured && !providerCatalog.providers.length && <p className="editor-ai-config-message" role="status">Provider belum menyediakan model yang bisa digunakan. Periksa konfigurasi Hugging Face di server.</p>}
+    {providerCatalog?.configured && providerCatalog.providers.length > 0 && <>
+      {providerCatalog.providers.length > 1 && <label className="editor-field">Provider<select value={providerId} onChange={(event) => onProvider(event.target.value)}>{providerCatalog.providers.map((entry) => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}</select></label>}
+      {provider?.models.length ? <label className="editor-field">Model<select value={model} onChange={(event) => onModel(event.target.value)}>{provider.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.id}</option>)}</select></label> : <p className="editor-ai-config-message">Provider ini belum punya model tersedia.</p>}
+      {provider?.resolutions.length ? <label className="editor-field">Resolusi<select value={resolution} onChange={(event) => onResolution(event.target.value)}>{provider.resolutions.map((entry) => <option key={entry} value={entry}>{entry.replace("x", " × ")}</option>)}</select></label> : <p className="editor-ai-config-message">Provider ini belum menyediakan resolusi.</p>}
+      <label className="editor-field">Fit gambar<select value={fit} onChange={(event) => onFit(event.target.value as "cover" | "contain")}><option value="contain">Contain</option><option value="cover">Cover</option></select></label>
+      <small>{provider?.costDisclosure ?? providerCatalog.message ?? "Harga, saldo, dan kredit tidak dapat diverifikasi; request dapat dikenai biaya."}</small>
+      <button type="button" className="button button-primary full-button" onClick={onGenerate} disabled={!ready || generating || !resolution || prompt.trim().length < 20}>{generating ? "Membuat satu gambar…" : "Generate satu gambar"}</button>
+    </>}
+    {error && <p role="alert">{error}</p>}
+    {candidate && <div className="editor-ai-candidate"><strong>Preview kandidat · belum diterapkan</strong><img src={`/visual-assets/${candidate.file}`} alt="Kandidat ilustrasi yang dihasilkan"/><small>{candidate.width}×{candidate.height} · {candidate.provider} · {candidate.model}</small><button type="button" className="button button-primary full-button" onClick={onApply}>Gunakan ilustrasi</button></div>}
+  </section>;
+}

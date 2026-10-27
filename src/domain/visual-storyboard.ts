@@ -8,6 +8,7 @@ import { composeVisualScene, compositionShowsObject, hasGenericIconCards, visual
 import { visualObjectIds, visualObjectLibrary, visualObjectsForText, type VisualObjectId } from "./visual-objects";
 import { visualSemanticPlanSchema, type VisualSemanticPlan } from "./visual-semantic-plan";
 import { motionActionsSchema, motionIntensitySchema, motionKeyframesWithinSafeCanvas, motionTargetExists, motionTargetNode, type MotionIntensity } from "./motion-director";
+import { defaultGoogleFlowStyleLock, googleFlowStyleLockSchema, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken } from "./google-flow";
 
 export { visualObjectIds, visualObjectLibrary, visualObjectsForText } from "./visual-objects";
 export type { VisualObjectId } from "./visual-objects";
@@ -20,7 +21,7 @@ type ApprovalInput = {
   visualFocus: string | null; relationships: VisualRelationship[]; illustrationIntent: string; motionIntent: string; motionSummary: string;
   motionIntensity: MotionIntensity; motionTiming: "approximate" | "narration-aligned"; motionStatus: "not_prepared" | "ready_for_review" | "needs_review" | "static";
   motionActions: import("./motion-director").MotionAction[];
-  composition: VisualComposition; compositionSource: string; illustrationSource?: string; authoringStatus: string; authoringConfirmed: boolean; missingVisuals: string[];
+  composition: VisualComposition; compositionSource: string; illustrationSource?: string; illustrationWorkflow?: string; authoringStatus: string; authoringConfirmed: boolean; missingVisuals: string[];
   semanticPlan?: VisualSemanticPlan;
 };
 function fingerprint(content: string) {
@@ -90,6 +91,11 @@ export const visualStoryboardSceneSchema = z.object({
   composition: visualCompositionSchema,
   compositionSource: z.enum(["existing", "library", "procedural", "manual", "ai-vector"]).default("existing"),
   illustrationSource: z.enum(["ai-vector", "ai-image", "asset-library", "upload-image", "procedural", "manual"]).optional(),
+  illustrationWorkflow: z.enum(["google-flow", "asset-library", "upload-image", "ai-vector", "ai-image-api"]).default("google-flow"),
+  sceneToken: z.string().trim().min(1).max(100).optional(),
+  recommendedFilename: z.string().trim().min(1).max(180).optional(),
+  flowPrompt: z.string().max(12000).optional(),
+  flowStatus: z.enum(["awaiting-illustration", "prompt-ready", "illustration-imported", "ready-for-review", "approved"]).optional(),
   missingVisuals: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   warnings: z.array(z.string().trim().min(1).max(240)).max(8),
   authoringStatus: z.enum(["ready_for_review", "needs_review", "needs_visual_authoring"]),
@@ -126,6 +132,11 @@ export const visualStoryboardSceneSchema = z.object({
     && !(legacyMetadata && legacyMotionUnchanged && scene.approvedFingerprint === legacyVisualApprovalFingerprint(scene))) {
     ctx.addIssue({ code: "custom", message: "Approval visual sudah stale; tinjau ulang komposisi scene.", path: ["approvedFingerprint"] });
   }
+}).transform((scene) => {
+  const sceneToken = scene.sceneToken ?? stableGoogleFlowSceneToken(scene.sceneId);
+  const hasImage = compositionNodes(scene.composition).some((node) => node.type === "image");
+  const flowStatus = scene.flowStatus ?? (scene.approved ? "approved" : hasImage ? scene.authoringConfirmed ? "ready-for-review" : "illustration-imported" : scene.flowPrompt ? "prompt-ready" : "awaiting-illustration");
+  return { ...scene, sceneToken, recommendedFilename: recommendedGoogleFlowFilename({ ...scene, sceneToken }), flowStatus };
 });
 
 export const visualStoryboardSchema = z.object({
@@ -134,6 +145,7 @@ export const visualStoryboardSchema = z.object({
   palette: z.object({ canvas: colorHex, surface: colorHex, primary: colorHex, accent: colorHex, text: colorHex }).strict(),
   typographyIntent: z.object({ heading: z.string().min(1).max(120), body: z.string().min(1).max(120), hierarchy: z.string().min(1).max(240) }).strict(),
   headlineStrategy: z.enum(["short-concept-first", "cause-then-effect"]),
+  styleLock: googleFlowStyleLockSchema.default(defaultGoogleFlowStyleLock),
   reusableWorldObjects: z.array(objectIdSchema).max(visualObjectIds.length),
   scenes: z.array(visualStoryboardSceneSchema).min(1).max(30),
 }).strict().superRefine((storyboard, ctx) => {
@@ -242,6 +254,7 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       compositionSource: composed.compositionSource,
       ...(prior?.illustrationSource ? { illustrationSource: prior.illustrationSource }
         : prior ? {} : { illustrationSource: composed.compositionSource === "ai-vector" ? "ai-vector" as const : composed.compositionSource === "manual" ? "manual" as const : "procedural" as const }),
+      illustrationWorkflow: prior?.illustrationWorkflow ?? "google-flow",
       missingVisuals: composed.missingVisuals,
       warnings: composed.warnings,
       authoringStatus: composed.status,
@@ -249,6 +262,12 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       notes: prior?.notes ?? "",
       approved: false,
       approvedFingerprint: null,
+      sceneToken: prior?.sceneToken ?? stableGoogleFlowSceneToken(scene.id),
+      recommendedFilename: recommendedGoogleFlowFilename({ sceneId: scene.id, sceneNumber: index + 1, headline: scene.onScreenText || `Scene ${index + 1}`, sceneToken: prior?.sceneToken }),
+      ...(prior?.flowPrompt ? { flowPrompt: prior.flowPrompt } : {}),
+      flowStatus: sameCopy ? prior?.flowStatus ?? (hasRaster ? "illustration-imported" as const : prior?.flowPrompt ? "prompt-ready" as const : "awaiting-illustration" as const)
+        : hasRaster ? prior?.authoringConfirmed ? "ready-for-review" as const : "illustration-imported" as const
+          : prior?.flowPrompt ? "prompt-ready" as const : "awaiting-illustration" as const,
     };
     const keepApproval = Boolean(composed.status === "ready_for_review" && sameCopy && prior?.approved && JSON.stringify(prior.composition) === JSON.stringify(nextScene.composition)
       && JSON.stringify(prior.semanticPlan) === JSON.stringify(nextScene.semanticPlan)
@@ -262,6 +281,7 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
     palette,
     typographyIntent: { heading: "Sans-serif tebal, kontras tinggi", body: "Sans-serif bersih untuk caption pendek", hierarchy: "Headline 1–2 baris; objek ilustrasi jadi fokus; narasi tetap caption." },
     headlineStrategy: "short-concept-first",
+    styleLock: previous?.styleLock ?? defaultGoogleFlowStyleLock,
     reusableWorldObjects,
     scenes,
   });

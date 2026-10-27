@@ -139,6 +139,39 @@ export type VisualLayerInput = z.input<typeof visualLayerSchema>;
 export type VisualLayer = z.output<typeof visualLayerSchema>;
 export type VisualCompositionInput = z.input<typeof visualCompositionSchema>;
 export type VisualComposition = z.infer<typeof visualCompositionSchema>;
+export type VisualImageNode = Extract<VisualLeafNode, { type: "image" }>;
+export type VisualImageTransform = Pick<VisualImageNode, "x" | "y" | "width" | "height">;
+export type VisualImageUpdate = Partial<VisualImageTransform & Pick<VisualImageNode, "fit" | "position">>;
+
+export function visualImageNodes(composition: VisualComposition) {
+  return composition.layers.flatMap((layer) => layer.nodes.flatMap((node, index) => node.type === "group"
+    ? node.children.flatMap((child, childIndex) => child.type === "image" ? [{ id: `${layer.id}/${index}.${childIndex}`, layerId: layer.id, node: child }] : [])
+    : node.type === "image" ? [{ id: `${layer.id}/${index}`, layerId: layer.id, node }] : []));
+}
+
+export function updateVisualImageNode(composition: VisualComposition, nodeId: string, update: VisualImageUpdate): VisualComposition {
+  let found = false;
+  const layers = composition.layers.map((layer) => ({
+    ...layer,
+    nodes: layer.nodes.map((node, index) => {
+      if (node.type === "image" && nodeId === `${layer.id}/${index}`) {
+        found = true;
+        return { ...node, ...update };
+      }
+      if (node.type !== "group") return node;
+      return {
+        ...node,
+        children: node.children.map((child, childIndex) => {
+          if (child.type !== "image" || nodeId !== `${layer.id}/${index}.${childIndex}`) return child;
+          found = true;
+          return { ...child, ...update };
+        }),
+      };
+    }),
+  }));
+  if (!found) throw new Error(`Ilustrasi '${nodeId}' tidak ditemukan.`);
+  return visualCompositionSchema.parse({ ...composition, layers });
+}
 
 export const motionCueIds = ["fadeIn", "slide", "scale", "pan", "zoom", "parallax", "reveal", "pulse", "cut", "dissolve"] as const;
 export const motionEasings = ["linear", "easeIn", "easeOut", "easeInOut", "spring"] as const;

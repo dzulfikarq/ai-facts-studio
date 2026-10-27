@@ -7,6 +7,8 @@ import { resolveVisualColor, type VisualStyle } from "./style-config";
 import { visualBackdropLayerOffset, visualCompositionCamera, visualCompositionFrame } from "../domain/visual-geometry";
 import { motionActionProgress, type MotionAction } from "../domain/motion-director";
 import { nodeMotion, pointAlongPolyline } from "./motion";
+import type { VisualImageTransform } from "../domain/visual-composition";
+import type { VideoEditorInteractions } from "./types";
 
 const assetFiles = { cloud: "cloud.svg", lightning: "lightning.svg", sun: "sun.svg" } as const;
 const safeId = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "-");
@@ -121,7 +123,74 @@ function Diagram({ kind, labels, color, accent }: { kind: string; labels: string
   </>;
 }
 
-function LeafNode({ node, style, frame, progress, id, actions = [] }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number; id: string; actions?: MotionAction[] }) {
+function LeafNode({ node, style, frame, progress, id, actions = [], editor }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number; id: string; actions?: MotionAction[]; editor?: VideoEditorInteractions }) {
+  const gesture = React.useRef<{ mode: "move" | "resize"; pointerId: number; inverse: DOMMatrix; startPoint: DOMPoint; start: VisualImageTransform; latest: VisualImageTransform } | null>(null);
+  const [draftTransform, setDraftTransform] = React.useState<VisualImageTransform | null>(null);
+  const image = node.type === "image" ? node : null;
+  const imageFrame = image && draftTransform ? { ...image, ...draftTransform } : image;
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const parentPoint = (event: React.PointerEvent<SVGElement>, inverse: DOMMatrix) => {
+    const point = event.currentTarget.ownerSVGElement?.createSVGPoint();
+    if (!point) return null;
+    point.x = event.clientX;
+    point.y = event.clientY;
+    return point.matrixTransform(inverse);
+  };
+  const beginImageGesture = (event: React.PointerEvent<SVGElement>, mode: "move" | "resize") => {
+    if (!image || !editor || !event.isPrimary || event.button !== 0) return;
+    const parent = event.currentTarget.parentElement?.parentElement as SVGGraphicsElement | null;
+    const transform = parent?.getScreenCTM();
+    if (!transform) return;
+    const inverse = transform.inverse();
+    const startPoint = parentPoint(event, inverse);
+    if (!startPoint) return;
+    event.preventDefault();
+    event.stopPropagation();
+    editor.onSelectImage(id);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const start = { x: image.x, y: image.y, width: image.width, height: image.height };
+    gesture.current = { mode, pointerId: event.pointerId, inverse, startPoint, start, latest: start };
+  };
+  const moveImageGesture = (event: React.PointerEvent<SVGElement>) => {
+    const active = gesture.current;
+    if (!image || !active || active.pointerId !== event.pointerId) return;
+    const point = parentPoint(event, active.inverse);
+    if (!point) return;
+    const dx = point.x - active.startPoint.x;
+    const dy = point.y - active.startPoint.y;
+    const next = active.mode === "move"
+      ? { ...active.start, x: clamp(active.start.x + dx, 0, 1080 - active.start.width), y: clamp(active.start.y + dy, 0, 1920 - active.start.height) }
+      : (() => {
+        const requested = Math.max((active.start.width + dx) / active.start.width, (active.start.height + dy) / active.start.height);
+        const minScale = Math.max(1 / active.start.width, 1 / active.start.height);
+        const maxScale = Math.min((1080 - active.start.x) / active.start.width, (1920 - active.start.y) / active.start.height);
+        const scale = clamp(requested, minScale, maxScale);
+        return { ...active.start, width: active.start.width * scale, height: active.start.height * scale };
+      })();
+    active.latest = next;
+    setDraftTransform(next);
+  };
+  const finishImageGesture = (event: React.PointerEvent<SVGElement>) => {
+    const active = gesture.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    gesture.current = null;
+    setDraftTransform(null);
+    if (image && editor && Object.keys(active.start).some((key) => active.start[key as keyof VisualImageTransform] !== active.latest[key as keyof VisualImageTransform])) {
+      editor.onTransformImage(id, active.latest);
+    }
+  };
+  const nudgeImage = (event: React.KeyboardEvent<SVGRectElement>) => {
+    if (!image || !editor || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const distance = event.shiftKey ? 1 : 10;
+    editor.onSelectImage(id);
+    editor.onTransformImage(id, {
+      x: clamp(image.x + (event.key === "ArrowLeft" ? -distance : event.key === "ArrowRight" ? distance : 0), 0, 1080 - image.width),
+      y: clamp(image.y + (event.key === "ArrowUp" ? -distance : event.key === "ArrowDown" ? distance : 0), 0, 1920 - image.height),
+      width: image.width,
+      height: image.height,
+    });
+  };
   const color = "color" in node ? resolveVisualColor(node.color, style) : resolveVisualColor("text", style);
   const rawFill = "fill" in node ? node.fill : undefined;
   const gradient = rawFill && typeof rawFill === "object" ? rawFill : null;
@@ -135,7 +204,8 @@ function LeafNode({ node, style, frame, progress, id, actions = [] }: { node: Ex
     : node.motion === "rise" ? { x: 0, y: -progress * 180 }
       : node.motion === "flow" ? { x: progress * 96, y: progress * 56 }
         : node.motion === "drift" ? { x: Math.sin(frame / 22) * 9, y: Math.cos(frame / 26) * 7 } : { x: 0, y: 0 };
-  const transform = `translate(${node.x + motionOffset.x + semanticMotion.translateX} ${node.y + motionOffset.y + semanticMotion.translateY}) rotate(${(node.rotation ?? 0) + semanticMotion.rotation} ${node.width/2} ${node.height/2}) translate(${node.width/2} ${node.height/2}) scale(${semanticMotion.scale}) translate(${-node.width/2} ${-node.height/2})`;
+  const positionedNode = imageFrame ?? node;
+  const transform = `translate(${positionedNode.x + motionOffset.x + semanticMotion.translateX} ${positionedNode.y + motionOffset.y + semanticMotion.translateY}) rotate(${(positionedNode.rotation ?? 0) + semanticMotion.rotation} ${positionedNode.width/2} ${positionedNode.height/2}) translate(${positionedNode.width/2} ${positionedNode.height/2}) scale(${semanticMotion.scale}) translate(${-positionedNode.width/2} ${-positionedNode.height/2})`;
   const wrapperProps = { transform, opacity: (node.opacity ?? 1) * semanticMotion.opacity };
   switch (node.type) {
     case "shape":
@@ -155,20 +225,36 @@ function LeafNode({ node, style, frame, progress, id, actions = [] }: { node: Ex
     }
     case "icon": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100"><IconShape icon={node.icon} color={color}/></svg></g>;
     case "image": {
-      const file = node.asset.startsWith("upload-") ? `visual-assets/${node.asset.slice(7)}` : `assets/${assetFiles[node.asset as keyof typeof assetFiles]}`;
-      const position = node.position ?? "center";
+      const rendered = imageFrame!;
+      const file = rendered.asset.startsWith("upload-") ? `visual-assets/${rendered.asset.slice(7)}` : `assets/${assetFiles[rendered.asset as keyof typeof assetFiles]}`;
+      const position = rendered.position ?? "center";
       const vertical = position.split("-").find((part) => part === "top" || part === "bottom") ?? "mid";
       const horizontal = position.split("-").find((part) => part === "left" || part === "right") ?? "mid";
       const align = (value: string | undefined) => value === "left" ? "xMin" : value === "right" ? "xMax" : "xMid";
       const verticalAlign = vertical === "top" ? "YMin" : vertical === "bottom" ? "YMax" : "YMid";
-      const preserveAspectRatio = `${align(horizontal)}${verticalAlign} ${node.fit === "cover" ? "slice" : "meet"}`;
-      return <g {...wrapperProps}><image href={staticFile(file)} width={node.width} height={node.height} preserveAspectRatio={preserveAspectRatio}/></g>;
+      const preserveAspectRatio = `${align(horizontal)}${verticalAlign} ${rendered.fit === "cover" ? "slice" : "meet"}`;
+      const selected = editor?.selectedImageId === id;
+      const resizeHandleSize = Math.max(24, Math.min(96, Math.min(rendered.width, rendered.height) * 0.12));
+      const resizeHandleX = Math.max(0, rendered.width - Math.min(144, rendered.width * 0.25) - resizeHandleSize / 2);
+      const resizeHandleY = Math.max(0, rendered.height - Math.min(144, rendered.height * 0.25) - resizeHandleSize / 2);
+      return <g {...wrapperProps}>
+        <image href={staticFile(file)} width={rendered.width} height={rendered.height} preserveAspectRatio={preserveAspectRatio}/>
+        {editor && <rect
+          x="0" y="0" width={rendered.width} height={rendered.height} fill="transparent" pointerEvents="all"
+          role="button" tabIndex={0}
+          aria-label={selected ? "Ilustrasi dipilih. Seret untuk memindahkan; gunakan panah untuk menggeser." : "Pilih dan seret ilustrasi"}
+          style={{ cursor: "move", touchAction: "none" }}
+          onPointerDown={(event) => beginImageGesture(event, "move")}
+          onPointerMove={moveImageGesture} onPointerUp={finishImageGesture} onPointerCancel={finishImageGesture} onKeyDown={nudgeImage}
+        />}
+        {selected && <><rect x="0" y="0" width={rendered.width} height={rendered.height} fill="none" stroke={style.palette.primary} strokeWidth="8" strokeDasharray="18 12" pointerEvents="none"/><rect x={resizeHandleX} y={resizeHandleY} width={resizeHandleSize} height={resizeHandleSize} rx={resizeHandleSize * 0.2} fill={style.palette.canvas} stroke={style.palette.primary} strokeWidth="8" pointerEvents="all" role="button" tabIndex={0} aria-label="Ubah ukuran ilustrasi" data-editor-handle="resize" style={{ cursor: "nwse-resize", touchAction: "none" }} onPointerDown={(event) => beginImageGesture(event, "resize")} onPointerMove={moveImageGesture} onPointerUp={finishImageGesture} onPointerCancel={finishImageGesture}/></>}
+      </g>;
     }
     case "diagram": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100"><Diagram kind={node.kind} labels={node.labels} color={color} accent={resolveVisualColor(node.accent, style, resolveVisualColor("accent", style))}/></svg></g>;
   }
 }
 
-export function VisualCompositionView({ scene, composition, style, preset, frame, progress }: { scene: Scene; composition: VisualComposition; style: VisualStyle; preset: VisualPreset; frame: number; progress: number }) {
+export function VisualCompositionView({ scene, composition, style, preset, frame, progress, editor }: { scene: Scene; composition: VisualComposition; style: VisualStyle; preset: VisualPreset; frame: number; progress: number; editor?: VideoEditorInteractions }) {
   const layers = [...composition.layers].sort((a,b)=>a.depth-b.depth);
   const foregroundLayers = layers.filter((layer) => layer.depth > 0.1);
   const contentLayers = foregroundLayers.length ? foregroundLayers : layers;
@@ -205,11 +291,11 @@ export function VisualCompositionView({ scene, composition, style, preset, frame
       {motion.reveal < 1 && <defs><clipPath id={clipId}><rect x="0" y="0" width={1080*motion.reveal} height="1920"/></clipPath></defs>}
       <g clipPath={motion.reveal < 1 ? `url(#${clipId})` : undefined}>
         {nodes.map(({ node, index })=>{
-           if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} id={`${layer.id}/${index}`} node={node} style={style} frame={frame} progress={progress} actions={actions}/>;
+            if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} id={`${layer.id}/${index}`} node={node} style={style} frame={frame} progress={progress} actions={actions} editor={editor}/>;
            const groupRef = `${layer.id}/${index}`;
            const groupMotion = nodeMotion(actions, groupRef, node, frame);
            const groupTransform = `translate(${node.x + groupMotion.translateX} ${node.y + groupMotion.translateY}) rotate(${(node.rotation??0) + groupMotion.rotation} ${node.width/2} ${node.height/2}) translate(${node.width/2} ${node.height/2}) scale(${groupMotion.scale}) translate(${-node.width/2} ${-node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
-           return <g key={`group-${index}`} transform={groupTransform} opacity={(node.opacity??1) * groupMotion.opacity}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} id={`${layer.id}/${index}.${childIndex}`} node={child} style={style} frame={frame} progress={progress} actions={actions}/>)}</g>;
+            return <g key={`group-${index}`} transform={groupTransform} opacity={(node.opacity??1) * groupMotion.opacity}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} id={`${layer.id}/${index}.${childIndex}`} node={child} style={style} frame={frame} progress={progress} actions={actions} editor={editor}/>)}</g>;
         })}
         {particles.map((particle) => <circle key={`${particle.action.id}-${particle.index}`} cx={particle.x} cy={particle.y} r={particle.action.id.includes("uv") ? 6 : 8} fill={resolveVisualColor("accent", style)} opacity=".92" pointerEvents="none"/>)}
       </g>

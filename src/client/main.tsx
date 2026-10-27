@@ -12,6 +12,7 @@ import { composeVisualScene } from "../domain/visual-composer";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
 import type { VisualAsset } from "../domain/visual-assets";
+import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { AssetPlacement, ReusableSceneEntry } from "./SmartAssetLibraryDialog";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
@@ -28,7 +29,8 @@ import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-ver
 import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
 import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
-import { VisualStoryboardReview } from "./VisualStoryboardReview";
+import { VideoEditorV2 } from "./VideoEditorV2";
+import type { FlowBatchItem } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
 import "./styles.css";
@@ -565,6 +567,11 @@ function App() {
       ...updatedScene,
       approved,
       approvedFingerprint: approved ? visualApprovalFingerprint(updatedScene) : null,
+      flowStatus: effectiveChange.flowStatus ?? (approved ? "approved" as const
+        : effectiveChange.authoringConfirmed === true || effectiveChange.approved === false && prior.approved
+          ? "ready-for-review" as const
+          : compositionChanged && effectiveChange.composition?.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")))
+            ? "illustration-imported" as const : prior.flowStatus),
     };
     let storyboard: VisualStoryboard = {
       ...project.visualStoryboard,
@@ -700,6 +707,7 @@ function App() {
         layout: "scientific-diagram",
         compositionSource: "ai-vector",
         illustrationSource: "ai-vector",
+        illustrationWorkflow: "ai-vector",
         objects: [],
         relationships: [],
         visualFocus: null,
@@ -737,6 +745,19 @@ function App() {
       updateVisualScene(sceneId, planSceneMotion(scene, intensity));
       setMessage("Motion Plan deterministik dibuat dari narasi, relasi, dan node visual yang tersedia. Timing approximate; review sebelum approve.");
     } catch (error) { setMessage(friendlyError(error)); }
+  }
+
+  function applyMotionPreset(sceneId: string, preset: "static" | "gentle" | "pan-zoom" | "process" | "particles") {
+    const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene) return;
+    if (preset === "static") {
+      updateVisualScene(sceneId, { motionIntent: "gentle-reveal", motionActions: [], motionStatus: "static", motionIntensity: "subtle", motionSummary: "Gerak objek nonaktif; transisi template tetap berjalan." });
+      return;
+    }
+    const intensity: MotionIntensity = preset === "gentle" || preset === "pan-zoom" ? "subtle" : "balanced";
+    const motionIntent: VisualStoryboardScene["motionIntent"] = preset === "pan-zoom" ? "focus-shift" : preset === "process" ? "path-animation" : preset === "particles" ? "particle-flow" : "gentle-reveal";
+    const plan = planSceneMotion(scene, intensity);
+    updateVisualScene(sceneId, { ...plan, motionIntent, motionSummary: `${preset === "gentle" ? "Gerak lembut" : preset === "pan-zoom" ? "Pan & zoom" : preset === "process" ? "Animasi proses" : "Aliran partikel"}. ${plan.motionSummary}` });
   }
 
   async function prepareMotionScenes(intensity: MotionIntensity, sceneIds?: string[]) {
@@ -777,7 +798,7 @@ function App() {
     });
   }
 
-  async function useUploadedIllustration(sceneId: string, assetId: string, uploadedAsset?: VisualAsset, confirmationDone = false, fromLibrary = false, placement: AssetPlacement = { mode: "hero", fit: "contain", position: "center" }) {
+  async function useUploadedIllustration(sceneId: string, assetId: string, uploadedAsset?: VisualAsset, confirmationDone = false, fromLibrary = false, placement: AssetPlacement = { mode: "hero", fit: "contain", position: "center" }, workflow?: VisualStoryboardScene["illustrationWorkflow"]) {
     if (!project) return;
     const current = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
     if (!current) return;
@@ -817,17 +838,18 @@ function App() {
     });
     updateVisualScene(sceneId, {
       composition, compositionType: addToExisting ? current.compositionType : "hero-object-focus", layout: addToExisting ? current.layout : "existing-composition", compositionSource: fromLibrary || !asset || asset.source === "ai-generated" ? "library" : "manual", illustrationSource: source,
+      illustrationWorkflow: workflow ?? (fromLibrary ? "asset-library" : asset?.source === "ai-generated" ? "ai-image-api" : "upload-image"),
       objects: addToExisting ? current.objects : [], relationships: addToExisting ? current.relationships : [], visualFocus: addToExisting ? current.visualFocus : null,
       illustrationIntent: addToExisting ? current.illustrationIntent : asset?.name ?? `Built-in ${assetId}`,
       motionIntent: addToExisting ? current.motionIntent : "gentle-reveal", motionSummary: addToExisting ? current.motionSummary : "Fade/reveal ringan pada ilustrasi terpilih.", missingVisuals: addToExisting ? current.missingVisuals : [],
-      authoringStatus: "needs_review", authoringConfirmed: false,
+      authoringStatus: "needs_review", authoringConfirmed: false, flowStatus: "illustration-imported",
       warnings: [source === "ai-image" ? `AI Image (${asset?.provider ?? "provenance manual"}); tinjau akurasi semantik, crop aman, dan terms.` : `Ilustrasi dipakai sebagai ${mode}; ikon bukan pengganti ilustrasi lengkap. Tinjau kecocokan dan crop sebelum approval.`], approved: false,
     });
     return true;
   }
 
-  async function uploadVisualIllustration(sceneId: string, file: File, metadata: IllustrationImportInfo) {
-    if (!project || busy) return;
+  async function uploadVisualIllustration(sceneId: string, file: File, metadata: IllustrationImportInfo): Promise<boolean> {
+    if (!project || busy) return false;
     const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
     const currentImageId = scene?.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
     if (scene && (scene.approved || scene.authoringConfirmed || currentImageId !== undefined) && !await askConfirmation({
@@ -836,7 +858,7 @@ function App() {
       confirmLabel: "Unggah & ganti",
       cancelLabel: "Batal",
       tone: "warning",
-    })) return;
+    })) return false;
     setBusy(true);
     try {
       const form = new FormData();
@@ -852,10 +874,156 @@ function App() {
       if (metadata.model) form.append("model", metadata.model);
       const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean; originalBytes: number }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
       setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
-      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true);
+      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true, false, undefined,
+        metadata.provider?.startsWith("Google Flow") ? "google-flow" : metadata.source === "ai-generated" ? "ai-image-api" : "upload-image");
       setMessage(`Aset tersimpan${result.optimized ? " dan dioptimalkan ke WebP" : ""}. Tinjau thumbnail, safe crop, lisensi, dan kecocokan sebelum approval.`);
-    } catch (error) { setMessage(friendlyError(error)); }
+      return true;
+    } catch (error) { setMessage(friendlyError(error)); return false; }
     finally { setBusy(false); }
+  }
+
+  function saveFlowPrompt(sceneId: string, prompt: string) {
+    if (!project) return;
+    setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
+      if (scene.sceneId !== sceneId) return scene;
+      const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+      return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
+    }) } } : current);
+    setSaved(false);
+  }
+
+  function saveFlowStyleLock(styleLock: GoogleFlowStyleLock) {
+    setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, styleLock } } : current);
+    setSaved(false);
+  }
+
+  function prepareFlowPrompts(prompts: Array<{ sceneId: string; prompt: string }>) {
+    if (!project || !prompts.length) return;
+    const byScene = new Map(prompts.map((item) => [item.sceneId, item.prompt]));
+    setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
+      const prompt = byScene.get(scene.sceneId);
+      if (!prompt || scene.flowPrompt) return scene;
+      const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+      return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
+    }) } } : current);
+    setSaved(false);
+    setMessage(`${prompts.length} prompt Flow disiapkan; ilustrasi yang sudah ada tidak diubah.`);
+  }
+
+  async function applyFlowStyleLock(prompts: Array<{ sceneId: string; prompt: string }>) {
+    if (!project || busy) return;
+    if (project.visualStoryboard.scenes.some((scene) => scene.flowPrompt) && !await askConfirmation({
+      title: "Terapkan Style Lock ke semua prompt?",
+      message: "Prompt Flow tersimpan akan dibuat ulang. Ilustrasi dan approval scene tidak diubah.",
+      confirmLabel: "Perbarui semua prompt",
+      cancelLabel: "Pertahankan prompt",
+      tone: "warning",
+    })) return;
+    const byScene = new Map(prompts.map((item) => [item.sceneId, item.prompt]));
+    setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
+      const prompt = byScene.get(scene.sceneId);
+      if (!prompt) return scene;
+      const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+      return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
+    }) } } : current);
+    setSaved(false);
+    setMessage("Style Lock diterapkan ke prompt semua scene. Ilustrasi tidak berubah.");
+  }
+
+  async function uploadFlowReference(file: File): Promise<VisualAsset | null> {
+    if (!project || busy) return null;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("illustration", file);
+      form.append("name", file.name.replace(/\.[^.]+$/, "").slice(0, 120) || "Google Flow style reference");
+      form.append("source", "user-upload");
+      form.append("license", "User-provided visual reference; provenance not independently verified");
+      form.append("style", "google-flow-reference");
+      form.append("provider", "Manual project reference");
+      const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
+      setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      setMessage(`Referensi tersimpan lokal${result.optimized ? " dan dioptimalkan" : ""}; unggah ke Google Flow secara manual bila perlu.`);
+      return result.asset;
+    } catch (error) { setMessage(friendlyError(error)); return null; }
+    finally { setBusy(false); }
+  }
+
+  async function applyFlowBatch(items: FlowBatchItem[]) {
+    const empty = { appliedIds: [] as string[], failures: [] as Array<{ id: string; fileName: string; message: string }> };
+    if (!project || busy || !items.length) return empty;
+    const targets = items.map((item) => project.visualStoryboard.scenes.find((scene) => scene.sceneId === item.sceneId));
+    if (targets.some((scene) => !scene) || new Set(items.map((item) => item.sceneId)).size !== items.length) {
+      return { ...empty, failures: items.map((item) => ({ id: item.id, fileName: item.file.name, message: "Assignment scene tidak valid atau duplikat." })) };
+    }
+    const replacing = targets.filter((scene) => scene!.approved || scene!.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
+    if (replacing.length && !await askConfirmation({
+      title: "Ganti ilustrasi scene?",
+      message: `${replacing.length} scene memiliki ilustrasi atau approval. File baru mengganti komposisi scene terkait saja dan approval-nya menjadi stale. Scene lain tetap.` ,
+      confirmLabel: "Impor dan ganti",
+      cancelLabel: "Batal",
+      tone: "warning",
+    })) return empty;
+
+    setBusy(true);
+    const failures: Array<{ id: string; fileName: string; message: string }> = [];
+    const uploaded: Array<{ item: FlowBatchItem; scene: VisualStoryboardScene; asset: VisualAsset }> = [];
+    let storedAssets = project.visualAssets;
+    try {
+      for (const item of items) {
+        const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
+        try {
+          const form = new FormData();
+          form.append("illustration", item.file);
+          form.append("name", item.file.name.replace(/\.[^.]+$/, "").slice(0, 120) || scene.headline);
+          form.append("source", "ai-generated");
+          form.append("license", "User-provided; Google Flow output imported manually");
+          form.append("style", project.visualStoryboard.styleId);
+          form.append("provider", "Google Flow (manual import)");
+          form.append("model", "Google Flow");
+          form.append("prompt", item.prompt);
+          form.append("semanticTags", scene.objects.map((object) => object.label).join(","));
+          form.append("supportedConcepts", [scene.semanticPlan?.primaryVisualConcept, scene.visualSummary].filter(Boolean).join(","));
+          const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
+          storedAssets = result.project.visualAssets;
+          uploaded.push({ item, scene, asset: result.asset });
+        } catch (error) { failures.push({ id: item.id, fileName: item.file.name, message: friendlyError(error) }); }
+      }
+      if (uploaded.length) {
+        const importedByScene = new Map(uploaded.map((entry) => [entry.scene.sceneId, entry]));
+        const scenes = project.visualStoryboard.scenes.map((scene) => {
+            const imported = importedByScene.get(scene.sceneId);
+            if (!imported) return scene;
+            const { semanticPlan: _semanticPlan, ...withoutSemanticPlan } = scene;
+            const composition = visualCompositionSchema.parse({
+              background: project.visualStoryboard.palette.canvas,
+              layers: [{ id: `flow-${imported.asset.sha256.slice(0, 12)}`, depth: 0.05, nodes: [{ type: "image", asset: imported.asset.id, x: 0, y: 0, width: 1080, height: 1920, fit: "cover", position: "center" }] }],
+            });
+            return {
+              ...withoutSemanticPlan, composition, compositionType: "hero-object-focus" as const, layout: "existing-composition" as const,
+              objects: [], relationships: [], visualFocus: null, illustrationIntent: imported.asset.name, motionIntent: "gentle-reveal" as const,
+              motionSummary: "Ilustrasi Google Flow raster bergerak sebagai satu gambar; objek internal tidak dipisah.", motionStatus: "not_prepared" as const, motionActions: [],
+              compositionSource: "library" as const, illustrationSource: "ai-image" as const, missingVisuals: [],
+              illustrationWorkflow: "google-flow" as const,
+              authoringStatus: "needs_review" as const, authoringConfirmed: false,
+              warnings: ["Google Flow output diimpor manual; provenance dilaporkan pengguna. Tinjau akurasi ilmiah, crop, dan safe area."],
+              approved: false, approvedFingerprint: null, flowStatus: "illustration-imported" as const,
+            };
+          });
+        const storyboard: VisualStoryboard = {
+          ...project.visualStoryboard,
+          scenes,
+          reusableWorldObjects: visualObjectIds.filter((objectId) => scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1),
+        };
+        setProject((current) => current ? { ...current, visualAssets: storedAssets, visualStoryboard: storyboard } : current);
+        setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
+        setSaved(false);
+        setPreviewReviewed(false);
+        setPreviewStarted(false);
+      }
+      setMessage(`${uploaded.length} ilustrasi dipasang ke scene${failures.length ? `; ${failures.length} gagal—file sukses tetap tersimpan di Asset Library` : ""}. Tinjau lalu simpan perubahan.`);
+      return { appliedIds: uploaded.map(({ item }) => item.id), failures };
+    } finally { setBusy(false); }
   }
 
   async function applyGeneratedAiImage(sceneId: string, asset: VisualAsset, fit: "cover" | "contain") {
@@ -962,19 +1130,8 @@ function App() {
   }
 
   async function selectAiImageSource(sceneId: string) {
-    const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
-    if (!scene) return false;
-    if ((scene.approved || scene.authoringConfirmed) && !await askConfirmation({
-      title: "Ganti sumber ilustrasi ke AI Image?",
-      message: "Scene akan menunggu gambar impor dan approval lama menjadi stale. Komposisi saat ini belum dihapus sampai gambar dipilih.",
-      confirmLabel: "Buat prompt AI Image",
-      cancelLabel: "Pertahankan sumber sekarang",
-      tone: "warning",
-    })) return false;
-    updateVisualScene(sceneId, {
-      illustrationSource: "ai-image", authoringStatus: "needs_visual_authoring", authoringConfirmed: false, approved: false,
-      warnings: ["Generate hanya setelah provider opt-in dan konfirmasi biaya per gambar; alternatifnya impor PNG/JPEG/WebP eksternal."],
-    });
+    if (!project?.visualStoryboard.scenes.some((item) => item.sceneId === sceneId)) return false;
+    updateVisualScene(sceneId, { illustrationWorkflow: "ai-image-api" });
     void api<AiImageProviderCatalog>("/api/ai-image/providers").then(setAiImageProviders).catch(() => {});
     return true;
   }
@@ -1027,7 +1184,7 @@ function App() {
   }
 
   function confirmUploadedIllustration(sceneId: string) {
-    updateVisualScene(sceneId, { authoringConfirmed: true, authoringStatus: "needs_review", warnings: ["Kecocokan aset dan hubungan telah dikonfirmasi manusia; approval tetap terpisah."] });
+    updateVisualScene(sceneId, { authoringConfirmed: true, authoringStatus: "needs_review", flowStatus: "ready-for-review", warnings: ["Kecocokan aset dan hubungan telah dikonfirmasi manusia; approval tetap terpisah."] });
   }
 
   async function saveProject(): Promise<Project | null> {
@@ -1319,7 +1476,7 @@ function App() {
   const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
 
-  return <div className="app-shell" ref={layoutRef}>
+  return <div className={`app-shell ${view === "workspace" && activeStep === "visual" ? "editor-active" : ""}`} ref={layoutRef}>
     <main className="main-area">
       <header className={`topbar ${view === "workspace" ? "context-topbar" : ""}`}>
         {view === "workspace" && project ? <div className="topbar-left context-topbar-left">
@@ -1389,17 +1546,17 @@ function App() {
         onTheme={setTheme}
       />}
 
-      {view === "workspace" && project && research && <section className="page layout-container workspace-page">
-        <div className="workspace-heading">
+      {view === "workspace" && project && research && <section className={`page layout-container workspace-page ${activeStep === "visual" ? "video-editor-workspace" : ""}`}>
+        {activeStep !== "visual" && <div className="workspace-heading">
           <div><div className="eyebrow">VIDEO WORKSPACE <span className="crumb-dot">/</span> LANGKAH {currentStepIndex + 1} DARI {workspaceSteps.length}</div>
             <input className="title-input" aria-label="Judul video" value={research.title} onChange={(event) => updateResearch((current) => ({ ...current, title: event.target.value }))} />
             <div className="meta-line"><span>{research.scenes.length} scenes</span><i />{project.audio ? <span>Audio {project.audio.durationSec.toFixed(1)} dtk</span> : <span>Audio belum ditambahkan</span>}<i /><span>9:16 · 1080 × 1920</span></div>
           </div>
-        </div>
+        </div>}
 
-        <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />
-        <div className="workspace-step-panel">
-          <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>
+        {activeStep !== "visual" && <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />}
+        <div className={`workspace-step-panel ${activeStep === "visual" ? "video-editor-step-panel" : ""}`}>
+          {activeStep !== "visual" && <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>}
 
           {activeStep === "materials" && <div className="workspace-step-content materials-content">
             <div className="story-column">
@@ -1428,18 +1585,25 @@ function App() {
             </aside>
           </div>}
 
-          {activeStep === "visual" && <VisualStoryboardReview
+          {activeStep === "visual" && <VideoEditorV2
             research={research}
             storyboard={project.visualStoryboard}
             gate={visualGate!}
             saved={saved}
             busy={busy || project.visualPreparation?.status === "running" || project.motionPreparation?.status === "running"}
             generatingSceneId={generatingVisualSceneId}
+            assets={project.visualAssets}
+            projectId={project.id}
+            audio={project.audio}
+            selectedSceneId={selectedSceneId}
+            onSelectScene={setSelectedSceneId}
+            onTitleChange={(title) => updateResearch((current) => ({ ...current, title }))}
+            onBack={() => setActiveStep("materials")}
+            onExport={() => void goToStep("render")}
+            onSave={() => void saveProject()}
             onChange={updateVisualScene}
             onGenerate={regenerateVisualScene}
             onUseCurrentComposition={useAuthoredComposition}
-            assets={project.visualAssets}
-            projectId={project.id}
             librarySceneId={librarySceneId}
             onOpenLibrary={(sceneId, tab) => void openVisualLibrary(sceneId, tab)}
             onCloseLibrary={() => setLibrarySceneId(null)}
@@ -1464,18 +1628,24 @@ function App() {
             vectorAvailable={Boolean(aiGenerationSettings?.mode === "development" && aiGenerationSettings.providers.development.models.some((model) => model.id === visualPlannerModel))}
             vectorizingSceneId={vectorizingVisualSceneId}
             onGenerateVector={generateVectorScene}
-            onPrepareAll={() => void prepareVisualScenes()}
             onPrepareIssues={(sceneIds) => void prepareVisualScenes(sceneIds)}
             onGenerateMotion={generateSceneMotion}
+            onMotionPreset={applyMotionPreset}
             onPrepareMotion={(intensity) => void prepareMotionScenes(intensity)}
             onCancelMotion={() => void cancelMotionScenes()}
             onRetryMotion={(sceneIds, intensity) => void prepareMotionScenes(intensity, sceneIds)}
             onSelectAiImageSource={selectAiImageSource}
             onGenerateAiImage={generateAiImage}
+            onFlowPromptChange={saveFlowPrompt}
+            onStyleLockChange={saveFlowStyleLock}
+            onPrepareFlowPrompts={prepareFlowPrompts}
+            onApplyStyleLock={(prompts) => void applyFlowStyleLock(prompts)}
+            onUploadFlowReference={uploadFlowReference}
+            onImportFlowIllustration={uploadVisualIllustration}
+            onApplyFlowBatch={applyFlowBatch}
             imageProviderCatalog={aiImageProviders}
             preparation={project.visualPreparation}
             motionPreparation={project.motionPreparation}
-            projectTitle={project.researchPackage.title}
             libraryInitialTab={libraryInitialTab}
           />}
 
@@ -1577,13 +1747,13 @@ function App() {
             </div>
           </div>}
 
-          <div className="workflow-navigation">
+          {activeStep !== "visual" && <div className="workflow-navigation">
             <span>{saved ? "Semua perubahan tersimpan." : "Perubahan tersimpan saat lanjut dari Materi & Storyboard."}</span>
             <div className="workflow-navigation-actions">
               {currentStepIndex > 0 && <button type="button" className="button button-light" onClick={() => void goToStep(workspaceSteps[currentStepIndex - 1]!.id)} disabled={busy}>← Kembali</button>}
               {currentStepIndex < workspaceSteps.length - 1 && <button type="button" className="button button-primary" onClick={() => void goToStep(workspaceSteps[currentStepIndex + 1]!.id)} disabled={busy}>Lanjut <b>→</b></button>}
             </div>
-          </div>
+          </div>}
         </div>
       </section>}
     </main>

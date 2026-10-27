@@ -4,6 +4,7 @@ import { captionSegmentsForScene } from "../domain/captions";
 import { timelineDuration, sceneTimes } from "../domain/timeline";
 import type { ResearchPackage, Scene } from "../domain/research";
 import type { VideoProps } from "./types";
+import type { VideoEditorInteractions } from "./types";
 import { sceneTransitionOpacity } from "./motion";
 import { rendererRegistry } from "./renderer-registry";
 import { visualStyles } from "./style-config";
@@ -36,13 +37,13 @@ function captionLine(line: string, emphasis: string[], accent: string) {
   });
 }
 
-function SceneVisual({ scene, preset, progress, frame, opacity }: { scene: Scene; preset: ResearchPackage["visualPreset"]; progress: number; frame: number; opacity: number }) {
+function SceneVisual({ scene, preset, progress, frame, opacity, editor }: { scene: Scene; preset: ResearchPackage["visualPreset"]; progress: number; frame: number; opacity: number; editor?: VideoEditorInteractions }) {
   const definition = rendererRegistry[scene.templateId];
   if (!definition) throw new Error(`No renderer registered for template '${scene.templateId}'.`);
   const Renderer = definition.component;
   const renderScene = scene.visualComposition ? scene : { ...scene, visualComposition: definition.defaultComposition() };
   return <g opacity={opacity}>
-    <Renderer scene={renderScene} composition={renderScene.visualComposition} preset={preset} frame={frame} progress={progress}/>
+    <Renderer scene={renderScene} composition={renderScene.visualComposition} preset={preset} frame={frame} progress={progress} editor={editor}/>
   </g>;
 }
 
@@ -70,7 +71,7 @@ function findSceneIndex(research: ResearchPackage, durationSec: number, time: nu
   return next < 0 ? research.scenes.length - 1 : Math.max(0, next - 1);
 }
 
-export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile, audioDurationSec, audioTimingMode }) => {
+export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile, audioDurationSec, audioTimingMode, editor }) => {
   const frame = useCurrentFrame();
   const fps = 30;
   const durationSec = timelineDuration(research, audioDurationSec);
@@ -113,8 +114,8 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
         <linearGradient id="caption-shade" x1="0" y1="0" x2="0" y2="1"><stop stopColor={style.palette.canvas} stopOpacity="0"/><stop offset="1" stopColor={style.palette.canvas} stopOpacity=".92"/></linearGradient>
       </defs>
       <rect width="1080" height="1920" fill="url(#engine-sky)"/>
-      {previous && <SceneVisual key={`prev-${previous.id}`} scene={previous} preset={research.visualPreset} progress={1} frame={Math.max(0, Math.floor((sceneTimes(research, previous, durationSec, audioTimingMode).endSec)*fps))} opacity={1-transition}/>}
-      <SceneVisual key={scene.id} scene={scene} preset={research.visualPreset} progress={progress} frame={localFrame} opacity={transition}/>
+       {previous && <SceneVisual key={`prev-${previous.id}`} scene={previous} preset={research.visualPreset} progress={1} frame={Math.max(0, Math.floor((sceneTimes(research, previous, durationSec, audioTimingMode).endSec)*fps))} opacity={1-transition}/>}
+       <SceneVisual key={scene.id} scene={scene} preset={research.visualPreset} progress={progress} frame={localFrame} opacity={transition} editor={editor?.sceneId === scene.id ? editor : undefined}/>
       <PresetDecorations preset={research.visualPreset} time={time}/>
       <rect x="0" y="0" width="1080" height="510" fill="url(#caption-shade)" opacity=".72"/>
       <rect x="0" y="1510" width="1080" height="410" fill="url(#caption-shade)"/>

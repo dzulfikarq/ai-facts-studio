@@ -20,6 +20,8 @@ export default defineConfig(({ mode }) => {
             proxyRequest.setHeader("x-ai-facts-studio-vite-proxy", "vite");
           }),
         },
+        "/audio": { target: `http://${targetHost}:${apiPort}` },
+        "/visual-assets": { target: `http://${targetHost}:${apiPort}` },
       },
     },
   };

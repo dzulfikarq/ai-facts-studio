@@ -143,6 +143,30 @@ Current source of truth `src/client/workflow.ts` exposes **six guarded steps**, 
 
 Workflow status is derived from current project/save/review/job state. UI redesign must not weaken save, visual approval, audio match/approval, review, preview, snapshot, quality, or render checks.
 
+### Illustration authoring and Asset Library
+
+- Scene source controls distinguish curated/local art, AI Vector, AI Image, uploaded raster, and reusable Asset Library selection. Source choice never changes Development/Production mode.
+- AI Image uses a Hugging Face adapter only when `HF_TOKEN`, `HF_IMAGE_GENERATION_ENABLED=true`, and `HF_IMAGE_ALLOW_PAID=true` are configured server-side. Show live model availability, editable prompt, status, resolution, and unknown-cost disclosure. Shared confirmation required for each one-image request; store and preview local candidate before explicit apply.
+- Never claim image generation is free: account balance, remaining credits, and per-image billing are unavailable to this app. Storyboard opening never generates; renderer never calls providers.
+- Import controls accept PNG/JPEG/WebP, show editable license/provenance, and retain prompt/provider/model metadata when user marks source as externally AI-generated. That label records user-provided provenance; it does not verify origin.
+- Smart Asset Library uses native `<dialog>`, semantic tabs, native search/select controls, and shared surface/button/focus tokens. Search results are paginated; online requests happen only after explicit search/selection. Cross-project reuse links the same content-addressed file; no duplicate copy. Deletion stays blocked while any scene, reusable template, or immutable render snapshot references asset.
+- Openverse imports allow CC0, Public Domain Mark, CC BY, and CC BY-SA only; selection is re-fetched and license-checked before a local raster copy. Never bulk-download, render from remote URLs, or claim license/relevance is independently verified.
+- Tabler icons are generated from pinned local metadata and sanitized path nodes; preserve the package MIT notice. Icons are supplementary objects, not substitutes for complete educational illustrations.
+- Reusable-scene templates copy composition/layout/motion/asset references, not source scene title or narration. Every destination scene still needs semantic review and fresh approval.
+- Asset Library modal reflows at 900/620/360px, uses visible `:focus-visible` rings and native keyboard behavior, and suppresses nonessential motion under `prefers-reduced-motion`. Theme comes from root Light/Dark/System preference; never tie it to video data.
+- Raster thumbnails, preview, and Remotion use same composition and fit/position data. Human semantic/crop/provenance confirmation and separate scene approval remain required.
+- Keep source picker and metadata form wrapped on narrow screens; preserve keyboard-operable native file input/dialog, visible focus, reduced-motion support, and Light/Dark/System themes.
+- Visual Storyboard exposes one **Siapkan Semua Ilustrasi** batch and per-scene **Ubah Ilustrasi** source chooser. Show Ready for Review / Needs Attention / Approved separately; persist batch progress across refresh/reopen and offer selective retry. Manual, approved, selected-image, and already-ready art stay untouched unless user confirms replacement.
+- Smart Hybrid order is structured reusable scene → relevant local illustration → local composer. Require object/process, style/palette, local availability, and known license fit; if fit fails, keep Needs Attention with explicit alternatives. Never call AI Image automatically. Every result still needs human review and separate approval.
+- Native source dialog uses labelled heading, moves keyboard focus inside, fits 390px viewport, retains visible focus, and honors reduced motion/theme tokens. Keep workflow progress and scene data separate from theme/video rendering.
+
+### Motion Director review
+
+- Motion intensity uses one labelled native select (Subtle/Balanced/Expressive); Balanced is default. Per-scene plans expose action type, target, duration, approximate/aligned timing, and manual Approve state.
+- Motion preview uses a native range input to seek deterministic Remotion frames. Keep it keyboard-operable, responsive, visibly focused, and explicit that approximate timing is not word-level audio alignment.
+- All-scene motion preparation shows durable progress, preserved scenes, partial failures, cancel, and selective retry. Opening a project, previewing, and rendering make no AI request.
+- Raster artwork is one visual layer: preview may apply whole-image transforms/available overlays only; never imply that depicted objects have independent layers.
+
 ## 9. Responsive guidelines
 
 - Base layout supports 320px minimum; target mobile range includes 360–430px.

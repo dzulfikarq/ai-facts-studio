@@ -1,0 +1,51 @@
+{
+  "topic": "Kenapa Air Laut Asin?",
+  "disposition": "all scenes already had locally authored/reusable illustrations; Smart Hybrid preserved them; no AI Image/Vector generation",
+  "job": {
+    "id": "f61359fc-089f-4eda-8a81-e3494741daa6",
+    "projectId": "e6d87c2a-077b-49d8-873a-e2bc5d92953e",
+    "requestId": "2bb70984-39dd-40a5-aca2-a333e6bc065e",
+    "status": "completed",
+    "total": 5,
+    "processed": 5,
+    "currentSceneId": null,
+    "readyForReview": 5,
+    "needsAttention": 0,
+    "failed": 0,
+    "approved": 0,
+    "scenes": [
+      {
+        "sceneId": "salt-01-hook",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "salt-02-weathering",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "salt-03-connected-river",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "salt-04-evaporation",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "salt-05-conclusion",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      }
+    ],
+    "createdAt": "2026-10-27T06:02:29.054Z",
+    "updatedAt": "2026-10-27T06:02:29.057Z"
+  }
+}

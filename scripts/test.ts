@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
@@ -11,15 +13,20 @@ import { parseResearchPackage } from "../src/domain/research";
 import { ApiError, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai";
 import { GeminiSpeechProvider, type GeminiSdkClient } from "../src/server/tts/gemini-provider";
 import { DEFAULT_TTS_MODEL, FREE_TIER_TTS_MODELS, GEMINI_TTS_LOCALES, ttsCacheKey } from "../src/server/tts/provider";
-import { cueProgress, layerMotion, sceneTransitionOpacity } from "../src/video/motion";
+import { cueProgress, layerMotion, nodeMotion, pointAlongPolyline, sceneTransitionOpacity } from "../src/video/motion";
 import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
-import { renderedVisualBounds } from "../src/domain/visual-geometry";
-import { validateRasterImage } from "../src/domain/visual-assets";
+import { renderedVisualBounds, visualCompositionFrame } from "../src/domain/visual-geometry";
+import { aiVectorIllustrationSchema, parseAiVectorIllustration, vectorIllustrationNodeCount } from "../src/domain/ai-vector-illustration";
+import { visualCompositionSchema } from "../src/domain/visual-composition";
+import { VisualCompositionView } from "../src/video/visual-primitives";
+import { buildIllustrationPrompt } from "../src/domain/illustration-prompt";
+import { visualAssetSchema, validateRasterImage } from "../src/domain/visual-assets";
 import { visualSemanticPlanSchema } from "../src/domain/visual-semantic-plan";
-import { applyVisualStoryboard, buildVisualStoryboard, legacyVisualApprovalFingerprint, visualApprovalFingerprint, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, illustrationSourceForScene, legacyMotionApprovalFingerprint, legacyVisualApprovalFingerprint, visualApprovalFingerprint, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
 import { composeVisualScene, hasGenericIconCards, visualRelationshipIsVisible } from "../src/domain/visual-composer";
-import { visualObjectLibrary } from "../src/domain/visual-objects";
+import { visualObjectIds, visualObjectLibrary } from "../src/domain/visual-objects";
+import { prepareSmartVisual, type ReusableCandidate } from "../src/server/visual-orchestrator";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, type WorkflowSignals } from "../src/client/workflow";
 import { aiGeneratedContentSchema, aiGenerationInputSchema, buildAiGenerationDraft, buildDevelopmentPrompt, parseManualAiResult, parseManualAiResultText, researchPackageWithConfirmedSources, restoreAiGenerationDraft, type AiGeneratedContent } from "../src/domain/ai-generation";
 import { aiGenerationSchema, DEFAULT_TEXT_MODEL, FREE_TIER_TEXT_MODELS, getAiGenerationSettings, getGeminiTextQuotaMonitoring, getProductionProviderStatus, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "../src/server/ai-generation/provider";
@@ -27,15 +34,53 @@ import { AiGenerationRequestError, reserveAiGenerationRequest } from "../src/ser
 import { GeminiTextGenerationError, GeminiTextGenerationProvider } from "../src/server/ai-generation/gemini-text-provider";
 import { getOpenCodeProviderStatus, OpenCodeGenerationError, OpenCodeTextGenerationProvider, restrictedOpenCodeEnvironment, type RestrictedOpenCodeServerFactory } from "../src/server/ai-generation/opencode-provider";
 import { generateAiResearchStoryboard } from "../src/server/ai-generation/generate";
-import { generateVisualSemanticPlan } from "../src/server/ai-generation/visual-planner";
+import { generateVisualSemanticPlan, type VisualPlannerInput } from "../src/server/ai-generation/visual-planner";
+import { generateAiVectorIllustration } from "../src/server/ai-generation/vector-illustrator";
 import type { AiGenerationProvider } from "../src/server/ai-generation/provider";
+import { DEFAULT_HF_IMAGE_MODEL, HF_IMAGE_RESOLUTIONS, HuggingFaceImageError, HuggingFaceInferenceImageProvider, discoverHuggingFaceImageModels, huggingFaceImageConfiguration, parseHuggingFaceImageModels } from "../src/server/ai-generation/huggingface-image";
 import { fillEmptyGeminiTextEnvironment } from "../src/server/environment";
 import { resolveTheme } from "../src/client/theme-system";
+import { assetFtsExpression, indexTablerIcons, isPublicInternetAddress, openverseResultIsCached, sanitizedTablerSvg, searchTablerIcons, upsertVisualAssetCatalog } from "../src/server/asset-library";
+import { openverseLicenseIds } from "../src/domain/asset-library";
+import { motionActionProgress, motionActionSchema, planSceneMotion } from "../src/domain/motion-director";
 
-const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita"];
+const samples = ["mountain-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
 assert.equal(resolveTheme("system", true), "dark", "System theme follows dark OS preference");
 assert.equal(resolveTheme("system", false), "light", "System theme follows light OS preference");
 assert.equal(resolveTheme("dark", false), "dark", "Explicit theme ignores OS preference");
+assert.equal(huggingFaceImageConfiguration({} as NodeJS.ProcessEnv).configured, false, "Hugging Face image provider is disabled unless token and both operator opt-ins exist");
+assert.deepEqual(HF_IMAGE_RESOLUTIONS.map((size) => size.split("x").map(Number)[0]! / size.split("x").map(Number)[1]!), [9 / 16, 9 / 16], "supported raster dimensions preserve exact 9:16 framing");
+const hfModelFixture = [
+  { id: "example/live-image", tags: ["license:apache-2.0"], inferenceProviderMapping: [{ provider: "hf-inference", status: "live", task: "text-to-image" }] },
+  { id: "example/error-image", tags: [], inferenceProviderMapping: [{ provider: "hf-inference", status: "error", task: "text-to-image" }] },
+  { id: "example/other-provider", tags: [], inferenceProviderMapping: [{ provider: "fal-ai", status: "live", task: "text-to-image" }] },
+];
+assert.deepEqual(parseHuggingFaceImageModels(hfModelFixture), [{ id: "example/live-image", license: "apache-2.0" }], "catalog only allows live hf-inference text-to-image models");
+assert.deepEqual(parseHuggingFaceImageModels([{ id: "example/live-object", tags: [], inferenceProviderMapping: { "hf-inference": { status: "live", task: "text-to-image" } } }]).map((model) => model.id), ["example/live-object"], "catalog supports Hub mapping object response shape");
+let discoveryRequested = "";
+const mockedModels = await discoverHuggingFaceImageModels((async (input) => {
+  discoveryRequested = String(input);
+  return new Response(JSON.stringify(hfModelFixture), { status: 200, headers: { "content-type": "application/json" } });
+}) as typeof fetch);
+assert.match(discoveryRequested, /inference_provider=hf-inference.*pipeline_tag=text-to-image/);
+assert.deepEqual(mockedModels.map((model) => model.id), ["example/live-image"], "model availability uses mocked official Hub response");
+const mockedImageCalls: Array<{ url: string; init: RequestInit }> = [];
+const mockedImageProvider = new HuggingFaceInferenceImageProvider("test-token-never-real", (async (input, init) => {
+  mockedImageCalls.push({ url: String(input), init: init ?? {} });
+  return new Response(Uint8Array.from([137, 80, 78, 71]), { status: 200, headers: { "content-type": "image/png" } });
+}) as typeof fetch);
+const mockedImage = await mockedImageProvider.generate({ model: DEFAULT_HF_IMAGE_MODEL, prompt: "one cohesive 2D river illustration", resolution: "576x1024", userConfirmed: true, costAcknowledged: true });
+assert.deepEqual([...mockedImage.bytes], [137, 80, 78, 71]);
+assert.equal(mockedImage.mimeType, "image/png");
+assert.match(mockedImageCalls[0]!.url, /router\.huggingface\.co\/hf-inference\/models\/stabilityai\/stable-diffusion-3-medium-diffusers/);
+assert.equal((mockedImageCalls[0]!.init.headers as Record<string, string>).Authorization, "Bearer test-token-never-real", "HF token stays in server Authorization header");
+assert.deepEqual(JSON.parse(String(mockedImageCalls[0]!.init.body)), { inputs: "one cohesive 2D river illustration", parameters: { width: 576, height: 1024 } });
+await assert.rejects(() => mockedImageProvider.generate({ model: DEFAULT_HF_IMAGE_MODEL, prompt: "one cohesive 2D river illustration", resolution: "576x1024", userConfirmed: false, costAcknowledged: false } as unknown as Parameters<typeof mockedImageProvider.generate>[0]), /konfirmasi biaya/);
+assert.equal(mockedImageCalls.length, 1, "missing per-image confirmation prevents provider request");
+const rateLimitedProvider = new HuggingFaceInferenceImageProvider("mock-token", (async () => new Response(JSON.stringify({ error: "rate limit" }), { status: 429, headers: { "content-type": "application/json", "retry-after": "4" } })) as typeof fetch);
+await assert.rejects(() => rateLimitedProvider.generate({ model: DEFAULT_HF_IMAGE_MODEL, prompt: "one cohesive 2D river illustration", resolution: "576x1024", userConfirmed: true, costAcknowledged: true }), (error: unknown) => error instanceof HuggingFaceImageError && error.code === "ai-image-rate-limited" && error.retryAfterMs === 4000);
+const quotaProvider = new HuggingFaceInferenceImageProvider("mock-token", (async () => new Response(JSON.stringify({ error: "insufficient credits" }), { status: 402, headers: { "content-type": "application/json" } })) as typeof fetch);
+await assert.rejects(() => quotaProvider.generate({ model: DEFAULT_HF_IMAGE_MODEL, prompt: "one cohesive 2D river illustration", resolution: "576x1024", userConfirmed: true, costAcknowledged: true }), (error: unknown) => error instanceof HuggingFaceImageError && error.code === "ai-image-quota-exhausted");
 const redesignCss = await readFile(new URL("../src/client/redesign.css", import.meta.url), "utf8");
 const lightTokens = redesignCss.match(/^:root \{([^}]+)\}/m)?.[1] ?? "";
 const darkTokens = redesignCss.match(/^:root\[data-theme="dark"\] \{([^}]+)\}/m)?.[1] ?? "";
@@ -70,11 +115,13 @@ for (const name of samples) {
 
 const mountain = parsedSamples[0]!;
 const seaSalt = parsedSamples.find((sample) => sample.id === "why-seawater-is-salty-id")!;
-const solarProtection = parsedSamples.at(-1)!;
+const solarProtection = parsedSamples.find((sample) => sample.id === "earth-solar-protection-id")!;
+const rainbow = parsedSamples.find((sample) => sample.id === "how-rainbows-form-id")!;
 const mountainStoryboard = buildVisualStoryboard(mountain);
 assert.equal(seaSalt.title, "Kenapa Air Laut Asin?");
 assert.equal(seaSalt.scenes.length, 5);
 assert.equal(solarProtection.scenes.length, 5, "Earth protection POC contains all five requested beats");
+assert.equal(rainbow.scenes.length, 5, "rainbow sample covers five explanatory beats");
 assert.equal(visualStoryboardQualityGate(mountain, mountainStoryboard).ready, true, "mountain storyboard has visual evidence for each planned concept");
 assert.deepEqual(mountainStoryboard.scenes[0]!.composition.layers.map((layer) => layer.id), ["sunlight", "cloud", "mountain", "rock"], "mountain hook depicts sun, cloud, peak, and rock instead of claiming missing evidence");
 assert.ok(mountainStoryboard.scenes[3]!.composition.layers.some((layer) => layer.id === "rock" && layer.nodes.some((node) => node.type === "path")), "folding scene draws layered rock paths");
@@ -84,8 +131,14 @@ const seaSaltNodes = seaSalt.scenes.flatMap((scene) => scene.visualComposition.l
 assert.ok(seaSaltNodes.some((node) => node.type === "path"), "salt sample uses continuous landscape and water paths");
 const saltStoryboard = buildVisualStoryboard(seaSalt);
 const solarStoryboard = buildVisualStoryboard(solarProtection);
+const rainbowStoryboard = buildVisualStoryboard(rainbow);
 assert.equal(visualStoryboardQualityGate(seaSalt, saltStoryboard).ready, true, "salt storyboard passes relevance, density, and text-layout gate");
 assert.equal(visualStoryboardQualityGate(solarProtection, solarStoryboard).ready, true, `Earth protection storyboard passes visual quality gate: ${JSON.stringify(visualStoryboardQualityGate(solarProtection, solarStoryboard).issues)}`);
+assert.equal(visualStoryboardQualityGate(rainbow, rainbowStoryboard).ready, true, `water-droplet rainbow storyboard passes visual structure gate: ${JSON.stringify(visualStoryboardQualityGate(rainbow, rainbowStoryboard).issues)}`);
+assert.ok(rainbowStoryboard.scenes.every((scene) => scene.composition.layers.some((layer) => layer.id === "rain") && scene.composition.layers.some((layer) => layer.id === "sunlight")), "rainbow scenes depict raindrops and sunlight, not a standalone prism/icon");
+assert.ok(rainbowStoryboard.scenes[2]!.composition.layers.some((layer) => layer.id === "internal-reflection" && layer.nodes.some((node) => node.type === "path")), "rainbow droplet diagram depicts internal light path");
+assert.ok(rainbow.scenes[4]!.narrationText.includes("42 derajat") && rainbow.references[0]!.publisher.includes("National Weather Service"), "sun-angle and viewing-condition claims link to NWS source");
+assert.ok(rainbowStoryboard.scenes.every((scene) => !scene.approved), "new rainbow scenes require explicit per-scene visual approval");
 assert.deepEqual(saltStoryboard.scenes.map((scene) => scene.compositionType), ["hero-object-focus", "cross-section", "connected-environment", "cross-section", "scientific-diagram"], "five salt scenes use distinct narrative-fit compositions");
 assert.ok(saltStoryboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes)).some((node) => node.type === "shape" && node.shape === "circle"), "dissolved ions use particle shapes, not crystal cards");
 assert.ok(saltStoryboard.scenes[2]!.composition.layers.some((layer) => layer.id === "mountain") && saltStoryboard.scenes[2]!.composition.layers.some((layer) => layer.id === "river") && saltStoryboard.scenes[2]!.composition.layers.some((layer) => layer.id === "coast-and-ocean"), "river scene is one connected mountain-to-sea illustration");
@@ -109,6 +162,22 @@ assert.equal(visualStoryboardSchema.safeParse(legacyApproved).success, true, "le
 const staleSalt = structuredClone(approvedSalt);
 staleSalt.scenes[0]!.composition.background = "#ffffff";
 assert.equal(visualStoryboardSchema.safeParse(staleSalt).success, false, "visual edit makes existing approval stale");
+const staleMotionApproval = structuredClone(approvedSalt);
+staleMotionApproval.scenes[2]!.approved = true;
+staleMotionApproval.scenes[2]!.approvedFingerprint = visualApprovalFingerprint(staleMotionApproval.scenes[2]!);
+Object.assign(staleMotionApproval.scenes[2]!, planSceneMotion(staleMotionApproval.scenes[2]!));
+assert.equal(visualStoryboardSchema.safeParse(staleMotionApproval).success, false, "changing Motion Plan invalidates existing approval fingerprint");
+const preMotionApproved = JSON.parse(JSON.stringify(saltStoryboard)) as { scenes: Array<Record<string, any>> };
+preMotionApproved.scenes[0]!.approved = true;
+preMotionApproved.scenes[0]!.approvedFingerprint = legacyMotionApprovalFingerprint(preMotionApproved.scenes[0] as unknown as VisualStoryboardScene);
+assert.notEqual(visualStoryboardQualityGate(seaSalt, preMotionApproved as unknown as VisualStoryboard).scenes[preMotionApproved.scenes[0]!.sceneId]?.some((issue) => issue.includes("Approval visual stale")), true, "pre-Motion approval remains valid through quality gate migration");
+const preparedOldApproval = structuredClone(saltStoryboard);
+preparedOldApproval.scenes[0]!.approved = true;
+preparedOldApproval.scenes[0]!.approvedFingerprint = legacyMotionApprovalFingerprint(preparedOldApproval.scenes[0]!);
+Object.assign(preparedOldApproval.scenes[0]!, planSceneMotion(preparedOldApproval.scenes[0]!));
+assert.equal(visualStoryboardSchema.safeParse(preparedOldApproval).success, false, "adding a Motion Plan to a pre-Motion approval invalidates that old approval");
+for (const field of ["motionIntensity", "motionTiming", "motionStatus", "motionActions"]) delete preMotionApproved.scenes[0]![field];
+assert.equal(visualStoryboardSchema.safeParse(preMotionApproved).success, true, "pre-Motion Director approvals migrate without becoming stale");
 const genericGrid = structuredClone(saltStoryboard);
 genericGrid.scenes[0]!.layout = "two-column-object-grid";
 assert.ok(visualStoryboardQualityGate(seaSalt, genericGrid).scenes[genericGrid.scenes[0]!.sceneId]?.some((issue) => issue.includes("kartu ikon generik")), "quality gate rejects generic icon-card scenes");
@@ -121,6 +190,42 @@ assert.ok(solarStoryboard.scenes.some((scene) => scene.composition.layers.some((
 assert.ok(solarStoryboard.scenes[0]!.composition.layers.every((layer) => !layer.id.includes("orbit-diagram")), "unrelated initial orbit template is not reused for sunlight explanation");
 assert.ok(solarStoryboard.scenes[4]!.composition.layers.some((layer) => layer.id === "uv-rays"), "two-shield scene exposes UV paths as semantic evidence");
 assert.ok(solarStoryboard.scenes[2]!.relationships.some((relation) => relation.from === "ozone-layer" && relation.relation === "filters"), "ozone-to-UV relation is scoped to scene concepts");
+const relationScene = (board: VisualStoryboard, relation: string) => board.scenes.find((scene) => scene.relationships.some((item) => item.relation === relation));
+const rainMotion = planSceneMotion(relationScene(saltStoryboard, "falls-on")!);
+const riverMotion = planSceneMotion(relationScene(saltStoryboard, "carries")!);
+const evaporationMotion = planSceneMotion(relationScene(saltStoryboard, "evaporates-from")!);
+const ozoneMotion = planSceneMotion(relationScene(solarStoryboard, "filters")!);
+const magnetosphereMotion = planSceneMotion(relationScene(solarStoryboard, "deflects")!);
+const directedSaltStoryboard = { ...saltStoryboard, scenes: saltStoryboard.scenes.map((scene) => ({ ...scene, ...planSceneMotion(scene, "balanced") })) };
+const directedEarthStoryboard = { ...solarStoryboard, scenes: solarStoryboard.scenes.map((scene) => ({ ...scene, ...planSceneMotion(scene, "balanced") })) };
+assert.equal(visualStoryboardSchema.safeParse(directedSaltStoryboard).success, true, "all generated sea-salt actions pass storyboard safety schema");
+assert.equal(visualStoryboardSchema.safeParse(directedEarthStoryboard).success, true, "all generated Earth actions pass storyboard safety schema");
+assert.ok(rainMotion.motionActions.some((action) => action.id === "rain-fall" && action.kind === "particle-flow"), "rain motion follows an actual rain-to-land composition route");
+assert.ok(riverMotion.motionActions.some((action) => action.id === "river-mineral-flow" && action.kind === "particle-flow"), "mineral flow follows actual river path nodes");
+assert.ok(evaporationMotion.motionActions.some((action) => action.id === "water-vapor-rise" && action.kind === "particle-flow"), "evaporation moves water upward without animating salt");
+assert.ok(ozoneMotion.motionActions.some((action) => action.id === "uv-approach-ozone") && ozoneMotion.motionActions.some((action) => action.id === "partial-uv-transmission"), "ozone motion shows UV approaching filter and partial transmission");
+const transmittedPath = ozoneMotion.motionActions.find((action) => action.id === "partial-uv-transmission")!.path!;
+assert.ok(transmittedPath.some((point, index) => index > 0 && Math.hypot(point.x - transmittedPath[index - 1]!.x, point.y - transmittedPath[index - 1]!.y) >= 80), "partial UV transmission moves beyond ozone instead of rendering a stationary point");
+assert.ok(magnetosphereMotion.motionActions.some((action) => action.id === "charged-particle-deflection" && action.kind === "particle-flow"), "charged particles follow a curved magnetosphere route, separate from UV actions");
+for (const [board, plan] of [[saltStoryboard, riverMotion], [solarStoryboard, ozoneMotion], [solarStoryboard, magnetosphereMotion]] as const) {
+  const scene = board.scenes.find((item) => item.motionActions.length === 0 && item.relationships.some((relation) => relation.relation === (plan === riverMotion ? "carries" : plan === ozoneMotion ? "filters" : "deflects")))!;
+  const targetIds = new Set(scene.composition.layers.flatMap((layer) => layer.nodes.map((_, index) => `${layer.id}/${index}`)));
+  assert.ok(plan.motionActions.every((action) => targetIds.has(action.targetNode)), "semantic plan targets existing composition nodes");
+  assert.ok(plan.motionActions.every((action) => action.startFrame >= 0 && action.startFrame + action.durationFrames <= scene.durationSec * 30), "semantic action timing stays within scene duration");
+}
+assert.equal(motionActionSchema.safeParse({ id: "bad-motion", kind: "particle-flow", targetNode: "missing/0", startFrame: 0, durationFrames: 20, easing: "linear", path: [{ x: -1, y: 0 }, { x: 20, y: 20 }], particleCount: 99 }).success, false, "motion schema rejects unsafe path bounds and excessive particles");
+const riverAction = riverMotion.motionActions.find((action) => action.kind === "particle-flow")!;
+const riverDrawAction = riverMotion.motionActions.find((action) => action.kind === "draw")!;
+assert.notEqual(motionActionProgress(riverAction, riverAction.startFrame + 5), motionActionProgress(riverAction, riverAction.startFrame + 15), "semantic motion progress is a pure function of frame");
+assert.notDeepEqual(pointAlongPolyline(riverAction.path!, 0.2), pointAlongPolyline(riverAction.path!, 0.8), "particles move along deterministic polyline positions");
+const movingNode = relationScene(saltStoryboard, "carries")!;
+const targetNode = movingNode.composition.layers.flatMap((layer) => layer.nodes.map((node, index) => ({ ref: `${layer.id}/${index}`, node }))).find((entry) => entry.ref === riverAction.targetNode)!.node;
+assert.notDeepEqual(nodeMotion(riverMotion.motionActions, riverAction.targetNode, targetNode, riverAction.startFrame + 6), nodeMotion(riverMotion.motionActions, riverAction.targetNode, targetNode, riverAction.startFrame + 18), "Remotion node state changes deterministically across frames");
+assert.equal(nodeMotion(riverMotion.motionActions, riverDrawAction.targetNode, targetNode, riverDrawAction.startFrame - 1).drawProgress, 0, "semantic draw path stays hidden before its planned start frame");
+assert.equal(nodeMotion(riverMotion.motionActions, riverDrawAction.targetNode, targetNode, riverDrawAction.startFrame + riverDrawAction.durationFrames + 1).drawProgress, 1, "semantic draw path stays fully revealed after its planned end frame");
+const fadeAction = motionActionSchema.parse({ id: "bounded-fade", kind: "fade", targetNode: riverAction.targetNode, startFrame: 10, durationFrames: 20, easing: "linear", keyframes: [{ at: 0, opacity: 0 }, { at: 1, opacity: 1 }] });
+assert.equal(nodeMotion([fadeAction], fadeAction.targetNode, targetNode, 9).opacity, 0, "fade holds its first keyframe before planned start");
+assert.equal(nodeMotion([fadeAction], fadeAction.targetNode, targetNode, 31).opacity, 1, "fade holds final keyframe after planned end");
 assert.ok(solarStoryboard.scenes[1]!.composition.layers.some((layer) => layer.id === "atmosphere") && !solarStoryboard.scenes[1]!.composition.layers.some((layer) => layer.id === "geological-layers"), "atmosphere scene uses atmospheric geometry, not geological cross-section");
 const offsetVisual = structuredClone(saltStoryboard);
 const offsetScene = offsetVisual.scenes[3]!;
@@ -135,6 +240,100 @@ Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(imageHeader);
 imageHeader.write("IHDR", 12, "ascii"); imageHeader.writeUInt32BE(128, 16); imageHeader.writeUInt32BE(96, 20);
 assert.deepEqual(validateRasterImage(imageHeader), { format: "png", extension: "png", width: 128, height: 96 }, "PNG signature and dimensions are parsed from bytes");
 assert.throws(() => validateRasterImage(Buffer.from("<svg onload=alert(1) />")), /PNG, JPEG, atau WebP/);
+const aiImportAsset = visualAssetSchema.parse({
+  id: `upload-${"a".repeat(64)}.webp`, name: "River landscape", visualCategory: "user-illustration",
+  semanticTags: ["river", "mineral", "ocean"], supportedConcepts: ["river carries mineral to sea"], role: "Connected educational landscape",
+  format: "webp", aspectRatio: 1, source: "ai-generated", license: "Created via manual external AI import",
+  style: "clean-flat-2d", prompt: "Vertical landscape: mountains, rock, mineral-bearing river flowing to ocean; no lettering.",
+  provider: "ChatGPT manual import", model: "image model (user supplied)", sha256: "a".repeat(64), bytes: 840_000,
+  width: 1000, height: 1000, file: `${"a".repeat(64)}.webp`,
+});
+assert.equal(visualAssetSchema.safeParse({ ...aiImportAsset, prompt: undefined }).success, false, "AI-imported asset must retain prompt provenance");
+const smartRiver = saltStoryboard.scenes[2]!;
+const reusableRiver: ReusableCandidate = {
+  id: "reusable-river-test", name: "Connected river process", tags: smartRiver.objects.map((object) => object.label),
+  concepts: [smartRiver.visualSummary, smartRiver.narrationText], styleId: "clean-flat-2d", layout: smartRiver.layout,
+  compositionType: smartRiver.compositionType, composition: smartRiver.composition, palette: saltStoryboard.palette,
+  motionIntent: smartRiver.motionIntent, motionSummary: smartRiver.motionSummary, motionPlan: seaSalt.scenes[2]!.motionPlan,
+  objects: smartRiver.objects, relationships: smartRiver.relationships, visualFocus: smartRiver.visualFocus, assetIds: [],
+  provenance: "Locally authored composition; source license checked.",
+};
+const reusableSelection = prepareSmartVisual({ scene: smartRiver, storyboard: saltStoryboard, reusableScenes: [reusableRiver], assets: [] });
+assert.equal(reusableSelection.source, "reusable-scene", "Smart Hybrid prefers structured reusable scene with matching object/process relations");
+assert.equal(reusableSelection.status, "needs_review", "reused art remains unapproved and requires human review");
+const paletteMismatch = prepareSmartVisual({ scene: smartRiver, storyboard: saltStoryboard, reusableScenes: [{ ...reusableRiver, palette: { ...reusableRiver.palette, accent: "#000000" } }], assets: [] });
+assert.notEqual(paletteMismatch.source, "reusable-scene", "reusable scene with incompatible art palette is rejected");
+const unlicensedAiReusable = prepareSmartVisual({ scene: smartRiver, storyboard: saltStoryboard, reusableScenes: [{ ...reusableRiver, assetIds: [aiImportAsset.id] }], assets: [aiImportAsset] });
+assert.notEqual(unlicensedAiReusable.source, "reusable-scene", "AI-imported asset with unverified output license cannot qualify for automatic reuse");
+const imageNotFitForRiverProcess = prepareSmartVisual({ scene: smartRiver, storyboard: saltStoryboard, reusableScenes: [], assets: [aiImportAsset] });
+assert.equal(imageNotFitForRiverProcess.source, "local-composer", "metadata-only raster is not selected for scene requiring a connected process");
+assert.ok(smartRiver.relationships.every((relation) => imageNotFitForRiverProcess.composition && visualRelationshipIsVisible(relation, imageNotFitForRiverProcess.composition)), "local fallback preserves river/mineral/ocean relationships as connected paths");
+const rasterStoryboard = structuredClone(saltStoryboard);
+const rasterScene = rasterStoryboard.scenes[2]!;
+Object.assign(rasterScene, {
+  objects: [], relationships: [], visualFocus: null, illustrationSource: "ai-image", compositionSource: "manual",
+  compositionType: "hero-object-focus", layout: "existing-composition", authoringStatus: "needs_review", authoringConfirmed: false,
+  approved: false, approvedFingerprint: null, warnings: [],
+  composition: visualCompositionSchema.parse({ background: saltStoryboard.palette.canvas, layers: [{ id: "imported-illustration", depth: 0.72, nodes: [{ type: "image", asset: aiImportAsset.id, x: 40, y: 520, width: 1000, height: 900, fit: "contain", position: "center" }] }] }),
+});
+assert.equal(illustrationSourceForScene(rasterScene), "ai-image");
+assert.ok(visualStoryboardQualityGate(seaSalt, rasterStoryboard, [aiImportAsset]).scenes[rasterScene.sceneId]?.some((issue) => issue.includes("Tinjau semantik")), "raster illustration requires explicit semantic/provenance review before approval");
+rasterScene.authoringConfirmed = true;
+const rasterGate = visualStoryboardQualityGate(seaSalt, rasterStoryboard, [aiImportAsset]);
+assert.deepEqual(rasterGate.scenes[rasterScene.sceneId] ?? [], [], "one complete raster scene passes object-ID checks after human review");
+assert.ok(rasterGate.reviewNotes.some((note) => note.includes("license/provenance")) === false, "specific asset provenance avoids unspecified-license review note");
+const rasterMotion = planSceneMotion(rasterScene, "balanced");
+assert.ok(rasterMotion.motionActions.length > 0 && rasterMotion.motionActions.every((action) => action.targetNode === "imported-illustration/0" && ["focus-shift", "scale", "translate", "fade", "reveal"].includes(action.kind)), "raster art receives whole-image transforms only");
+assert.ok(rasterMotion.motionSummary.includes("Raster bergerak sebagai satu gambar"), "raster limitation is visible in motion summary");
+const rasterMotionBoard = structuredClone(rasterStoryboard);
+Object.assign(rasterMotionBoard.scenes[2]!, rasterMotion);
+rasterMotionBoard.reusableWorldObjects = visualObjectIds.filter((objectId) => rasterMotionBoard.scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1);
+const rasterMotionValidation = visualStoryboardSchema.safeParse(rasterMotionBoard);
+assert.equal(rasterMotionValidation.success, true, `safe whole-image raster motion passes storyboard schema: ${rasterMotionValidation.success ? "" : JSON.stringify(rasterMotionValidation.error.issues)}`);
+const invalidRasterMotion = structuredClone(rasterMotionBoard);
+invalidRasterMotion.scenes[2]!.motionActions = [{ ...rasterMotion.motionActions[0]!, id: "invented-raster-object", targetNode: "imported-illustration/0.0", kind: "particle-flow", path: [{ x: 200, y: 300 }, { x: 300, y: 500 }], particleCount: 3 }];
+assert.equal(visualStoryboardSchema.safeParse(invalidRasterMotion).success, false, "raster-only composition cannot target a fictional internal object");
+const rasterOverlay = structuredClone(rasterMotionBoard);
+rasterOverlay.scenes[2]!.motionActions = [{ id: "available-raster-overlay", kind: "particle-flow", targetNode: "imported-illustration/0", startFrame: 10, durationFrames: 20, easing: "linear", path: [{ x: 300, y: 600 }, { x: 600, y: 900 }], particleCount: 2 }];
+assert.equal(visualStoryboardSchema.safeParse(rasterOverlay).success, true, "raster layer permits real overlay particles without pretending internal objects are separate");
+const libraryRasterStoryboard = structuredClone(rasterStoryboard);
+libraryRasterStoryboard.scenes[2]!.compositionSource = "library";
+libraryRasterStoryboard.scenes[2]!.illustrationSource = "asset-library";
+const changedRasterResearch = structuredClone(seaSalt);
+changedRasterResearch.scenes[2]!.narrationText += " Mineral larut terus terbawa ke laut.";
+const rebuiltRasterStoryboard = buildVisualStoryboard(changedRasterResearch, libraryRasterStoryboard);
+assert.deepEqual(rebuiltRasterStoryboard.scenes[2]!.composition, libraryRasterStoryboard.scenes[2]!.composition, "storyboard rebuild keeps manually selected library raster composition");
+assert.equal(rebuiltRasterStoryboard.scenes[2]!.illustrationSource, "asset-library", "storyboard rebuild keeps illustration source metadata");
+const missingRaster = structuredClone(rasterStoryboard);
+missingRaster.scenes[2]!.composition = saltStoryboard.scenes[2]!.composition;
+missingRaster.scenes[2]!.authoringConfirmed = false;
+assert.equal(visualStoryboardQualityGate(seaSalt, missingRaster).scenes[missingRaster.scenes[2]!.sceneId]?.length, 1, "missing raster shows one actionable authoring issue, not cascading empty-composition errors");
+const rasterMarkup = renderToStaticMarkup(React.createElement("svg", null, React.createElement(VisualCompositionView, {
+  scene: seaSalt.scenes[2]!, composition: rasterScene.composition, style: visualStyles[seaSalt.visualPreset], preset: seaSalt.visualPreset, frame: 45, progress: 0.42,
+})));
+assert.match(rasterMarkup, /preserveAspectRatio="xMidYMid meet"/);
+const preMotionV2Scene = structuredClone(seaSalt.scenes[2]!) as unknown as Record<string, unknown>;
+delete preMotionV2Scene.motionActions;
+const preMotionV2Markup = renderToStaticMarkup(React.createElement("svg", null, React.createElement(VisualCompositionView, {
+  scene: preMotionV2Scene as unknown as typeof seaSalt.scenes[number], composition: seaSalt.scenes[2]!.visualComposition,
+  style: visualStyles[seaSalt.visualPreset], preset: seaSalt.visualPreset, frame: 45, progress: 0.42,
+})));
+assert.match(preMotionV2Markup, /<svg/, "pre-Motion renderer V2 scene without motionActions remains renderable");
+assert.deepEqual(visualCompositionFrame(rasterScene.composition), { scale: 1, translateX: 0, translateY: 0 }, "raster art-directed framing does not auto-crop the safe composition");
+const trustedImageComposition = structuredClone(rasterScene.composition);
+const trustedImage = trustedImageComposition.layers[0]!.nodes[0]!;
+assert.equal(trustedImage.type, "image");
+if (trustedImage.type === "image") trustedImage.asset = "cloud";
+assert.notEqual(visualCompositionFrame(trustedImageComposition).scale, 1, "built-in curated image framing preserves legacy auto-fit behavior");
+const rasterPrompt = buildIllustrationPrompt({ research: seaSalt, storyboard: saltStoryboard, scene: saltStoryboard.scenes[2]! });
+assert.match(rasterPrompt, /portrait 9:16/);
+assert.match(rasterPrompt, /Narasi|Scene narration/);
+assert.match(rasterPrompt, /No words.*watermark.*icon grids.*card layouts/s);
+assert.match(rasterPrompt, /palette/);
+assert.match(rasterPrompt, /SUNGAI flows-to LAUT.*SUNGAI carries MINERAL/s, "river prompt encodes mineral flow from mountain river toward sea");
+const ozonePrompt = buildIllustrationPrompt({ research: solarProtection, storyboard: solarStoryboard, scene: solarStoryboard.scenes[2]! });
+assert.match(ozonePrompt, /LAPISAN OZON filters SINAR UV/, "ozone prompt encodes UV absorption before radiation reaches Earth");
+assert.match(ozonePrompt, /flat 2D editorial illustration.*one cohesive environment/s);
 const semanticPlan = {
   primaryVisualConcept: "Mineral bergerak dari hulu ke laut",
   objects: ["mountain", "river", "mineral", "ocean"],
@@ -150,6 +349,48 @@ const semanticPlan = {
 assert.equal(visualSemanticPlanSchema.safeParse(semanticPlan).success, true, "semantic plan is bounded and links relationships to declared objects");
 assert.equal(visualSemanticPlanSchema.safeParse({ ...semanticPlan, relationships: [{ from: "sun", relation: "illuminates", to: "earth" }] }).success, false, "planner cannot invent undeclared relationship endpoints");
 assert.equal(visualSemanticPlanSchema.safeParse({ ...semanticPlan, requiredAssets: ["sun"] }).success, false, "required/supporting assets must be declared in the object plan");
+const aiVectorFixture = {
+  schemaVersion: "ai-vector-v1",
+  description: "Satu berkas cahaya putih memasuki prisma kaca lalu terurai menjadi spektrum warna.",
+  composition: {
+    background: "#f8f7fc",
+    layers: [
+      { id: "sunlight-source", depth: 0.2, nodes: [{ type: "shape", shape: "circle", x: 120, y: 900, width: 180, height: 180, fill: "#f4b65e", stroke: "#c97945", strokeWidth: 6 }] },
+      { id: "incoming-white-light", depth: 0.35, nodes: [{ type: "shape", shape: "polygon", x: 290, y: 930, width: 380, height: 120, points: [{ x: 0, y: 0.35 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 0.65 }], fill: { type: "linear-gradient", angle: 0, stops: [{ offset: 0, color: "#fffdf5" }, { offset: 1, color: "#b8d9f2", opacity: 0.7 }] } }] },
+      { id: "prism-and-spectrum", depth: 0.55, nodes: [
+        { type: "shape", shape: "polygon", x: 540, y: 770, width: 260, height: 410, points: [{ x: 0.5, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], fill: { type: "linear-gradient", angle: 45, stops: [{ offset: 0, color: "#d9f2ff", opacity: 0.72 }, { offset: 1, color: "#83bce0", opacity: 0.42 }] }, stroke: "#538baa", strokeWidth: 8 },
+        { type: "path", x: 750, y: 920, width: 270, height: 220, d: "M 0 10 C 25 20 60 25 100 35", fill: "none", stroke: "#e84d51", strokeWidth: 3 },
+      ] },
+    ],
+  },
+} as const;
+assert.equal(aiVectorIllustrationSchema.safeParse(aiVectorFixture).success, true, "AI Vector accepts unrestricted semantic layer IDs, geometry, paths, and gradients");
+const parsedAiVectorFixture = aiVectorIllustrationSchema.parse(aiVectorFixture);
+assert.equal(vectorIllustrationNodeCount(parsedAiVectorFixture.composition), 4);
+const gradientMarkup = renderToStaticMarkup(React.createElement("svg", null, React.createElement(VisualCompositionView, {
+  scene: seaSalt.scenes[0]!, composition: parsedAiVectorFixture.composition,
+  style: visualStyles[seaSalt.visualPreset], preset: seaSalt.visualPreset, frame: 45, progress: 0.42,
+})));
+assert.match(gradientMarkup, /<linearGradient/);
+assert.match(gradientMarkup, /fill="url\(#paint-/);
+assert.equal(aiVectorIllustrationSchema.safeParse({ ...aiVectorFixture, composition: { ...aiVectorFixture.composition, layers: [{ ...aiVectorFixture.composition.layers[0]!, nodes: [{ type: "icon", icon: "sun", x: 120, y: 900, width: 180, height: 180, color: "#f4b65e" }] }] } }).success, false, "AI Vector rejects legacy icon IDs and only accepts explicit geometry");
+assert.equal(aiVectorIllustrationSchema.safeParse({ ...aiVectorFixture, composition: { ...aiVectorFixture.composition, layers: [{ ...aiVectorFixture.composition.layers[0]!, nodes: [{ type: "path", x: 120, y: 900, width: 180, height: 180, d: "M0 0 L101 100", fill: "#ffffff" }] }] } }).success, false, "AI Vector path coordinates stay inside normalized 0–100 viewBox");
+assert.equal(aiVectorIllustrationSchema.safeParse({ ...aiVectorFixture, composition: { ...aiVectorFixture.composition, layers: [{ id: "outside", depth: 0.5, nodes: [{ type: "shape", shape: "rect", x: 1080, y: 1000, width: 1, height: 1 }] }] } }).success, false, "AI Vector rejects node bounds outside 9:16 canvas");
+assert.throws(() => parseAiVectorIllustration(" ".repeat(48 * 1024 + 1)), /exceeds batas|melebihi batas/, "AI Vector rejects oversized output before JSON parsing");
+assert.equal(visualCompositionSchema.safeParse(aiVectorFixture.composition).success, true, "existing visual composition parser accepts safe gradient fills");
+const aiVectorStoryboard = structuredClone(saltStoryboard);
+const aiVectorScene = aiVectorStoryboard.scenes[0]!;
+Object.assign(aiVectorScene, {
+  layout: "scientific-diagram", compositionType: "scientific-diagram", objects: [], relationships: [], visualFocus: null,
+  illustrationIntent: parsedAiVectorFixture.description, motionIntent: "gentle-reveal", motionSummary: "Reveal ringan pada ilustrasi.",
+  composition: parsedAiVectorFixture.composition, compositionSource: "ai-vector", missingVisuals: [], warnings: [],
+  authoringStatus: "needs_review", authoringConfirmed: false, approved: false, approvedFingerprint: null,
+});
+assert.equal(visualStoryboardSchema.safeParse(aiVectorStoryboard).success, true, "AI Vector scene persists without old library object IDs");
+assert.deepEqual(visualStoryboardQualityGate(seaSalt, aiVectorStoryboard).issues, [], "valid AI Vector geometry passes storyboard quality checks but still requires review");
+const rebuiltAiVector = buildVisualStoryboard(applyVisualStoryboard(seaSalt, aiVectorStoryboard), aiVectorStoryboard).scenes[0]!;
+assert.equal(rebuiltAiVector.compositionSource, "ai-vector");
+assert.deepEqual(rebuiltAiVector.composition, parsedAiVectorFixture.composition, "storyboard rebuild preserves authored AI Vector composition");
 const localConceptsOnly = composeVisualScene({
   headline: "LAUT ASIN", narration: "Ion mineral terlarut membuat air laut asin.", visualDescription: "Ion tersebar di air laut.",
   artDirection: { styleId: saltStoryboard.styleId, palette: saltStoryboard.palette }, sceneVisualFocus: "ocean", illustrationIntent: "",
@@ -855,4 +1096,59 @@ assert.equal(cachedVisualPlan.cached, true, "identical scene/provider input reus
 assert.equal(plannerCalls, 1, "cache prevents repeat provider request");
 plannerDb.close();
 
-console.log(`PASS: ${samples.length} packages; migration/schema/audio, renderer-aware safe area, image signature validation, semantic planner cache/schema, AI providers/quota, storyboard review gates, render determinism, Gemini TTS guard/cache, timing.`);
+const vectorDb = new DatabaseSync(":memory:");
+vectorDb.exec(aiGenerationSchema);
+let vectorCalls = 0;
+const vectorProvider: AiGenerationProvider = {
+  id: "vector-test", displayName: "Vector test", model: "selected-test-model",
+  generate: async (request) => {
+    vectorCalls++;
+    assert.equal(request.task, "visual-director");
+    assert.equal(request.outputFormat, "ai-vector-illustration-v1");
+    assert.ok(request.responseSchema, "AI Vector request carries strict structured schema");
+    assert.match(request.prompt, /Depict scene visualDescription and narration/);
+    assert.match(request.prompt, /Art direction: clean-flat-2d/);
+    assert.doesNotMatch(request.prompt, /white beam of sunlight entering a clearly triangular glass prism/, "generic AI Vector prompt must not force prism topic on unrelated scenes");
+    return { text: JSON.stringify(aiVectorFixture), model: "selected-test-model" };
+  },
+};
+const vectorInput: VisualPlannerInput = {
+  headline: "SUNGAI MEMBAWA MINERAL KE LAUT", narration: "Sungai membawa mineral terlarut dari batuan menuju laut.",
+  visualDescription: "Satu aliran sungai menghubungkan pegunungan dan laut dengan mineral yang bergerak di sepanjang aliran.",
+  artDirection: { styleId: "clean-flat-2d", palette: { canvas: "#e8f3ed", surface: "#b8d8d0", primary: "#267a76", accent: "#edaa59", text: "#173740" } },
+  visualPlan: { focus: "river", objects: ["river", "mineral", "ocean"], relationships: [{ from: "river", relation: "carries", to: "mineral" }, { from: "river", relation: "flows-to", to: "ocean" }] },
+};
+const generatedVector = await generateAiVectorIllustration(vectorDb, vectorProvider, vectorInput);
+const cachedVector = await generateAiVectorIllustration(vectorDb, vectorProvider, vectorInput);
+assert.equal(generatedVector.cached, false);
+assert.equal(cachedVector.cached, true, "identical model/input reuses AI Vector specification cache");
+assert.equal(vectorCalls, 1, "AI Vector cache skips repeated model call");
+assert.equal((vectorDb.prepare("SELECT COUNT(*) AS count FROM ai_generation_attempts").get() as { count: number }).count, 0, "OpenCode AI Vector leaves production request quotas untouched");
+vectorDb.close();
+
+const libraryDb = new DatabaseSync(":memory:");
+libraryDb.exec(`CREATE TABLE asset_pack_icons (pack TEXT NOT NULL, icon_id TEXT NOT NULL, category TEXT NOT NULL, tags TEXT NOT NULL, package_version TEXT NOT NULL, PRIMARY KEY(pack, icon_id));
+  CREATE VIRTUAL TABLE asset_pack_icons_fts USING fts5(icon_id UNINDEXED, category, tags, tokenize='unicode61 remove_diacritics 2');
+  CREATE TABLE visual_asset_catalog (asset_id TEXT PRIMARY KEY, metadata_json TEXT NOT NULL, asset_type TEXT NOT NULL, category TEXT NOT NULL, source TEXT NOT NULL, provider TEXT NOT NULL DEFAULT '', style TEXT NOT NULL, format TEXT NOT NULL, license TEXT NOT NULL, available_local INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+  CREATE VIRTUAL TABLE visual_asset_catalog_fts USING fts5(asset_id UNINDEXED, name, tags, concepts, creator, tokenize='unicode61 remove_diacritics 2');`);
+indexTablerIcons(libraryDb);
+const rainbowIcons = searchTablerIcons(libraryDb, "rainbow", "", 1, 24);
+assert.ok(rainbowIcons.total >= 1, "Tabler metadata FTS finds rainbow-related icons");
+assert.ok(rainbowIcons.icons.some((icon) => icon.id === "rainbow"), "official rainbow icon appears among matches");
+assert.equal(searchTablerIcons(libraryDb, "rainbow", "", 1, 1).icons.length, 1, "Tabler pagination caps icon payload");
+assert.match(sanitizedTablerSvg("rainbow"), /^<svg[^>]+><path/);
+assert.doesNotMatch(sanitizedTablerSvg("rainbow"), /script|onload|foreignObject|href=/i, "generated Tabler SVG has no script-capable elements or attributes");
+assert.throws(() => sanitizedTablerSvg(".."), /ID tidak valid/);
+assert.deepEqual(openverseLicenseIds, ["cc0", "pdm", "by", "by-sa"], "Openverse allowlist excludes NC, ND, and unknown licenses");
+assert.equal(openverseResultIsCached("unselected-openverse-image"), false, "Openverse import requires an active selected search result");
+assert.equal(assetFtsExpression('river " OR *'), '"river"* OR "or"*', "FTS input tokenization cannot inject operators");
+for (const address of ["0.0.0.0", "10.1.2.3", "100.64.0.1", "127.0.0.1", "169.254.1.2", "172.31.0.1", "192.168.1.4", "198.18.0.1", "::", "::1", "::ffff:192.168.1.2", "fc00::1", "fe80::1", "2001:db8::1", "ff02::1"]) {
+  assert.equal(isPublicInternetAddress(address), false, `${address} is blocked from external requests`);
+}
+for (const address of ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"]) assert.equal(isPublicInternetAddress(address), true, `${address} is public`);
+const catalogAsset = visualAssetSchema.parse({ ...aiImportAsset, source: "user-upload", prompt: undefined });
+upsertVisualAssetCatalog(libraryDb, catalogAsset);
+assert.equal((libraryDb.prepare("SELECT COUNT(*) AS count FROM visual_asset_catalog_fts WHERE visual_asset_catalog_fts MATCH ?").get(assetFtsExpression("river")) as { count: number }).count, 1, "asset catalog upsert indexes names/tags/concepts for FTS");
+libraryDb.close();
+
+console.log(`PASS: ${samples.length} packages; SQLite asset catalog, paginated Tabler pack/SVG sanitization, Openverse license allowlist, SSRF IP blocks, migration/schema/audio, renderer-aware safe area, image signature validation, mocked HF catalog/image generation and consent/quota handling, river/ozone prompt relations, AI Vector schema/cache/render source, semantic planner cache/schema, AI providers/quota, storyboard review gates, render determinism, Gemini TTS guard/cache, timing.`);

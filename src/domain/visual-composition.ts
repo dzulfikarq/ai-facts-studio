@@ -6,11 +6,24 @@ export const trustedImageAssets = ["cloud", "lightning", "sun"] as const;
 export const diagramKinds = ["charge-separation", "orbit", "geological-layers", "volcano-cross-section", "water-cycle", "process-flow"] as const;
 export const nodeMotions = ["drift", "fall", "flow", "rise", "draw"] as const;
 
-const colorSchema = z.union([
-  z.literal("none"),
+const paletteColorSchema = z.union([
   z.enum(visualColorTokens),
   z.string().regex(/^#[0-9a-fA-F]{6}$/, "Warna harus token palette atau hex #RRGGBB"),
 ]);
+const colorSchema = z.union([z.literal("none"), paletteColorSchema]);
+
+export const visualGradientSchema = z.object({
+  type: z.literal("linear-gradient"),
+  angle: z.number().min(-360).max(360),
+  stops: z.array(z.object({ offset: z.number().min(0).max(1), color: paletteColorSchema, opacity: z.number().min(0).max(1).optional() }).strict()).min(2).max(8),
+}).strict().superRefine((gradient, ctx) => {
+  for (let index = 1; index < gradient.stops.length; index++) {
+    if (gradient.stops[index]!.offset <= gradient.stops[index - 1]!.offset) {
+      ctx.addIssue({ code: "custom", message: "Gradient stop harus meningkat tanpa offset duplikat", path: ["stops", index, "offset"] });
+    }
+  }
+});
+const paintSchema = z.union([colorSchema, visualGradientSchema]);
 
 const nodeFrame = {
   x: z.number().min(0).max(1080),
@@ -38,7 +51,7 @@ function validateNodeFrame(node: { x: number; y: number; width: number; height: 
 export const shapeNodeSchema = z.object({
   type: z.literal("shape"), ...nodeFrame,
   shape: z.enum(["rect", "ellipse", "circle", "line", "polygon"]),
-  fill: colorSchema.optional(),
+  fill: paintSchema.optional(),
   stroke: colorSchema.optional(),
   strokeWidth: z.number().min(0).max(80).optional(),
   radius: z.number().min(0).max(540).optional(),
@@ -51,7 +64,7 @@ export const shapeNodeSchema = z.object({
 export const pathNodeSchema = z.object({
   type: z.literal("path"), ...nodeFrame,
   d: z.string().min(1).max(2048).regex(/^[MmLlHhVvCcSsQqTtAaZz0-9,.+\-\s]+$/, "SVG path hanya boleh berisi path-data"),
-  fill: colorSchema.optional(),
+  fill: paintSchema.optional(),
   stroke: colorSchema.optional(),
   strokeWidth: z.number().min(0).max(80).optional(),
   fillRule: z.enum(["nonzero", "evenodd"]).optional(),
@@ -75,7 +88,9 @@ export const iconNodeSchema = z.object({
 
 export const imageNodeSchema = z.object({
   type: z.literal("image"), ...nodeFrame,
-  asset: z.union([z.enum(trustedImageAssets), z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp)$/)]),
+  asset: z.union([z.enum(trustedImageAssets), z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp|svg)$/)]),
+  fit: z.enum(["contain", "cover"]).optional(),
+  position: z.enum(["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"]).optional(),
 }).strict().superRefine(validateNodeFrame);
 
 export const diagramNodeSchema = z.object({
@@ -116,6 +131,8 @@ export const visualCompositionSchema = z.object({
 
 export type VisualColorToken = typeof visualColorTokens[number];
 export type VisualColor = string;
+export type VisualGradient = z.infer<typeof visualGradientSchema>;
+export type VisualPaint = VisualColor | VisualGradient;
 export type VisualLeafNode = z.infer<typeof visualLeafNodeSchema>;
 export type VisualNode = z.infer<typeof visualNodeSchema>;
 export type VisualLayerInput = z.input<typeof visualLayerSchema>;

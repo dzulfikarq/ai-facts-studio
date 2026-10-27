@@ -2,6 +2,7 @@ import { z } from "zod";
 import { captionSegmentsSchema } from "./captions";
 import { defaultMotionPlan, defaultVisualComposition } from "./visual-defaults";
 import { motionCuePlanSchema, motionCueIds, visualCompositionSchema } from "./visual-composition";
+import { motionActionsSchema, motionTargetExists } from "./motion-director";
 
 export const categories = [
   "Fakta Unik", "Sains & Antariksa", "Sejarah & Misteri", "Tubuh Manusia", "Hewan & Alam", "Teknologi", "Geografi",
@@ -44,6 +45,7 @@ const sceneV11Schema = z.object({
   ...sceneFields,
   visualComposition: visualCompositionSchema,
   motionPlan: z.array(motionCuePlanSchema).max(8),
+  motionActions: motionActionsSchema.default([]),
   captionSegments: captionSegmentsSchema.optional(),
 }).strict().superRefine((scene, ctx) => {
   if (scene.motionCues.length !== scene.motionPlan.length || scene.motionCues.some((cue, index) => cue !== scene.motionPlan[index]?.cue)) {
@@ -54,6 +56,11 @@ const sceneV11Schema = z.object({
     if (!["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer)) {
       ctx.addIssue({ code: "custom", message: `Layer motion '${plan.targetLayer}' tidak ditemukan`, path: ["motionPlan", index, "targetLayer"] });
     }
+  });
+  const durationFrames = Math.floor((scene.endSec - scene.startSec) * 30);
+  scene.motionActions.forEach((action, index) => {
+    if (!motionTargetExists(scene.visualComposition, action.targetNode)) ctx.addIssue({ code: "custom", message: `Node motion '${action.targetNode}' tidak ditemukan`, path: ["motionActions", index, "targetNode"] });
+    if (action.startFrame + action.durationFrames > durationFrames) ctx.addIssue({ code: "custom", message: "Motion action melewati durasi scene", path: ["motionActions", index, "durationFrames"] });
   });
 }).refine((scene) => scene.endSec > scene.startSec, {
   message: "endSec harus lebih besar dari startSec", path: ["endSec"],

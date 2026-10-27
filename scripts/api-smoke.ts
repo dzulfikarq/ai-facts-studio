@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -8,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { visualApprovalFingerprint, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
+import { RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-api-smoke-"));
@@ -64,12 +66,16 @@ function setPersistedAiMode(mode: "development" | "production") {
 }
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", OPENCODE_SERVER_URL: "http://localhost:4096", OPENCODE_SERVER_PASSWORD: "smoke-password", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), VITE_PORT: String(vitePort), DATA_DIR: dataPath },
+  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", OPENCODE_SERVER_URL: "http://localhost:4096", OPENCODE_SERVER_PASSWORD: "smoke-password", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), VITE_PORT: String(vitePort), DATA_DIR: dataPath },
   stdio: "ignore",
 });
+let serverExit: string | null = null;
+server.on("exit", (code, signal) => { serverExit = `exit ${code ?? "null"} signal ${signal ?? "null"}`; });
+server.on("error", (error) => { serverExit = error.message; });
 let viteServer: ReturnType<typeof spawn> | undefined;
 let projectId: string | undefined;
 let assetProjectId: string | undefined;
+let reusableTargetId: string | undefined;
 let jobAudioPath: string | undefined;
 let jobSnapshotPath: string | undefined;
 let projectUploadPath: string | undefined;
@@ -79,14 +85,16 @@ let renderOutputPath: string | undefined;
 
 try {
   let ready = false;
+  let lastStartupResponse = "no response";
   for (let attempt = 0; attempt < 40; attempt++) {
     try {
       const response = await fetch(`${baseUrl}/api/status`);
       if (response.ok) { ready = true; break; }
-    } catch { /* API still starting */ }
+      lastStartupResponse = `HTTP ${response.status}`;
+    } catch (error) { lastStartupResponse = error instanceof Error ? error.message : "network error"; /* API still starting */ }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  assert.equal(ready, true, "local API should start");
+  assert.equal(ready, true, `local API should start (${serverExit ?? "running"}; ${lastStartupResponse})`);
   assert.equal((await fetch(baseUrl)).status, 200, "production UI should be served");
   viteServer = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
     cwd: process.cwd(),
@@ -202,6 +210,52 @@ try {
   assert.equal((await createIdempotently({ ...research, title: `${research.title} changed` })).status, 409, "request ID cannot be reused for a different project payload");
   assert.equal((await fetch(`${baseUrl}/api/projects/${firstIdempotentProject.id}`, { method: "DELETE" })).status, 200);
 
+  const preparationProject = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
+  }).then((response) => response.json());
+  const preparationBoard = structuredClone(preparationProject.visualStoryboard);
+  preparationBoard.scenes[1] = approveScene(preparationBoard.scenes[1]);
+  preparationBoard.scenes[0] = {
+    ...preparationBoard.scenes[0],
+    composition: { background: preparationBoard.palette.canvas, layers: [{ id: "visual-world", depth: 0.5, nodes: [{ type: "shape", shape: "rect", x: 0, y: 0, width: 1080, height: 1920, fill: preparationBoard.palette.canvas }] }] },
+    compositionSource: "existing", authoringStatus: "needs_visual_authoring", authoringConfirmed: false,
+    missingVisuals: ["mountain scene"], warnings: ["test: unresolved visual"], approved: false, approvedFingerprint: null,
+  };
+  const preparationSave = await fetch(`${baseUrl}/api/projects/${preparationProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: preparationProject.researchPackage, visualStoryboard: preparationBoard }),
+  });
+  assert.equal(preparationSave.status, 200, "test project stores one approved and one unresolved scene");
+  const preparationRequestId = "143d8d30-ef0b-4928-a48d-86d3df7c95e4";
+  const preparationHeaders = { "content-type": "application/json", origin: baseUrl };
+  const preparationStart = await fetch(`${baseUrl}/api/projects/${preparationProject.id}/visual-preparation`, {
+    method: "POST", headers: preparationHeaders, body: JSON.stringify({ requestId: preparationRequestId }),
+  });
+  assert.equal(preparationStart.status, 202);
+  const startedJob = await preparationStart.json();
+  const preparationReplay = await fetch(`${baseUrl}/api/projects/${preparationProject.id}/visual-preparation`, {
+    method: "POST", headers: preparationHeaders, body: JSON.stringify({ requestId: preparationRequestId }),
+  }).then((response) => response.json());
+  assert.equal(preparationReplay.job.id, startedJob.job.id, "duplicate preparation request reuses persisted job");
+  const changedPreparationReplay = await fetch(`${baseUrl}/api/projects/${preparationProject.id}/visual-preparation`, {
+    method: "POST", headers: preparationHeaders, body: JSON.stringify({ requestId: preparationRequestId, sceneIds: [preparationBoard.scenes[0].sceneId] }),
+  });
+  assert.equal(changedPreparationReplay.status, 409, "request ID cannot be reused with different scene selection");
+  assert.equal((await changedPreparationReplay.json()).code, "idempotency-conflict");
+  let finalPreparation: any;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    finalPreparation = await fetch(`${baseUrl}/api/projects/${preparationProject.id}/visual-preparation`).then((response) => response.json());
+    if (finalPreparation.job?.status !== "running") break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok(["completed", "partial_failure", "failed"].includes(finalPreparation.job.status), "batch reaches persisted terminal status");
+  assert.equal(finalPreparation.job.processed, finalPreparation.job.total, "batch progress accounts for every project scene");
+  assert.equal(finalPreparation.job.approved, 1, "already-approved scene is counted and never regenerated");
+  const reopenedPreparation = await fetch(`${baseUrl}/api/projects/${preparationProject.id}`).then((response) => response.json());
+  assert.equal(reopenedPreparation.visualPreparation.id, startedJob.job.id, "project reopening restores preparation status");
+  assert.equal(reopenedPreparation.visualStoryboard.scenes[1].approved, true, "batch preserves existing approval and fingerprint");
+  assert.ok(reopenedPreparation.visualStoryboard.scenes[0].composition.layers.length > 1, "Smart Hybrid replaced unresolved placeholder with local composition");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${preparationProject.id}`, { method: "DELETE" })).status, 200);
+
   const silentProject = await fetch(`${baseUrl}/api/projects`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
   }).then((response) => response.json());
@@ -221,6 +275,28 @@ try {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
   }).then((response) => response.json());
   assetProjectId = assetProject.id;
+  const tablerSearch = await fetch(`${baseUrl}/api/asset-packs/tabler?q=rainbow&page=1&pageSize=1`).then((response) => response.json());
+  assert.equal(tablerSearch.icons.length, 1, "Tabler search returns bounded page");
+  assert.ok(tablerSearch.total >= 1 && tablerSearch.categories.length > 0, "Tabler index exposes real package metadata and category facets");
+  const tablerPreview = await fetch(`${baseUrl}/api/asset-packs/tabler/icons/rainbow.svg`);
+  const tablerSvg = await tablerPreview.text();
+  assert.equal(tablerPreview.status, 200);
+  assert.match(tablerSvg, /<svg/);
+  assert.doesNotMatch(tablerSvg, /script|onload|foreignObject/i, "Tabler preview contains only generated safe path nodes");
+  const importedTablerResponse = await fetch(`${baseUrl}/api/projects/${assetProject.id}/asset-packs/tabler/rainbow/import`, { method: "POST" });
+  const importedTabler = await importedTablerResponse.json();
+  assert.equal(importedTablerResponse.status, 201, importedTabler.error);
+  assert.equal(importedTabler.asset.license, "MIT License");
+  assert.match(importedTabler.asset.attribution, /Copyright.*Paweł Kuna.*MIT/i);
+  assert.equal(importedTabler.asset.format, "svg");
+  const blockedThumbnail = await fetch(`${baseUrl}/api/openverse/thumbnail?url=${encodeURIComponent("https://127.0.0.1/private.png")}`);
+  assert.equal(blockedThumbnail.status, 502, "thumbnail proxy refuses URLs not returned by an active Openverse search");
+  const unselectedOpenverseImport = await fetch(`${baseUrl}/api/projects/${assetProject.id}/openverse/00000000-0000-0000-0000-000000000000/import`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Unselected fixture" }),
+  });
+  const unselectedResult = await unselectedOpenverseImport.json();
+  assert.equal(unselectedOpenverseImport.status, 502);
+  assert.match(unselectedResult.error, /Pilih ulang gambar dari hasil pencarian Openverse/, "API import rejects IDs absent from active selected search results without an external request");
   const pngPath = path.join(tempDir, "illustration.png");
   await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=teal:s=128x96:d=1", "-frames:v", "1", "-y", pngPath]);
   const pngBytes = await readFile(pngPath);
@@ -230,7 +306,7 @@ try {
   const imageUpload = await fetch(`${baseUrl}/api/projects/${assetProject.id}/visual-assets`, { method: "POST", body: imageForm });
   const uploadedVisual = await imageUpload.json();
   assert.equal(imageUpload.status, 201, uploadedVisual.error);
-  assert.equal(uploadedVisual.asset.format, "png");
+  assert.ok(["png", "webp"].includes(uploadedVisual.asset.format), "valid raster upload may retain or optimize to WebP");
   assert.equal(uploadedVisual.asset.width, 128);
   assert.equal(uploadedVisual.asset.source, "user-upload");
   assetUploadPath = path.resolve("public/visual-assets", uploadedVisual.asset.file);
@@ -255,8 +331,43 @@ try {
   });
   assert.equal(validAssetSave.status, 200, "owned upload persists in Visual Storyboard");
   assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}/generate`, { method: "POST" })).status, 409, "manual upload still requires review and approval");
+  const sourceScene = assetProject.visualStoryboard.scenes[0];
+  const sourceResearchScene = assetProject.researchPackage.scenes[0];
+  const reusableResponse = await fetch(`${baseUrl}/api/projects/${assetProject.id}/reusable-scenes`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      name: "Smoke reusable river composition", tags: ["smoke", "river", "ocean"], concepts: ["river carries mineral to sea"],
+      styleId: "clean-flat-2d", layout: "existing-composition", compositionType: "hero-object-focus",
+      composition: imageComposition(uploadedVisual.asset.id), palette: assetProject.visualStoryboard.palette,
+      motionIntent: sourceScene.motionIntent, motionSummary: sourceScene.motionSummary, motionPlan: sourceResearchScene.motionPlan,
+      objects: sourceScene.objects, relationships: sourceScene.relationships, visualFocus: sourceScene.visualFocus,
+      assetIds: [uploadedVisual.asset.id], thumbnailDataUrl: `data:image/png;base64,${pngBytes.toString("base64")}`,
+      provenance: "API smoke only; FFmpeg solid-color fixture, not educational art or AI.",
+    }),
+  });
+  const reusable = await reusableResponse.json();
+  assert.equal(reusableResponse.status, 201, reusable.error);
+  assert.equal(reusable.version, 1);
+  const reusableSearch = await fetch(`${baseUrl}/api/reusable-scenes?q=smoke+river&page=1&pageSize=2`).then((response) => response.json());
+  assert.ok(reusableSearch.scenes.some((scene: { id: string }) => scene.id === reusable.id), "FTS finds saved reusable composition");
+  const creditCsv = await fetch(`${baseUrl}/api/projects/${assetProject.id}/visual-assets/credits.csv`).then((response) => response.text());
+  assert.match(creditCsv, /Ocean layer/);
+  assert.match(creditCsv, /License URL/);
+  const reusableTarget = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
+  }).then((response) => response.json());
+  reusableTargetId = reusableTarget.id;
+  const attachedReusable = await fetch(`${baseUrl}/api/projects/${reusableTarget.id}/reusable-scenes/${reusable.id}/attach`, { method: "POST" });
+  assert.equal(attachedReusable.status, 200, "reusable scene attaches local asset metadata without modifying template JSON");
+  const targetAfterAttach = await fetch(`${baseUrl}/api/projects/${reusableTarget.id}`).then((response) => response.json());
+  assert.ok(targetAfterAttach.visualAssets.some((asset: { id: string }) => asset.id === uploadedVisual.asset.id));
+  assert.equal((await fetch(`${baseUrl}/api/reusable-scenes?q=smoke`).then((response) => response.json())).scenes.find((scene: { id: string }) => scene.id === reusable.id).usageCount, 1);
   assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, { method: "DELETE" })).status, 200);
-  assert.equal(existsSync(assetUploadPath), false, "unreferenced project asset is cleaned on project deletion");
+  assert.equal(existsSync(assetUploadPath), true, "asset remains while reusable template/project still references it");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${reusableTarget.id}`, { method: "DELETE" })).status, 200);
+  reusableTargetId = undefined;
+  const deletedReusable = await fetch(`${baseUrl}/api/reusable-scenes/${reusable.id}`, { method: "DELETE" });
+  assert.equal(deletedReusable.status, 200);
+  assert.equal(existsSync(assetUploadPath), false, "asset cleanup drains after last project and reusable-scene reference is removed");
   assetUploadPath = undefined;
   assetProjectId = undefined;
 
@@ -276,7 +387,45 @@ try {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: editedResearch }),
   }).then((response) => response.json());
   assert.equal(editedProject.researchReviewStatus, "needs-review", "editing research invalidates author verification");
+  const motionRequestId = randomUUID();
+  const motionBatchResponse = await fetch(`${baseUrl}/api/projects/${projectId}/motion-preparation`, {
+    method: "POST", headers: { "content-type": "application/json", origin: baseUrl },
+    body: JSON.stringify({ requestId: motionRequestId, intensity: "balanced" }),
+  });
+  assert.equal(motionBatchResponse.status, 202, "deterministic motion batch starts without model/provider request");
+  const startedMotion = await motionBatchResponse.json();
+  let persistedMotionJob: any;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    persistedMotionJob = await fetch(`${baseUrl}/api/projects/${projectId}/motion-preparation`).then((response) => response.json());
+    if (persistedMotionJob.job?.status !== "running") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(persistedMotionJob.job.id, startedMotion.job.id, "motion progress persists under the initial job ID");
+  assert.equal(persistedMotionJob.job.status, "completed", "all-scene motion batch completes locally");
+  assert.equal(persistedMotionJob.job.processed, persistedMotionJob.job.total, "persisted motion progress reaches every scene");
+  const motionProject = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  assert.equal(motionProject.motionPreparation.id, startedMotion.job.id, "reopening project returns latest motion job");
+  assert.ok(motionProject.researchPackage.scenes.some((scene: { motionActions: unknown[] }) => scene.motionActions.length > 0), "motion actions persist into Research Package");
+  const motionReplay = await fetch(`${baseUrl}/api/projects/${projectId}/motion-preparation`, {
+    method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ requestId: motionRequestId, intensity: "balanced" }),
+  });
+  assert.equal(motionReplay.status, 200);
+  assert.equal((await motionReplay.json()).replay, true, "same motion request ID replays durable job");
+  const motionConflict = await fetch(`${baseUrl}/api/projects/${projectId}/motion-preparation`, {
+    method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ requestId: motionRequestId, intensity: "expressive" }),
+  });
+  assert.equal(motionConflict.status, 409, "reused motion request ID with changed intensity conflicts");
   await approveVisuals(project.id);
+  const approvedMotionProject = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  const staleMotionBoard = structuredClone(approvedMotionProject.visualStoryboard);
+  const animatedScene = staleMotionBoard.scenes.find((scene: { motionActions: Array<{ durationFrames: number }> }) => scene.motionActions.length > 0);
+  assert.ok(animatedScene, "approval invalidation fixture has planned motion");
+  animatedScene.motionActions[0].durationFrames += 1;
+  const staleApprovalResponse = await fetch(`${baseUrl}/api/projects/${projectId}`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ researchPackage: approvedMotionProject.researchPackage, visualStoryboard: staleMotionBoard }),
+  });
+  assert.equal(staleApprovalResponse.status, 400, "changing motion after approval rejects stale approval fingerprint");
 
   const audioPath = path.join(tempDir, "voice.wav");
   await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", audioPath]);
@@ -300,15 +449,16 @@ try {
   const first = await generate().then((response) => response.json());
   const second = await generate().then((response) => response.json());
   assert.equal(first.job.id, second.job.id, "unchanged snapshot should reuse idempotent job");
-  assert.equal(first.job.rendererVersion, 2, "new snapshot should record renderer V2");
+  assert.equal(first.job.rendererVersion, RENDERER_VERSION, "new snapshot should record current renderer version");
   jobId = first.job.id;
   jobSnapshotPath = path.join(tempDir, "data", "jobs", first.job.id, "snapshot.json");
   const snapshot = JSON.parse(await readFile(jobSnapshotPath, "utf8"));
-  assert.equal(snapshot.rendererVersion, 2, "new job snapshot records renderer version");
-  assert.equal(first.job.rendererVersion, 2);
+  assert.equal(snapshot.rendererVersion, RENDERER_VERSION, "new job snapshot records current renderer version");
+  assert.equal(first.job.rendererVersion, RENDERER_VERSION);
   assert.ok(snapshot.audio.file.startsWith("audio/jobs/"), "job snapshot should reference immutable audio copy");
   assert.equal(snapshot.audio.source, "upload");
   assert.equal(snapshot.audio.sha256, uploaded.audio.sha256, "snapshot preserves approved audio identity");
+  assert.ok(snapshot.research.scenes.some((scene: { motionActions: unknown[] }) => scene.motionActions.length > 0), "immutable renderer snapshot includes approved motion actions");
   jobAudioPath = path.resolve("public", snapshot.audio.file);
   await readFile(jobAudioPath);
   renderOutputPath = path.join("renders", first.job.id, "attempt-1.mp4");
@@ -330,6 +480,7 @@ try {
   assert.equal(productionQuotaStatus.jobsUsed, 4, "switching mode preserves all recent job history");
   assert.ok(productionQuotaStatus.nextAllowedAt, "Production status exposes rolling quota reset time");
   await changeProjectTitle("production-blocked");
+  assert.deepEqual(JSON.parse(await readFile(jobSnapshotPath, "utf8")), snapshot, "project edits never mutate existing motion/render snapshot");
   assert.equal((await generate()).status, 429, "Production counts Development-created jobs against daily limit");
 
   setPersistedAiMode("development");
@@ -366,6 +517,7 @@ try {
 } finally {
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" }).catch(() => {});
   if (assetProjectId) await fetch(`${baseUrl}/api/projects/${assetProjectId}`, { method: "DELETE" }).catch(() => {});
+  if (reusableTargetId) await fetch(`${baseUrl}/api/projects/${reusableTargetId}`, { method: "DELETE" }).catch(() => {});
   if (jobAudioPath) await rm(jobAudioPath, { force: true });
   if (assetUploadPath) await rm(assetUploadPath, { force: true });
   if (renderOutputPath) await rm(path.dirname(renderOutputPath), { recursive: true, force: true });

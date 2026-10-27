@@ -7,6 +7,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { parseResearchPackage, type ResearchPackage } from "../src/domain/research";
+import { RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const outputDir = path.resolve(process.env.SAMPLE_AUDIO_OUTPUT_DIR ?? "renders/v1.0.4-review/mock-audio-validation");
@@ -50,7 +51,7 @@ try {
         cwd: process.cwd(), timeout: 600_000, maxBuffer: 4 * 1024 * 1024,
       });
       const manifest = JSON.parse(stdout) as Awaited<ReturnType<typeof import("./render-core").renderSnapshot>> & { audioSource: string; audioSha256: string; audioValidation: string; audioMeanVolumeDb: number; audioMaxVolumeDb: number };
-      assert.equal(manifest.rendererVersion, 2);
+      assert.equal(manifest.rendererVersion, RENDERER_VERSION);
       assert.equal(manifest.videoCodec, "h264");
       assert.equal(manifest.audioCodec, "aac");
       assert.equal(manifest.audioSource, "mock-fixture");

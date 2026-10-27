@@ -360,6 +360,7 @@ function AiDraftReview({ draft, busy, onChange, onApprove, onCreate, onNewTopic,
         referenceIds: [],
         visualComposition: visualCompositionSchema.parse(defaultVisualComposition("infographic")),
         motionPlan: defaultMotionPlan(cues),
+        motionActions: [],
       }];
       const slice = current.researchPackage.targetDurationSec / scenes.length;
       return {

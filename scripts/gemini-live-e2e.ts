@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { FREE_TIER_TTS_MODELS, ttsCacheKey } from "../src/server/tts/provider";
 import { narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
+import { PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const requestedPhase = process.argv[2];
@@ -223,7 +224,7 @@ try {
     }
   }
   if (!job) throw new Error("Snapshot job was not created.");
-  if (job.rendererVersion !== 2) throw new Error("Live E2E requires a V2 snapshot; no V1 snapshot will be upgraded implicitly.");
+  if (![PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(job.rendererVersion)) throw new Error(`Live E2E requires a V${PREVIOUS_RENDERER_VERSION} or V${RENDERER_VERSION} snapshot; no legacy snapshot will be upgraded implicitly.`);
   if (!renderRequested) {
     await persistState({ ...state, phase: "awaiting-video-review", jobId: job.id, snapshotCreatedAt: new Date().toISOString() });
     console.log(JSON.stringify({

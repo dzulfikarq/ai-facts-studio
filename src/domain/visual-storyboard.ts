@@ -7,6 +7,7 @@ import { layerMotion } from "../video/motion";
 import { composeVisualScene, compositionShowsObject, hasGenericIconCards, visualRelationshipIsVisible, visualRelationshipKinds, type VisualRelationship, type VisualAuthoringStatus } from "./visual-composer";
 import { visualObjectIds, visualObjectLibrary, visualObjectsForText, type VisualObjectId } from "./visual-objects";
 import { visualSemanticPlanSchema, type VisualSemanticPlan } from "./visual-semantic-plan";
+import { motionActionsSchema, motionIntensitySchema, motionKeyframesWithinSafeCanvas, motionTargetExists, motionTargetNode, type MotionIntensity } from "./motion-director";
 
 export { visualObjectIds, visualObjectLibrary, visualObjectsForText } from "./visual-objects";
 export type { VisualObjectId } from "./visual-objects";
@@ -17,7 +18,9 @@ type ApprovalInput = {
   sceneId: string; durationSec: number; headline: string; narrationText: string; visualSummary: string;
   layout: string; compositionType?: string; objects: Array<{ objectId: string; assetId: string; role: string; label: string }>;
   visualFocus: string | null; relationships: VisualRelationship[]; illustrationIntent: string; motionIntent: string; motionSummary: string;
-  composition: VisualComposition; compositionSource: string; authoringStatus: string; authoringConfirmed: boolean; missingVisuals: string[];
+  motionIntensity: MotionIntensity; motionTiming: "approximate" | "narration-aligned"; motionStatus: "not_prepared" | "ready_for_review" | "needs_review" | "static";
+  motionActions: import("./motion-director").MotionAction[];
+  composition: VisualComposition; compositionSource: string; illustrationSource?: string; authoringStatus: string; authoringConfirmed: boolean; missingVisuals: string[];
   semanticPlan?: VisualSemanticPlan;
 };
 function fingerprint(content: string) {
@@ -30,7 +33,18 @@ export function visualApprovalFingerprint(scene: ApprovalInput) {
     sceneId: scene.sceneId, durationSec: scene.durationSec, headline: scene.headline, narrationText: scene.narrationText,
     visualSummary: scene.visualSummary, layout: scene.layout, compositionType: scene.compositionType, objects: scene.objects, relationships: scene.relationships,
     visualFocus: scene.visualFocus, illustrationIntent: scene.illustrationIntent, motionIntent: scene.motionIntent,
-    motionSummary: scene.motionSummary, composition: scene.composition, compositionSource: scene.compositionSource,
+    motionSummary: scene.motionSummary, composition: scene.composition, compositionSource: scene.compositionSource, illustrationSource: scene.illustrationSource,
+    motionIntensity: scene.motionIntensity, motionTiming: scene.motionTiming, motionStatus: scene.motionStatus, motionActions: scene.motionActions,
+    authoringStatus: scene.authoringStatus, authoringConfirmed: scene.authoringConfirmed, missingVisuals: scene.missingVisuals,
+    semanticPlan: scene.semanticPlan,
+  }));
+}
+export function legacyMotionApprovalFingerprint(scene: ApprovalInput) {
+  return fingerprint(JSON.stringify({
+    sceneId: scene.sceneId, durationSec: scene.durationSec, headline: scene.headline, narrationText: scene.narrationText,
+    visualSummary: scene.visualSummary, layout: scene.layout, compositionType: scene.compositionType, objects: scene.objects, relationships: scene.relationships,
+    visualFocus: scene.visualFocus, illustrationIntent: scene.illustrationIntent, motionIntent: scene.motionIntent,
+    motionSummary: scene.motionSummary, composition: scene.composition, compositionSource: scene.compositionSource, illustrationSource: scene.illustrationSource,
     authoringStatus: scene.authoringStatus, authoringConfirmed: scene.authoringConfirmed, missingVisuals: scene.missingVisuals,
     semanticPlan: scene.semanticPlan,
   }));
@@ -69,8 +83,13 @@ export const visualStoryboardSceneSchema = z.object({
   illustrationIntent: z.string().trim().min(1).max(500),
   motionIntent: z.enum(["particle-flow", "path-animation", "keyword-highlight", "focus-shift", "gentle-reveal"]),
   motionSummary: z.string().trim().min(1).max(240),
+  motionIntensity: motionIntensitySchema.default("balanced"),
+  motionTiming: z.enum(["approximate", "narration-aligned"]).default("approximate"),
+  motionStatus: z.enum(["not_prepared", "ready_for_review", "needs_review", "static"]).default("not_prepared"),
+  motionActions: motionActionsSchema.default([]),
   composition: visualCompositionSchema,
-  compositionSource: z.enum(["existing", "library", "procedural", "manual"]).default("existing"),
+  compositionSource: z.enum(["existing", "library", "procedural", "manual", "ai-vector"]).default("existing"),
+  illustrationSource: z.enum(["ai-vector", "ai-image", "asset-library", "upload-image", "procedural", "manual"]).optional(),
   missingVisuals: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   warnings: z.array(z.string().trim().min(1).max(240)).max(8),
   authoringStatus: z.enum(["ready_for_review", "needs_review", "needs_visual_authoring"]),
@@ -80,8 +99,31 @@ export const visualStoryboardSceneSchema = z.object({
   approvedFingerprint: z.string().regex(/^[a-f0-9]{8}$/).nullable().default(null),
 }).strict().superRefine((scene, ctx) => {
   const legacyMetadata = scene.relationships.length === 0 && scene.compositionSource === "existing" && scene.missingVisuals.length === 0;
+  const legacyMotionUnchanged = scene.motionStatus === "not_prepared" && scene.motionActions.length === 0;
+  const motionDurationFrames = Math.floor(scene.durationSec * 30);
+  scene.motionActions.forEach((action, index) => {
+    const target = motionTargetNode(scene.composition, action.targetNode);
+    if (!motionTargetExists(scene.composition, action.targetNode)) ctx.addIssue({ code: "custom", message: `Node motion '${action.targetNode}' tidak ditemukan`, path: ["motionActions", index, "targetNode"] });
+    if (action.startFrame + action.durationFrames > motionDurationFrames) ctx.addIssue({ code: "custom", message: "Motion action melewati durasi scene", path: ["motionActions", index, "durationFrames"] });
+    if (target?.type === "text") ctx.addIssue({ code: "custom", message: "Motion Director tidak boleh menggerakkan label teks composition", path: ["motionActions", index, "targetNode"] });
+    if (action.kind === "draw" && target?.type !== "path" && !(target?.type === "shape" && target.shape === "line")) ctx.addIssue({ code: "custom", message: "Path drawing harus menargetkan path atau line nyata", path: ["motionActions", index, "targetNode"] });
+    if (target && !motionKeyframesWithinSafeCanvas(action, target)) {
+      ctx.addIssue({ code: "custom", message: "Keyframe objek keluar dari safe canvas", path: ["motionActions", index, "keyframes"] });
+    }
+  });
+  const imageNodes = compositionNodes(scene.composition).filter((node) => node.type === "image");
+  const movingVectorNodes = compositionNodes(scene.composition).filter((node) => node.type !== "image" && node.type !== "text"
+    && !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
+  if (imageNodes.length && !movingVectorNodes.length) scene.motionActions.forEach((action, index) => {
+    const target = motionTargetNode(scene.composition, action.targetNode);
+    const rasterTarget = target?.type === "image" || target?.type === "group" && target.children.some((child) => child.type === "image");
+    const wholeImageAction = ["fade", "translate", "scale", "rotate", "follow-path", "repeat", "reveal", "focus-shift", "state-transition"].includes(action.kind);
+    const rasterOverlay = action.kind === "particle-flow" && rasterTarget;
+    if (!rasterTarget || !wholeImageAction && !rasterOverlay) ctx.addIssue({ code: "custom", message: "Raster tunggal hanya boleh menerima gerak seluruh gambar atau overlay yang tersedia", path: ["motionActions", index, "kind"] });
+  });
   if (scene.approved && scene.approvedFingerprint !== visualApprovalFingerprint(scene)
-    && !(legacyMetadata && scene.approvedFingerprint === legacyVisualApprovalFingerprint(scene))) {
+    && !(legacyMotionUnchanged && scene.approvedFingerprint === legacyMotionApprovalFingerprint(scene))
+    && !(legacyMetadata && legacyMotionUnchanged && scene.approvedFingerprint === legacyVisualApprovalFingerprint(scene))) {
     ctx.addIssue({ code: "custom", message: "Approval visual sudah stale; tinjau ulang komposisi scene.", path: ["approvedFingerprint"] });
   }
 });
@@ -119,6 +161,16 @@ export const visualStoryboardSchema = z.object({
 export type VisualStoryboard = z.infer<typeof visualStoryboardSchema>;
 export type VisualStoryboardScene = VisualStoryboard["scenes"][number];
 
+export function illustrationSourceForScene(scene: Pick<VisualStoryboardScene, "illustrationSource" | "compositionSource" | "composition">): NonNullable<VisualStoryboardScene["illustrationSource"]> {
+  if (scene.illustrationSource) return scene.illustrationSource;
+  const image = scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node]))
+    .find((node) => node.type === "image");
+  if (image) return image.asset.startsWith("upload-") ? "upload-image" : "asset-library";
+  if (scene.compositionSource === "ai-vector") return "ai-vector";
+  if (scene.compositionSource === "manual") return "manual";
+  return "procedural";
+}
+
 const palette = { canvas: "#e8f3ed", surface: "#b8d8d0", primary: "#267a76", accent: "#edaa59", text: "#173740" };
 const authoringPlaceholder = () => visualCompositionSchema.parse({
   background: palette.canvas,
@@ -133,11 +185,8 @@ function intendedMotion(type: VisualStoryboardScene["compositionType"] | undefin
 }
 
 function motionCopy(intent: VisualStoryboardScene["motionIntent"], objects: VisualObjectId[]) {
-  if (intent === "particle-flow") return "Partikel bergerak deterministik mengikuti arah lingkungan; lintasan terungkap bertahap.";
-  if (intent === "path-animation") return "Hujan, aliran air, atau uap bergerak di lintasan proses yang relevan.";
-  if (intent === "keyword-highlight") return "Fade ringan lalu pulse singkat pada objek kunci.";
-  if (intent === "focus-shift") return `Zoom halus menuju ${visualObjectLibrary[objects[0] ?? "earth"].label.toLocaleLowerCase("id-ID")}.`;
-  return "Reveal bertahap menjaga fokus pada ilustrasi.";
+  void intent; void objects;
+  return "Motion belum disiapkan; scene tetap valid sebagai komposisi statis.";
 }
 
 export function buildVisualStoryboard(research: ResearchPackage, previous?: VisualStoryboard): VisualStoryboard {
@@ -146,7 +195,8 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
     const prior = previous?.scenes.find((item) => item.sceneId === scene.id);
     const visualSummary = scene.visualDescription.trim() || "Visual authoring diperlukan untuk materi ini.";
     const sameCopy = prior?.headline === scene.onScreenText && prior.narrationText === scene.narrationText && prior.visualSummary === visualSummary;
-    const preserveExisting = Boolean(prior && (prior.authoringConfirmed || prior.approved || sameCopy));
+    const hasRaster = Boolean(prior && compositionNodes(prior.composition).some((node) => node.type === "image"));
+    const preserveExisting = Boolean(prior && (prior.authoringConfirmed || prior.approved || prior.compositionSource === "ai-vector" || hasRaster || sameCopy));
     const existingPlan = prior ? {
       objects: prior.objects.map((object) => object.objectId), relationships: prior.relationships,
       source: prior.compositionSource, status: sameCopy ? prior.authoringStatus : "needs_review" as const,
@@ -183,9 +233,15 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       visualFocus: composed.focus,
       illustrationIntent: composed.illustrationIntent,
       motionIntent: intent,
-      motionSummary: motionCopy(intent, composed.objects),
+      motionSummary: prior?.motionSummary ?? motionCopy(intent, composed.objects),
+      motionIntensity: prior?.motionIntensity ?? "balanced",
+      motionTiming: prior?.motionTiming ?? "approximate",
+      motionStatus: prior?.motionActions?.length ? (sameCopy ? prior.motionStatus : "needs_review") : prior?.motionStatus ?? "not_prepared",
+      motionActions: prior?.motionActions ?? [],
       composition: composed.composition ?? authoringPlaceholder(),
       compositionSource: composed.compositionSource,
+      ...(prior?.illustrationSource ? { illustrationSource: prior.illustrationSource }
+        : prior ? {} : { illustrationSource: composed.compositionSource === "ai-vector" ? "ai-vector" as const : composed.compositionSource === "manual" ? "manual" as const : "procedural" as const }),
       missingVisuals: composed.missingVisuals,
       warnings: composed.warnings,
       authoringStatus: composed.status,
@@ -196,7 +252,7 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
     };
     const keepApproval = Boolean(composed.status === "ready_for_review" && sameCopy && prior?.approved && JSON.stringify(prior.composition) === JSON.stringify(nextScene.composition)
       && JSON.stringify(prior.semanticPlan) === JSON.stringify(nextScene.semanticPlan)
-      && prior.approvedFingerprint === visualApprovalFingerprint(nextScene));
+      && [visualApprovalFingerprint(nextScene), legacyMotionApprovalFingerprint(nextScene)].includes(prior.approvedFingerprint ?? ""));
     return { ...nextScene, approved: keepApproval, approvedFingerprint: keepApproval ? prior!.approvedFingerprint : null };
   });
   const reusableWorldObjects = visualObjectIds.filter((objectId) => scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1);
@@ -223,11 +279,12 @@ export type VisualQualityGate = {
   scenes: Record<string, string[]>;
   sceneStatuses: Record<string, VisualAuthoringStatus>;
 };
-export function visualStoryboardQualityGate(research: ResearchPackage, storyboard: VisualStoryboard, availableAssetIds: readonly string[] = []): VisualQualityGate {
+export function visualStoryboardQualityGate(research: ResearchPackage, storyboard: VisualStoryboard, assets: readonly (string | import("./visual-assets").VisualAsset)[] = []): VisualQualityGate {
   const scenes: Record<string, string[]> = {};
   const sceneStatuses: Record<string, VisualAuthoringStatus> = {};
   const reviewNotes: string[] = [];
-  const availableAssets = new Set(availableAssetIds);
+  const availableAssets = new Set(assets.map((asset) => typeof asset === "string" ? asset : asset.id));
+  const assetById = new Map(assets.flatMap((asset) => typeof asset === "string" ? [] : [[asset.id, asset] as const]));
   const add = (sceneId: string, issue: string) => { (scenes[sceneId] ??= []).push(issue); };
   if (storyboard.scenes.length !== research.scenes.length) return { status: "needs_visual_authoring", ready: false, issues: ["Jumlah scene Visual Storyboard tidak sama dengan Research Package."], reviewNotes, scenes, sceneStatuses };
   storyboard.scenes.forEach((visual, index) => {
@@ -238,19 +295,59 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
     }
     if (visual.headline.length > 72) add(visual.sceneId, "Headline terlalu panjang untuk dibaca pada layar ponsel.");
     if (!visual.visualSummary.trim()) add(visual.sceneId, "Ringkasan visual kosong.");
-    if (visual.authoringStatus === "needs_visual_authoring") add(visual.sceneId, `needs_visual_authoring: ${visual.missingVisuals.join(", ") || "komposisi belum menjelaskan konsep inti secara memadai"}.`);
-    for (const node of compositionNodes(visual.composition)) {
-      if (node.type === "image" && node.asset.startsWith("upload-") && !availableAssets.has(node.asset)) add(visual.sceneId, `Aset unggahan ${node.asset.slice(0, 22)} tidak tersedia di project ini.`);
-    }
-    if (visual.layout === "two-column-object-grid" || hasGenericIconCards(visual.composition)) add(visual.sceneId, "Scene masih memakai kartu ikon generik; author ilustrasi utuh.");
-    if (visual.approved && visual.approvedFingerprint !== visualApprovalFingerprint(visual)) add(visual.sceneId, "Approval visual stale; tinjau ulang scene setelah perubahan.");
-
+    const illustrationSource = illustrationSourceForScene(visual);
     const nodes = compositionNodes(visual.composition);
+    const imageNodes = nodes.filter((node) => node.type === "image");
+    const motionVectors = nodes.filter((node) => node.type !== "image" && node.type !== "text"
+      && !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
+    if (imageNodes.length && motionVectors.length === 0 && visual.motionActions.length) {
+      reviewNotes.push(`Scene ${visual.sceneNumber}: ilustrasi raster digerakkan sebagai satu gambar; objek di dalam raster tidak dipisah.`);
+    }
+    if (["ai-image", "asset-library", "upload-image"].includes(illustrationSource) && imageNodes.length === 0) {
+      sceneStatuses[visual.sceneId] = "needs_visual_authoring";
+      add(visual.sceneId, "Ilustrasi gambar belum tersedia. Buat/copy prompt lalu impor gambar, atau pilih aset dari Library.");
+      return;
+    }
+    let missingImage = false;
+    for (const node of imageNodes) {
+      if (node.asset.startsWith("upload-") && !availableAssets.has(node.asset)) {
+        add(visual.sceneId, `Aset gambar ${node.asset.slice(0, 22)} tidak tersedia; pilih ulang dari Asset Library atau unggah lagi.`);
+        missingImage = true;
+      }
+      const asset = assetById.get(node.asset);
+      if (asset && asset.width * asset.height < 600_000) add(visual.sceneId, `Resolusi aset ${asset.name} rendah; gunakan gambar minimal 600.000 piksel.`);
+      if (asset && illustrationSource === "ai-image" && asset.source !== "ai-generated") add(visual.sceneId, "Source scene AI Image tidak cocok dengan provenance aset.");
+      if (asset && illustrationSource === "upload-image" && asset.source !== "user-upload") add(visual.sceneId, "Source scene Upload Image tidak cocok dengan provenance aset.");
+      if (asset && /unspecified|not specified/i.test(asset.license)) reviewNotes.push(`Scene ${visual.sceneNumber}: license/provenance aset ${asset.name} belum dicatat spesifik.`);
+    }
+    if (missingImage) {
+      sceneStatuses[visual.sceneId] = "needs_visual_authoring";
+      return;
+    }
+    if (imageNodes.length > 0 && !visual.authoringConfirmed) add(visual.sceneId, "Tinjau semantik, crop, dan provenance gambar lalu konfirmasi sebelum approval.");
+    if (visual.authoringStatus === "needs_visual_authoring") add(visual.sceneId, `needs_visual_authoring: ${visual.missingVisuals.join(", ") || "komposisi belum menjelaskan konsep inti secara memadai"}.`);
+    if (visual.layout === "two-column-object-grid" || hasGenericIconCards(visual.composition)) add(visual.sceneId, "Scene masih memakai kartu ikon generik; author ilustrasi utuh.");
+    const legacyMotionUnchanged = visual.motionStatus === "not_prepared" && visual.motionActions.length === 0;
+    if (visual.approved && visual.approvedFingerprint !== visualApprovalFingerprint(visual)
+      && !(legacyMotionUnchanged && visual.approvedFingerprint === legacyMotionApprovalFingerprint(visual))
+      && !(visual.relationships.length === 0 && visual.compositionSource === "existing" && visual.missingVisuals.length === 0
+        && legacyMotionUnchanged && visual.approvedFingerprint === legacyVisualApprovalFingerprint(visual))) add(visual.sceneId, "Approval visual stale; tinjau ulang scene setelah perubahan.");
+    if (visual.motionStatus === "not_prepared") reviewNotes.push(`Scene ${visual.sceneNumber}: Motion Plan belum dibuat; scene statis tetap valid.`);
+    if (visual.motionStatus === "needs_review") reviewNotes.push(`Scene ${visual.sceneNumber}: Motion Plan dipertahankan setelah perubahan; tinjau ulang gerak.`);
+    const motionDurationFrames = Math.floor(visual.durationSec * 30);
+    visual.motionActions.forEach((action, actionIndex) => {
+      const target = motionTargetNode(visual.composition, action.targetNode);
+      if (!target || action.startFrame + action.durationFrames > motionDurationFrames) add(visual.sceneId, `Motion action ${actionIndex + 1} memiliki target/timing tidak valid.`);
+      if (target && !motionKeyframesWithinSafeCanvas(action, target)) add(visual.sceneId, `Motion action ${actionIndex + 1} keluar dari safe canvas.`);
+    });
+    if (visual.motionActions.reduce((total, action) => total + (action.particleCount ?? 0), 0) > 24) add(visual.sceneId, "Jumlah partikel motion melebihi batas 24.");
+    if (visual.motionTiming === "approximate" && visual.motionActions.length) reviewNotes.push(`Scene ${visual.sceneNumber}: timing motion approximate berdasarkan durasi/narasi, bukan word-level audio alignment.`);
+
     const reviewFrame = Math.round(visual.durationSec * 15);
     const layerMotions = new Map(visual.composition.layers.map((layer) => [layer.id, layerMotion(source?.motionPlan ?? [], layer.id, layer.depth, reviewFrame, 0.5)]));
     const renderedBounds = renderedVisualBounds(visual.composition, research.visualPreset, { progress: 0.5, frame: reviewFrame, layerMotions });
     const keyVisuals = nodes.filter((node) => node.type !== "text" && !(node.type === "shape" && node.shape === "rect" && node.width >= 900 && node.height >= 1200));
-    if (visual.objects.length === 0 && !visual.authoringConfirmed) add(visual.sceneId, "Object plan belum menentukan konsep visual utama.");
+    if (visual.objects.length === 0 && !visual.authoringConfirmed && visual.compositionSource !== "ai-vector" && imageNodes.length === 0) add(visual.sceneId, "Object plan belum menentukan konsep visual utama.");
     if (nodes.length > 32) add(visual.sceneId, "Komposisi terlalu padat untuk layar ponsel.");
     if (keyVisuals.length === 0) add(visual.sceneId, "Komposisi tidak memiliki ilustrasi yang terlihat.");
     if (visual.visualFocus && !visual.authoringConfirmed && !compositionShowsObject(visual.composition, visual.visualFocus)) add(visual.sceneId, `Visual focus ${visualObjectLibrary[visual.visualFocus].label.toLocaleLowerCase("id-ID")} tidak tampak pada komposisi.`);
@@ -262,7 +359,13 @@ export function visualStoryboardQualityGate(research: ResearchPackage, storyboar
       return rendered ? { left: Math.min(box.left, rendered.left), top: Math.min(box.top, rendered.top), right: Math.max(box.right, rendered.right), bottom: Math.max(box.bottom, rendered.bottom) } : box;
     }, { left: 1080, top: 1920, right: 0, bottom: 0 });
     if ((bounds.right - bounds.left) * (bounds.bottom - bounds.top) < 120_000) add(visual.sceneId, "Ilustrasi utama terlalu kecil untuk frame ponsel.");
-    if (bounds.bottom <= 510 || bounds.top >= 1510) add(visual.sceneId, "Ilustrasi berada di luar area visual aman 9:16.");
+    const foregroundImageOutsideSafeArea = imageNodes.some((node) => {
+      const layer = visual.composition.layers.find((item) => item.nodes.some((entry) => entry === node));
+      if (layer && layer.depth <= 0.1) return false;
+      const rendered = renderedBounds.get(node);
+      return rendered && (rendered.top < 500 || rendered.bottom > 1510);
+    });
+    if (foregroundImageOutsideSafeArea || imageNodes.length === 0 && (bounds.bottom <= 510 || bounds.top >= 1510)) add(visual.sceneId, "Ilustrasi utama berada di luar area aman 9:16.");
     const textNodes = nodes.filter((node) => node.type === "text");
     if (textNodes.some((node) => {
       const rendered = renderedBounds.get(node);
@@ -311,6 +414,7 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
         narrationText: visual.narrationText,
         visualDescription: visual.visualSummary,
         visualComposition: visual.composition,
+        motionActions: visual.motionActions,
         motionCues: cues,
         motionPlan,
         captionSegments: visual.narrationText === scene.narrationText ? scene.captionSegments : undefined,

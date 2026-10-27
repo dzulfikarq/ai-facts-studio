@@ -1,0 +1,51 @@
+{
+  "topic": "Bagaimana Pelangi Terbentuk?",
+  "disposition": "all scenes already had locally authored/reusable illustrations; Smart Hybrid preserved them; no AI Image/Vector generation",
+  "job": {
+    "id": "bda368cd-a211-4c28-b630-0cb510a27f3a",
+    "projectId": "1759361b-d130-46c4-9213-eb9a66708cb8",
+    "requestId": "862610bf-5d7b-4a44-a8b2-12b46bdf7411",
+    "status": "completed",
+    "total": 5,
+    "processed": 5,
+    "currentSceneId": null,
+    "readyForReview": 5,
+    "needsAttention": 0,
+    "failed": 0,
+    "approved": 0,
+    "scenes": [
+      {
+        "sceneId": "rainbow-01-ingredients",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "rainbow-02-refraction",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "rainbow-03-internal-reflection",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "rainbow-04-colors",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      },
+      {
+        "sceneId": "rainbow-05-viewing-conditions",
+        "status": "ready_for_review",
+        "source": "preserved",
+        "message": "Ilustrasi yang tersedia dipertahankan untuk review manusia."
+      }
+    ],
+    "createdAt": "2026-10-27T06:08:59.286Z",
+    "updatedAt": "2026-10-27T06:08:59.288Z"
+  }
+}

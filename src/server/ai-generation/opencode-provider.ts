@@ -474,7 +474,7 @@ export class OpenCodeTextGenerationProvider implements AiGenerationProvider {
   }
 
   async generate(request: AiGenerationRequest): Promise<AiGenerationResult> {
-    if (request.outputFormat !== "ai-research-storyboard-v1" && request.outputFormat !== "visual-semantic-plan-v1") throw new OpenCodeGenerationError("Kontrak output AI Text terstruktur tidak valid.", "invalid-generation-contract", 500);
+    if (request.outputFormat !== "ai-research-storyboard-v1" && request.outputFormat !== "visual-semantic-plan-v1" && request.outputFormat !== "ai-vector-illustration-v1") throw new OpenCodeGenerationError("Kontrak output AI Text terstruktur tidak valid.", "invalid-generation-contract", 500);
     if (request.signal?.aborted) throw new OpenCodeGenerationError("Generation dibatalkan.", "cancelled", 499);
     const signal = request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(requestTimeoutMs)]) : AbortSignal.timeout(requestTimeoutMs);
     const directory = await mkdtemp(path.join(os.tmpdir(), "ai-facts-opencode-"));

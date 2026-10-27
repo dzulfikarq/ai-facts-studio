@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { visualObjectLibrary, visualObjectIds } from "../../domain/visual-objects";
+import { visualRelationshipKinds } from "../../domain/visual-composer";
 import { visualSemanticPlanSchema, type VisualSemanticPlan } from "../../domain/visual-semantic-plan";
 import { finishAiGenerationRequest, reserveAiGenerationRequest } from "./quota";
 import type { AiGenerationMode, AiGenerationProvider, AiGenerationResult, ProductionProviderStatus } from "./provider";
@@ -10,6 +11,15 @@ export const visualPlannerInputSchema = z.object({
   headline: z.string().trim().min(1).max(120),
   narration: z.string().trim().max(2000),
   visualDescription: z.string().trim().min(1).max(500),
+  artDirection: z.object({
+    styleId: z.string().trim().min(1).max(80),
+    palette: z.object({ canvas: z.string().regex(/^#[0-9a-fA-F]{6}$/), surface: z.string().regex(/^#[0-9a-fA-F]{6}$/), primary: z.string().regex(/^#[0-9a-fA-F]{6}$/), accent: z.string().regex(/^#[0-9a-fA-F]{6}$/), text: z.string().regex(/^#[0-9a-fA-F]{6}$/) }).strict(),
+  }).strict().optional(),
+  visualPlan: z.object({
+    focus: z.enum(visualObjectIds).nullable(),
+    objects: z.array(z.enum(visualObjectIds)).max(12),
+    relationships: z.array(z.object({ from: z.enum(visualObjectIds), relation: z.enum(visualRelationshipKinds), to: z.enum(visualObjectIds) }).strict()).max(12),
+  }).strict().optional(),
 }).strict();
 export type VisualPlannerInput = z.infer<typeof visualPlannerInputSchema>;
 

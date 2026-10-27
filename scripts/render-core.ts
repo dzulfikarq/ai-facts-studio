@@ -11,7 +11,7 @@ import type { ResearchPackage } from "../src/domain/research";
 import type { VisualAsset } from "../src/domain/visual-assets";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { durationInFrames } from "../src/domain/timeline";
-import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
@@ -85,7 +85,7 @@ async function verifySnapshotAudio(audio: NonNullable<RenderSnapshot["audio"]>) 
 async function verifySnapshotVisualAssets(assets: readonly VisualAsset[] = []) {
   const allowedRoot = path.resolve(root, "public/visual-assets");
   for (const asset of assets) {
-    if (!/^[a-f0-9]{64}\.(png|jpg|webp)$/.test(asset.file) || asset.sha256 !== asset.file.slice(0, 64)) throw new Error("Aset visual snapshot tidak valid.");
+    if (!/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(asset.file) || asset.sha256 !== asset.file.slice(0, 64)) throw new Error("Aset visual snapshot tidak valid.");
     const filePath = path.resolve(allowedRoot, asset.file);
     if (path.dirname(filePath) !== allowedRoot) throw new Error("Aset visual snapshot keluar dari direktori yang diizinkan.");
     const hash = createHash("sha256");
@@ -101,7 +101,7 @@ export async function renderSnapshot(
   scale = 1,
 ) {
   const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
-  if (![LEGACY_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
+  if (![LEGACY_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
   if (snapshot.audio) await verifySnapshotAudio(snapshot.audio);
   await verifySnapshotVisualAssets(snapshot.visualAssets);
   await mkdir(path.dirname(outputLocation), { recursive: true });

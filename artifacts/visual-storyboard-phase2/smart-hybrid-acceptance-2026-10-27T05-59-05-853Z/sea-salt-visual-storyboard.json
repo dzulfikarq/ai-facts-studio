@@ -1,0 +1,1552 @@
+{
+  "schemaVersion": "1.0",
+  "styleId": "clean-flat-2d",
+  "palette": {
+    "canvas": "#e8f3ed",
+    "surface": "#b8d8d0",
+    "primary": "#267a76",
+    "accent": "#edaa59",
+    "text": "#173740"
+  },
+  "typographyIntent": {
+    "heading": "Sans-serif tebal, kontras tinggi",
+    "body": "Sans-serif bersih untuk caption pendek",
+    "hierarchy": "Headline 1–2 baris; objek ilustrasi jadi fokus; narasi tetap caption."
+  },
+  "headlineStrategy": "short-concept-first",
+  "reusableWorldObjects": [
+    "mineral",
+    "ocean",
+    "salt-crystal",
+    "mountain"
+  ],
+  "scenes": [
+    {
+      "sceneId": "salt-01-hook",
+      "sceneNumber": 1,
+      "durationSec": 6.4,
+      "headline": "LAUT BIRU, PENUH ION TERLARUT",
+      "narrationText": "Laut tampak biru, tetapi airnya menyimpan ion garam terlarut. Dari mana garam itu datang?",
+      "visualSummary": "Lautan luas menjadi hero scene; ion natrium dan klorida tampak tersebar dan terlarut di antara gelombang.",
+      "layout": "hero-object-focus",
+      "compositionType": "hero-object-focus",
+      "objects": [
+        {
+          "objectId": "ocean",
+          "assetId": "ocean",
+          "role": "Tempat garam terkumpul",
+          "label": "LAUT"
+        },
+        {
+          "objectId": "salt-crystal",
+          "assetId": "salt-crystal",
+          "role": "Garam terlarut",
+          "label": "GARAM TERTINGGAL"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "ocean",
+          "relation": "contains",
+          "to": "salt-crystal"
+        }
+      ],
+      "visualFocus": "ocean",
+      "illustrationIntent": "Laut menjadi hero scene; partikel Na⁺ dan Cl⁻ tampak terlarut di antara gelombang.",
+      "motionIntent": "focus-shift",
+      "motionSummary": "Zoom halus menuju laut.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "ocean-horizon",
+            "depth": 0.18,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 740,
+                "y": 560,
+                "width": 190,
+                "height": 190,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 730,
+                "width": 1080,
+                "height": 380,
+                "d": "M0 60 Q18 25 36 60 T72 60 T100 60",
+                "fill": "none",
+                "stroke": "#287f8c",
+                "strokeWidth": 12
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 820,
+                "width": 1080,
+                "height": 620,
+                "d": "M0 12 Q12 0 24 12 T48 12 T72 12 T100 12 V100 H0Z",
+                "fill": "#287f8c",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 876,
+                "width": 1080,
+                "height": 560,
+                "d": "M0 14 Q14 2 28 14 T56 14 T84 14 T100 14",
+                "fill": "none",
+                "stroke": "#55aeb2",
+                "strokeWidth": 14
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 990,
+                "width": 1080,
+                "height": 440,
+                "d": "M0 18 Q14 5 28 18 T56 18 T84 18 T100 18",
+                "fill": "none",
+                "stroke": "#9bd6d2",
+                "strokeWidth": 7
+              }
+            ]
+          },
+          {
+            "id": "ocean",
+            "depth": 0.52,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 35,
+                "y": 900,
+                "width": 1010,
+                "height": 470,
+                "d": "M0 22 Q17 0 34 22 T68 22 T100 22",
+                "fill": "none",
+                "stroke": "#d7f3e9",
+                "strokeWidth": 8
+              }
+            ]
+          },
+          {
+            "id": "salt-ions",
+            "depth": 0.68,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 180,
+                "y": 1100,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 174,
+                "y": 1115,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 390,
+                "y": 1280,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 384,
+                "y": 1295,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 610,
+                "y": 1050,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 604,
+                "y": 1065,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 800,
+                "y": 1240,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 794,
+                "y": 1255,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 910,
+                "y": 1010,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 904,
+                "y": 1025,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "illustrationSource": "procedural",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready_for_review",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "salt-02-weathering",
+      "sceneNumber": 2,
+      "durationSec": 6.4,
+      "headline": "HUJAN MELAPUKKAN BATUAN",
+      "narrationText": "Air hujan meresap ke rekahan batuan di pegunungan. Pelapukan melepaskan ion mineral yang larut ke aliran air.",
+      "visualSummary": "Hujan jatuh ke pegunungan dan batuan berrekah; butiran mineral lepas lalu ikut limpasan air.",
+      "layout": "cross-section",
+      "compositionType": "cross-section",
+      "objects": [
+        {
+          "objectId": "rain",
+          "assetId": "rain",
+          "role": "Pelapukan alami",
+          "label": "HUJAN"
+        },
+        {
+          "objectId": "mountain",
+          "assetId": "mountain",
+          "role": "Bentang alam",
+          "label": "PEGUNUNGAN"
+        },
+        {
+          "objectId": "rock",
+          "assetId": "rock",
+          "role": "Lapisan kerak",
+          "label": "BATUAN"
+        },
+        {
+          "objectId": "mineral",
+          "assetId": "mineral",
+          "role": "Ion terlarut",
+          "label": "MINERAL"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "rain",
+          "relation": "erodes",
+          "to": "rock"
+        },
+        {
+          "from": "rain",
+          "relation": "falls-on",
+          "to": "mountain"
+        }
+      ],
+      "visualFocus": "rock",
+      "illustrationIntent": "Hujan jatuh ke batuan; rekahan dan limpasan memperlihatkan mineral terlepas lalu larut.",
+      "motionIntent": "path-animation",
+      "motionSummary": "Hujan, aliran air, atau uap bergerak di lintasan proses yang relevan.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "rain",
+            "depth": 0.08,
+            "nodes": [
+              {
+                "type": "icon",
+                "x": 145,
+                "y": 555,
+                "width": 245,
+                "height": 130,
+                "icon": "cloud",
+                "color": "#fffaf0"
+              },
+              {
+                "type": "path",
+                "x": 205,
+                "y": 660,
+                "width": 32,
+                "height": 230,
+                "motion": "fall",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#3c9db0",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 270,
+                "y": 684,
+                "width": 32,
+                "height": 230,
+                "motion": "fall",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#3c9db0",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 335,
+                "y": 660,
+                "width": 32,
+                "height": 230,
+                "motion": "fall",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#3c9db0",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 395,
+                "y": 684,
+                "width": 32,
+                "height": 230,
+                "motion": "fall",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#3c9db0",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 455,
+                "y": 660,
+                "width": 32,
+                "height": 230,
+                "motion": "fall",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#3c9db0",
+                "strokeWidth": 8
+              }
+            ]
+          },
+          {
+            "id": "mountain",
+            "depth": 0.25,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 0,
+                "y": 640,
+                "width": 720,
+                "height": 700,
+                "d": "M0 100 L20 54 L36 70 L55 8 L73 69 L88 35 L100 100 Z",
+                "fill": "#597f68",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 80,
+                "y": 775,
+                "width": 530,
+                "height": 415,
+                "d": "M0 100 L28 25 L45 57 L65 0 L100 100 Z",
+                "fill": "#8ebc91",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 1010,
+                "width": 1080,
+                "height": 430,
+                "d": "M0 25 Q18 5 35 30 T70 25 T100 34 V100 H0Z",
+                "fill": "#597f68",
+                "stroke": "none",
+                "strokeWidth": 0
+              }
+            ]
+          },
+          {
+            "id": "rock",
+            "depth": 0.58,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 365,
+                "y": 875,
+                "width": 370,
+                "height": 330,
+                "shape": "polygon",
+                "fill": "#866f62",
+                "stroke": "#bd9d76",
+                "strokeWidth": 12,
+                "points": [
+                  {
+                    "x": 0,
+                    "y": 0.95
+                  },
+                  {
+                    "x": 0.16,
+                    "y": 0.35
+                  },
+                  {
+                    "x": 0.38,
+                    "y": 0.22
+                  },
+                  {
+                    "x": 0.5,
+                    "y": 0
+                  },
+                  {
+                    "x": 0.72,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.96,
+                    "y": 0.44
+                  },
+                  {
+                    "x": 1,
+                    "y": 1
+                  }
+                ]
+              },
+              {
+                "type": "path",
+                "x": 450,
+                "y": 940,
+                "width": 210,
+                "height": 220,
+                "d": "M45 0 L54 35 L35 50 L48 72 L30 100 M55 36 L83 48 L68 70 L96 89",
+                "fill": "none",
+                "stroke": "#e5c59a",
+                "strokeWidth": 7
+              }
+            ]
+          },
+          {
+            "id": "mineral",
+            "depth": 0.72,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 690,
+                "y": 1110,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 684,
+                "y": 1125,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 610,
+                "y": 1170,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 604,
+                "y": 1185,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          },
+          {
+            "id": "runoff",
+            "depth": 0.9,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 110,
+                "y": 1170,
+                "width": 830,
+                "height": 250,
+                "motion": "draw",
+                "d": "M0 0 C20 10 18 35 40 42 S62 65 78 73 S90 93 100 100",
+                "fill": "none",
+                "stroke": "#287f8c",
+                "strokeWidth": 26
+              },
+              {
+                "type": "shape",
+                "x": 500,
+                "y": 1260,
+                "width": 24,
+                "height": 24,
+                "opacity": 0.94,
+                "shape": "ellipse",
+                "fill": "#f1b75d",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "shape",
+                "x": 568,
+                "y": 1284,
+                "width": 24,
+                "height": 24,
+                "opacity": 0.94,
+                "shape": "ellipse",
+                "fill": "#f1b75d",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "shape",
+                "x": 636,
+                "y": 1308,
+                "width": 24,
+                "height": 24,
+                "opacity": 0.94,
+                "shape": "ellipse",
+                "fill": "#f1b75d",
+                "stroke": "none",
+                "strokeWidth": 0
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "illustrationSource": "procedural",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready_for_review",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "salt-03-connected-river",
+      "sceneNumber": 3,
+      "durationSec": 6.4,
+      "headline": "SUNGAI MEMBAWA MINERAL KE LAUT",
+      "narrationText": "Sungai membawa ion natrium dan klorida dari batuan darat menuju laut. Jalurnya menghubungkan pegunungan dengan pesisir.",
+      "visualSummary": "Satu lanskap terhubung: pegunungan, sungai berkelok, partikel mineral di aliran, lalu muara yang menyatu dengan laut.",
+      "layout": "connected-environment",
+      "compositionType": "connected-environment",
+      "objects": [
+        {
+          "objectId": "mountain",
+          "assetId": "mountain",
+          "role": "Bentang alam",
+          "label": "PEGUNUNGAN"
+        },
+        {
+          "objectId": "river",
+          "assetId": "river",
+          "role": "Pengangkut mineral",
+          "label": "SUNGAI"
+        },
+        {
+          "objectId": "mineral",
+          "assetId": "mineral",
+          "role": "Ion terlarut",
+          "label": "MINERAL"
+        },
+        {
+          "objectId": "ocean",
+          "assetId": "ocean",
+          "role": "Tempat garam terkumpul",
+          "label": "LAUT"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "river",
+          "relation": "flows-to",
+          "to": "ocean"
+        },
+        {
+          "from": "river",
+          "relation": "carries",
+          "to": "mineral"
+        }
+      ],
+      "visualFocus": "river",
+      "illustrationIntent": "Satu bentang alam utuh: mineral lepas dari pegunungan, mengikuti sungai, lalu tiba di laut.",
+      "motionIntent": "particle-flow",
+      "motionSummary": "Partikel bergerak deterministik mengikuti arah lingkungan; lintasan terungkap bertahap.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "sky",
+            "depth": 0.06,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 820,
+                "y": 560,
+                "width": 145,
+                "height": 145,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "icon",
+                "x": 560,
+                "y": 560,
+                "width": 190,
+                "height": 105,
+                "icon": "cloud",
+                "color": "#fffaf0"
+              }
+            ]
+          },
+          {
+            "id": "mountain",
+            "depth": 0.24,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 0,
+                "y": 640,
+                "width": 720,
+                "height": 700,
+                "d": "M0 100 L20 54 L36 70 L55 8 L73 69 L88 35 L100 100 Z",
+                "fill": "#597f68",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 80,
+                "y": 775,
+                "width": 530,
+                "height": 415,
+                "d": "M0 100 L28 25 L45 57 L65 0 L100 100 Z",
+                "fill": "#8ebc91",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 200,
+                "y": 805,
+                "width": 110,
+                "height": 135,
+                "d": "M0 95 L50 0 L100 95 Z",
+                "fill": "#fffaf0",
+                "stroke": "none",
+                "strokeWidth": 0
+              }
+            ]
+          },
+          {
+            "id": "coast-and-ocean",
+            "depth": 0.38,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 0,
+                "y": 1080,
+                "width": 1080,
+                "height": 440,
+                "d": "M0 30 Q24 8 48 30 T100 30 V100 H0Z",
+                "fill": "#287f8c",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 1120,
+                "width": 1080,
+                "height": 380,
+                "d": "M0 22 Q15 5 30 22 T60 22 T90 22 T100 22",
+                "fill": "none",
+                "stroke": "#55aeb2",
+                "strokeWidth": 12
+              }
+            ]
+          },
+          {
+            "id": "river",
+            "depth": 0.64,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 0,
+                "y": 760,
+                "width": 845,
+                "height": 475,
+                "motion": "draw",
+                "d": "M12 0 C35 8 12 28 42 38 S25 60 57 70 S72 91 100 100",
+                "fill": "none",
+                "stroke": "#55aeb2",
+                "strokeWidth": 18
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 760,
+                "width": 845,
+                "height": 475,
+                "motion": "draw",
+                "d": "M12 0 C35 8 12 28 42 38 S25 60 57 70 S72 91 100 100",
+                "fill": "none",
+                "stroke": "#d8f4e9",
+                "strokeWidth": 3.5
+              }
+            ]
+          },
+          {
+            "id": "mineral",
+            "depth": 0.76,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 170,
+                "y": 850,
+                "width": 58,
+                "height": 58,
+                "motion": "flow",
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 164,
+                "y": 865,
+                "width": 70,
+                "height": 34,
+                "motion": "flow",
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 365,
+                "y": 955,
+                "width": 58,
+                "height": 58,
+                "motion": "flow",
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 359,
+                "y": 970,
+                "width": 70,
+                "height": 34,
+                "motion": "flow",
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 560,
+                "y": 1060,
+                "width": 58,
+                "height": 58,
+                "motion": "flow",
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 554,
+                "y": 1075,
+                "width": 70,
+                "height": 34,
+                "motion": "flow",
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          },
+          {
+            "id": "place-labels",
+            "depth": 0.9,
+            "nodes": [
+              {
+                "type": "text",
+                "x": 70,
+                "y": 715,
+                "width": 310,
+                "height": 42,
+                "text": "PEGUNUNGAN",
+                "color": "#173740",
+                "fontSize": 25,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "text",
+                "x": 790,
+                "y": 1280,
+                "width": 190,
+                "height": 42,
+                "text": "LAUT",
+                "color": "#173740",
+                "fontSize": 25,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "illustrationSource": "procedural",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready_for_review",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "salt-04-evaporation",
+      "sceneNumber": 4,
+      "durationSec": 6.4,
+      "headline": "AIR MENGUAP, GARAM TERTINGGAL",
+      "narrationText": "Matahari menguapkan molekul air dari permukaan laut. Ion garam tidak ikut menjadi uap, sehingga tetap terlarut di laut.",
+      "visualSummary": "Penampang laut memperlihatkan sinar Matahari, uap air yang naik, dan ion garam yang tetap berada di bawah permukaan.",
+      "layout": "cross-section",
+      "compositionType": "cross-section",
+      "objects": [
+        {
+          "objectId": "sun",
+          "assetId": "sun",
+          "role": "Sumber energi",
+          "label": "MATAHARI"
+        },
+        {
+          "objectId": "ocean",
+          "assetId": "ocean",
+          "role": "Tempat garam terkumpul",
+          "label": "LAUT"
+        },
+        {
+          "objectId": "evaporation",
+          "assetId": "evaporation",
+          "role": "Air naik sebagai uap",
+          "label": "PENGUAPAN"
+        },
+        {
+          "objectId": "salt-crystal",
+          "assetId": "salt-crystal",
+          "role": "Garam terlarut",
+          "label": "GARAM TERTINGGAL"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "evaporation",
+          "relation": "evaporates-from",
+          "to": "ocean"
+        },
+        {
+          "from": "ocean",
+          "relation": "contains",
+          "to": "salt-crystal"
+        }
+      ],
+      "visualFocus": "evaporation",
+      "illustrationIntent": "Penampang laut membedakan uap H₂O yang naik dari ion yang tetap berada di air.",
+      "motionIntent": "path-animation",
+      "motionSummary": "Hujan, aliran air, atau uap bergerak di lintasan proses yang relevan.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "sunlight",
+            "depth": 0.08,
+            "nodes": [
+              {
+                "type": "icon",
+                "x": 730,
+                "y": 530,
+                "width": 170,
+                "height": 170,
+                "icon": "sun",
+                "color": "#f5b95e"
+              },
+              {
+                "type": "path",
+                "x": 330,
+                "y": 730,
+                "width": 75,
+                "height": 360,
+                "motion": "draw",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#f6ca75",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 430,
+                "y": 730,
+                "width": 75,
+                "height": 360,
+                "motion": "draw",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#f6ca75",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 530,
+                "y": 730,
+                "width": 75,
+                "height": 360,
+                "motion": "draw",
+                "d": "M50 0 L50 100",
+                "fill": "none",
+                "stroke": "#f6ca75",
+                "strokeWidth": 7
+              }
+            ]
+          },
+          {
+            "id": "ocean",
+            "depth": 0.34,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 0,
+                "y": 920,
+                "width": 1080,
+                "height": 620,
+                "d": "M0 12 Q12 0 24 12 T48 12 T72 12 T100 12 V100 H0Z",
+                "fill": "#287f8c",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 976,
+                "width": 1080,
+                "height": 560,
+                "d": "M0 14 Q14 2 28 14 T56 14 T84 14 T100 14",
+                "fill": "none",
+                "stroke": "#55aeb2",
+                "strokeWidth": 14
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 1090,
+                "width": 1080,
+                "height": 440,
+                "d": "M0 18 Q14 5 28 18 T56 18 T84 18 T100 18",
+                "fill": "none",
+                "stroke": "#9bd6d2",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 900,
+                "width": 1080,
+                "height": 120,
+                "d": "M0 55 Q15 20 30 55 T60 55 T90 55 T100 55",
+                "fill": "none",
+                "stroke": "#dbf5e9",
+                "strokeWidth": 12
+              }
+            ]
+          },
+          {
+            "id": "salt-ions",
+            "depth": 0.62,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 180,
+                "y": 1120,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 174,
+                "y": 1135,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 385,
+                "y": 1290,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 379,
+                "y": 1305,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 610,
+                "y": 1125,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 604,
+                "y": 1140,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 820,
+                "y": 1290,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 814,
+                "y": 1305,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          },
+          {
+            "id": "water-vapor",
+            "depth": 0.88,
+            "nodes": [
+              {
+                "type": "icon",
+                "x": 315,
+                "y": 770,
+                "width": 62,
+                "height": 88,
+                "motion": "rise",
+                "icon": "water-drop",
+                "color": "#83c9d6"
+              },
+              {
+                "type": "icon",
+                "x": 465,
+                "y": 715,
+                "width": 56,
+                "height": 82,
+                "motion": "rise",
+                "icon": "water-drop",
+                "color": "#83c9d6"
+              },
+              {
+                "type": "icon",
+                "x": 605,
+                "y": 780,
+                "width": 50,
+                "height": 72,
+                "motion": "rise",
+                "icon": "water-drop",
+                "color": "#83c9d6"
+              },
+              {
+                "type": "text",
+                "x": 270,
+                "y": 640,
+                "width": 400,
+                "height": 42,
+                "text": "H₂O KE UDARA",
+                "color": "#173740",
+                "fontSize": 23,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "text",
+                "x": 285,
+                "y": 1390,
+                "width": 510,
+                "height": 38,
+                "text": "ION TETAP TERLARUT",
+                "color": "#173740",
+                "fontSize": 22,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "illustrationSource": "procedural",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready_for_review",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "salt-05-conclusion",
+      "sceneNumber": 5,
+      "durationSec": 6.4,
+      "headline": "ION TERLARUT MEMBUAT LAUT ASIN",
+      "narrationText": "Natrium dan klorida terlarut membuat air laut asin. Rata-rata, satu kilogram air laut mengandung sekitar 35 gram garam. Penguapan saja bukan penjelasan kenaikan tanpa batas; garam juga berpindah dan tersimpan lewat proses geologi.",
+      "visualSummary": "Laut dengan ion mineral yang tersebar dan ukuran rata-rata sekitar 35 gram garam per kilogram air laut; tidak ada grafik salinitas yang terus naik.",
+      "layout": "scientific-diagram",
+      "compositionType": "scientific-diagram",
+      "objects": [
+        {
+          "objectId": "ocean",
+          "assetId": "ocean",
+          "role": "Tempat garam terkumpul",
+          "label": "LAUT"
+        },
+        {
+          "objectId": "salt-crystal",
+          "assetId": "salt-crystal",
+          "role": "Garam terlarut",
+          "label": "GARAM TERTINGGAL"
+        },
+        {
+          "objectId": "mineral",
+          "assetId": "mineral",
+          "role": "Ion terlarut",
+          "label": "MINERAL"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "ocean",
+          "relation": "contains",
+          "to": "salt-crystal"
+        }
+      ],
+      "visualFocus": "salt-crystal",
+      "illustrationIntent": "Ion Na⁺ dan Cl⁻ tetap tersebar dalam laut; angka salinitas rata-rata ditampilkan tanpa grafik kenaikan tak terbatas.",
+      "motionIntent": "particle-flow",
+      "motionSummary": "Partikel bergerak deterministik mengikuti arah lingkungan; lintasan terungkap bertahap.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "ocean-horizon",
+            "depth": 0.18,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 740,
+                "y": 560,
+                "width": 190,
+                "height": 190,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 730,
+                "width": 1080,
+                "height": 380,
+                "d": "M0 60 Q18 25 36 60 T72 60 T100 60",
+                "fill": "none",
+                "stroke": "#287f8c",
+                "strokeWidth": 12
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 820,
+                "width": 1080,
+                "height": 620,
+                "d": "M0 12 Q12 0 24 12 T48 12 T72 12 T100 12 V100 H0Z",
+                "fill": "#287f8c",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 876,
+                "width": 1080,
+                "height": 560,
+                "d": "M0 14 Q14 2 28 14 T56 14 T84 14 T100 14",
+                "fill": "none",
+                "stroke": "#55aeb2",
+                "strokeWidth": 14
+              },
+              {
+                "type": "path",
+                "x": 0,
+                "y": 990,
+                "width": 1080,
+                "height": 440,
+                "d": "M0 18 Q14 5 28 18 T56 18 T84 18 T100 18",
+                "fill": "none",
+                "stroke": "#9bd6d2",
+                "strokeWidth": 7
+              }
+            ]
+          },
+          {
+            "id": "ocean",
+            "depth": 0.52,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 35,
+                "y": 900,
+                "width": 1010,
+                "height": 470,
+                "d": "M0 22 Q17 0 34 22 T68 22 T100 22",
+                "fill": "none",
+                "stroke": "#d7f3e9",
+                "strokeWidth": 8
+              }
+            ]
+          },
+          {
+            "id": "salt-ions",
+            "depth": 0.68,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 160,
+                "y": 1020,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 154,
+                "y": 1035,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 360,
+                "y": 1190,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 354,
+                "y": 1205,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 580,
+                "y": 970,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 574,
+                "y": 985,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 790,
+                "y": 1190,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#ed826d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 784,
+                "y": 1205,
+                "width": 70,
+                "height": 34,
+                "text": "Cl⁻",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "shape",
+                "x": 890,
+                "y": 1010,
+                "width": 58,
+                "height": 58,
+                "shape": "circle",
+                "fill": "#f1b75d",
+                "stroke": "#fffaf0",
+                "strokeWidth": 4
+              },
+              {
+                "type": "text",
+                "x": 884,
+                "y": 1025,
+                "width": 70,
+                "height": 34,
+                "text": "Na⁺",
+                "color": "#173740",
+                "fontSize": 18,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          },
+          {
+            "id": "salinity-measure",
+            "depth": 0.82,
+            "nodes": [
+              {
+                "type": "text",
+                "x": 220,
+                "y": 1330,
+                "width": 640,
+                "height": 48,
+                "text": "≈ 35 g GARAM / kg AIR LAUT",
+                "color": "#173740",
+                "fontSize": 27,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "path",
+                "x": 210,
+                "y": 1290,
+                "width": 660,
+                "height": 26,
+                "d": "M0 50 H100",
+                "fill": "none",
+                "stroke": "#f5b95e",
+                "strokeWidth": 5
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "illustrationSource": "procedural",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready_for_review",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    }
+  ]
+}

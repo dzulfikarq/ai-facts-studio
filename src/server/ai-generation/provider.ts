@@ -31,7 +31,7 @@ export const DEFAULT_TEXT_MODEL = "gemini-3.5-flash-lite";
 export const FREE_TIER_TEXT_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"] as const;
 export type AiGenerationMode = "development" | "production";
 export type AiGenerationTask = "research" | "storyboard" | "visual-director";
-export type AiGenerationOutputFormat = "text" | "research-package-v1.1-json" | "ai-research-storyboard-v1" | "visual-semantic-plan-v1";
+export type AiGenerationOutputFormat = "text" | "research-package-v1.1-json" | "ai-research-storyboard-v1" | "visual-semantic-plan-v1" | "ai-vector-illustration-v1";
 
 export type AiGenerationRequest = {
   task: AiGenerationTask;
@@ -56,6 +56,16 @@ export interface AiGenerationProvider {
   readonly displayName: string;
   readonly model: string;
   generate(request: AiGenerationRequest): Promise<AiGenerationResult>;
+}
+
+export interface AiImageProvider {
+  readonly id: string;
+  readonly displayName: string;
+  generate(request: { model: string; prompt: string; resolution: string; userConfirmed: true; costAcknowledged: true; signal?: AbortSignal }): Promise<{
+    bytes: Uint8Array;
+    mimeType: "image/png" | "image/jpeg" | "image/webp";
+    usageMetadata?: Record<string, string>;
+  }>;
 }
 
 type SettingsDatabase = Pick<DatabaseSync, "prepare">;

@@ -1,0 +1,203 @@
+{
+  "topic": "Kenapa Air Laut Asin?",
+  "rendererVersion": 3,
+  "motionTiming": "approximate; no word-level audio alignment available",
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "headline": "LAUT BIRU, PENUH ION TERLARUT",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Fokus objek: ocean-horizon/0",
+      "motionActions": [
+        {
+          "id": "visual-focus",
+          "kind": "focus-shift",
+          "targetNode": "ocean-horizon/0",
+          "startFrame": 30,
+          "durationFrames": 131,
+          "easing": "easeInOut",
+          "keyframes": [
+            {
+              "at": 0,
+              "scale": 1
+            },
+            {
+              "at": 1,
+              "scale": 1.034999465942383
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sceneNumber": 2,
+      "headline": "HUJAN MELAPUKKAN BATUAN",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Aliran partikel: rain fall · Lintasan digambar: rain path",
+      "motionActions": [
+        {
+          "id": "rain-fall",
+          "kind": "particle-flow",
+          "targetNode": "rain/0",
+          "startFrame": 11,
+          "durationFrames": 119,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 268,
+              "y": 620
+            },
+            {
+              "x": 314,
+              "y": 805
+            },
+            {
+              "x": 360,
+              "y": 990
+            }
+          ],
+          "particleCount": 3
+        },
+        {
+          "id": "rain-path",
+          "kind": "draw",
+          "targetNode": "rain/1",
+          "startFrame": 15,
+          "durationFrames": 123,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "sceneNumber": 3,
+      "headline": "SUNGAI MEMBAWA MINERAL KE LAUT",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Aliran partikel: river mineral flow · Lintasan digambar: river path draw",
+      "motionActions": [
+        {
+          "id": "river-mineral-flow",
+          "kind": "particle-flow",
+          "targetNode": "river/0",
+          "startFrame": 42,
+          "durationFrames": 131,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 101.39999999999999,
+              "y": 760
+            },
+            {
+              "x": 201.58319999999995,
+              "y": 826.272
+            },
+            {
+              "x": 249.84960000000004,
+              "y": 907.136
+            },
+            {
+              "x": 286.96200000000005,
+              "y": 991.8760000000001
+            },
+            {
+              "x": 350.8440000000001,
+              "y": 1068.484
+            },
+            {
+              "x": 545.3968000000002,
+              "y": 1141.52
+            },
+            {
+              "x": 651.3936000000001,
+              "y": 1195.1
+            },
+            {
+              "x": 845,
+              "y": 1235
+            }
+          ],
+          "particleCount": 4
+        },
+        {
+          "id": "river-path-draw",
+          "kind": "draw",
+          "targetNode": "river/0",
+          "startFrame": 28,
+          "durationFrames": 134,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "sceneNumber": 4,
+      "headline": "AIR MENGUAP, GARAM TERTINGGAL",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Aliran partikel: water vapor rise",
+      "motionActions": [
+        {
+          "id": "water-vapor-rise",
+          "kind": "particle-flow",
+          "targetNode": "water-vapor/0",
+          "startFrame": 38,
+          "durationFrames": 115,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 540,
+              "y": 1150
+            },
+            {
+              "x": 443,
+              "y": 982
+            },
+            {
+              "x": 346,
+              "y": 814
+            }
+          ],
+          "particleCount": 3
+        }
+      ]
+    },
+    {
+      "sceneNumber": 5,
+      "headline": "ION TERLARUT MEMBUAT LAUT ASIN",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Fokus objek: salt-ions/0",
+      "motionActions": [
+        {
+          "id": "visual-focus",
+          "kind": "focus-shift",
+          "targetNode": "salt-ions/0",
+          "startFrame": 30,
+          "durationFrames": 131,
+          "easing": "easeInOut",
+          "keyframes": [
+            {
+              "at": 0,
+              "scale": 1
+            },
+            {
+              "at": 1,
+              "scale": 1.034999465942383
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

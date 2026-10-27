@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { parseResearchPackage } from "../src/domain/research";
+import { RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const outputDir = process.env.SAMPLE_RENDER_OUTPUT_DIR
@@ -35,7 +36,7 @@ try {
     const manifest = JSON.parse(await readFile(path.join(outputDir, `${titleSlug}.manifest.json`), "utf8")) as {
       rendererVersion: number; videoCodec: string; audioCodec: string | null; audioValidation: string; audioMeanVolumeDb: number | null; audioMaxVolumeDb: number | null; width: number; height: number; durationSec: number; bytes: number; sha256: string;
     };
-    assert.equal(manifest.rendererVersion, 2);
+    assert.equal(manifest.rendererVersion, RENDERER_VERSION);
     assert.equal(manifest.videoCodec, "h264");
     assert.equal(manifest.audioCodec, "aac");
     assert.equal(manifest.audioValidation, "silent-expected", `${name} remains an explicitly silent sample render`);

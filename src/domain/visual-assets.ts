@@ -1,18 +1,29 @@
 import { z } from "zod";
 
-const assetFileSchema = z.string().regex(/^[a-f0-9]{64}\.(png|jpg|webp)$/);
+const assetFileSchema = z.string().regex(/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/);
 
 export const visualAssetSchema = z.object({
-  id: z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp)$/),
+  id: z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp|svg)$/),
   name: z.string().trim().min(1).max(120),
-  visualCategory: z.literal("user-illustration"),
+  visualCategory: z.enum(["user-illustration", "openverse-illustration", "tabler-icon"]).default("user-illustration"),
+  assetType: z.enum(["illustration", "icon-object"]).default("illustration"),
   semanticTags: z.array(z.string().trim().min(1).max(60)).max(20),
   supportedConcepts: z.array(z.string().trim().min(1).max(80)).max(12),
   role: z.string().trim().min(1).max(120),
-  format: z.enum(["png", "jpeg", "webp"]),
+  format: z.enum(["png", "jpeg", "webp", "svg"]),
   aspectRatio: z.number().positive().max(100),
-  source: z.literal("user-upload"),
-  license: z.string().trim().min(1).max(160),
+  source: z.enum(["user-upload", "ai-generated", "openverse", "tabler-pack"]),
+  provider: z.string().trim().min(1).max(120).optional(),
+  creator: z.string().trim().min(1).max(300).optional(),
+  attribution: z.string().trim().min(1).max(1000).optional(),
+  sourceUrl: z.string().url().max(2000).optional(),
+  licenseUrl: z.string().url().max(2000).optional(),
+  license: z.string().trim().min(1).max(300),
+  style: z.string().trim().min(1).max(120).default("clean-flat-2d"),
+  prompt: z.string().trim().min(1).max(12000).optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  usageMetadata: z.string().trim().min(1).max(1000).optional(),
+  createdAt: z.string().datetime().default(() => new Date().toISOString()),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   bytes: z.number().int().positive().max(10 * 1024 * 1024),
   width: z.number().int().min(1).max(8192),
@@ -22,9 +33,25 @@ export const visualAssetSchema = z.object({
   if (asset.id !== `upload-${asset.file}` || asset.sha256 !== asset.file.slice(0, 64)) ctx.addIssue({ code: "custom", message: "ID aset harus cocok dengan hash file.", path: ["id"] });
   if (asset.aspectRatio !== asset.width / asset.height) ctx.addIssue({ code: "custom", message: "Rasio aset tidak cocok dengan dimensinya.", path: ["aspectRatio"] });
   if ((asset.format === "jpeg" ? "jpg" : asset.format) !== asset.file.split(".").at(-1)) ctx.addIssue({ code: "custom", message: "Format aset tidak cocok dengan file.", path: ["format"] });
+  if (asset.source === "ai-generated" && !asset.prompt) ctx.addIssue({ code: "custom", message: "Aset AI-generated harus menyimpan prompt asal.", path: ["prompt"] });
 });
 
 export type VisualAsset = z.infer<typeof visualAssetSchema>;
+export type VisualLibraryEntry = (VisualAsset & { projectIds: string[]; previewUrl: string; localAvailable: boolean; referenceCount: number }) | {
+  id: "sun" | "cloud" | "lightning";
+  name: string;
+  source: "built-in";
+  format: "svg";
+  width: number;
+  height: number;
+  style: string;
+  license: string;
+  semanticTags: string[];
+  projectIds: [];
+  previewUrl: string;
+  localAvailable: boolean;
+  referenceCount: number;
+};
 
 // ponytail: header-only signature/dimension validation; use a sandboxed decoder if uploads expand beyond this local review workflow.
 export function inspectRasterImage(buffer: Buffer) {

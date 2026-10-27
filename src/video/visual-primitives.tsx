@@ -5,6 +5,8 @@ import type { Scene, VisualPreset } from "../domain/research";
 import { layerMotion } from "./motion";
 import { resolveVisualColor, type VisualStyle } from "./style-config";
 import { visualBackdropLayerOffset, visualCompositionCamera, visualCompositionFrame } from "../domain/visual-geometry";
+import { motionActionProgress, type MotionAction } from "../domain/motion-director";
+import { nodeMotion, pointAlongPolyline } from "./motion";
 
 const assetFiles = { cloud: "cloud.svg", lightning: "lightning.svg", sun: "sun.svg" } as const;
 const safeId = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "-");
@@ -119,23 +121,32 @@ function Diagram({ kind, labels, color, accent }: { kind: string; labels: string
   </>;
 }
 
-function LeafNode({ node, style, frame, progress }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number }) {
+function LeafNode({ node, style, frame, progress, id, actions = [] }: { node: Exclude<VisualNode, { type: "group" }>; style: VisualStyle; frame: number; progress: number; id: string; actions?: MotionAction[] }) {
   const color = "color" in node ? resolveVisualColor(node.color, style) : resolveVisualColor("text", style);
-  const fill = "fill" in node ? resolveVisualColor(node.fill, style, "none") : "none";
+  const rawFill = "fill" in node ? node.fill : undefined;
+  const gradient = rawFill && typeof rawFill === "object" ? rawFill : null;
+  const gradientId = `paint-${safeId(id)}`;
+  const fill = gradient ? `url(#${gradientId})` : resolveVisualColor(typeof rawFill === "string" ? rawFill : undefined, style, "none");
   const stroke = "stroke" in node ? resolveVisualColor(node.stroke, style, "none") : "none";
+  const fillDefinition = gradient ? <defs><linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox" gradientTransform={`rotate(${gradient.angle} .5 .5)`}>
+    {gradient.stops.map((stop, index) => <stop key={index} offset={stop.offset} stopColor={resolveVisualColor(stop.color, style)} stopOpacity={stop.opacity ?? 1}/>)}</linearGradient></defs> : null;
+  const semanticMotion = nodeMotion(actions, id, node, frame);
   const motionOffset = node.motion === "fall" ? { x: 0, y: progress * 220 }
     : node.motion === "rise" ? { x: 0, y: -progress * 180 }
       : node.motion === "flow" ? { x: progress * 96, y: progress * 56 }
         : node.motion === "drift" ? { x: Math.sin(frame / 22) * 9, y: Math.cos(frame / 26) * 7 } : { x: 0, y: 0 };
-  const transform = `translate(${node.x + motionOffset.x} ${node.y + motionOffset.y}) rotate(${node.rotation ?? 0} ${node.width/2} ${node.height/2})`;
-  const wrapperProps = { transform, opacity: node.opacity ?? 1 };
+  const transform = `translate(${node.x + motionOffset.x + semanticMotion.translateX} ${node.y + motionOffset.y + semanticMotion.translateY}) rotate(${(node.rotation ?? 0) + semanticMotion.rotation} ${node.width/2} ${node.height/2}) translate(${node.width/2} ${node.height/2}) scale(${semanticMotion.scale}) translate(${-node.width/2} ${-node.height/2})`;
+  const wrapperProps = { transform, opacity: (node.opacity ?? 1) * semanticMotion.opacity };
   switch (node.type) {
     case "shape":
-      if (node.shape === "ellipse" || node.shape === "circle") return <g {...wrapperProps}><ellipse cx={node.width/2} cy={node.height/2} rx={node.width/2} ry={node.shape === "circle" ? Math.min(node.width,node.height)/2 : node.height/2} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
-      if (node.shape === "line") return <g {...wrapperProps}><line x1="0" y1={node.height/2} x2={node.width} y2={node.height/2} stroke={stroke === "none" ? fill : stroke} strokeWidth={node.strokeWidth ?? 4}/></g>;
-      if (node.shape === "polygon") return <g {...wrapperProps}><polygon points={node.points!.map(point=>`${point.x*node.width},${point.y*node.height}`).join(" ")} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
-      return <g {...wrapperProps}><rect width={node.width} height={node.height} rx={node.radius ?? 0} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
-    case "path": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={node.d} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth} fillRule={node.fillRule} pathLength={node.motion === "draw" ? 1 : undefined} strokeDasharray={node.motion === "draw" ? 1 : undefined} strokeDashoffset={node.motion === "draw" ? 1 - progress : undefined}/></svg></g>;
+      if (node.shape === "ellipse" || node.shape === "circle") return <g {...wrapperProps}>{fillDefinition}<ellipse cx={node.width/2} cy={node.height/2} rx={node.width/2} ry={node.shape === "circle" ? Math.min(node.width,node.height)/2 : node.height/2} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
+      if (node.shape === "line") return <g {...wrapperProps}>{fillDefinition}<line x1="0" y1={node.height/2} x2={node.width} y2={node.height/2} stroke={stroke === "none" ? fill : stroke} strokeWidth={node.strokeWidth ?? 4}/></g>;
+      if (node.shape === "polygon") return <g {...wrapperProps}>{fillDefinition}<polygon points={node.points!.map(point=>`${point.x*node.width},${point.y*node.height}`).join(" ")} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
+      return <g {...wrapperProps}>{fillDefinition}<rect width={node.width} height={node.height} rx={node.radius ?? 0} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth}/></g>;
+    case "path": {
+      const drawProgress = semanticMotion.drawProgress ?? (node.motion === "draw" ? progress : undefined);
+      return <g {...wrapperProps}>{fillDefinition}<svg width={node.width} height={node.height} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={node.d} fill={fill} stroke={stroke} strokeWidth={node.strokeWidth} fillRule={node.fillRule} pathLength={drawProgress !== undefined ? 1 : undefined} strokeDasharray={drawProgress !== undefined ? 1 : undefined} strokeDashoffset={drawProgress !== undefined ? 1 - drawProgress : undefined}/></svg></g>;
+    }
     case "text": {
       const lines = textLines(node.text, node.width, node.height, node.fontSize);
       const anchor = node.align === "start" ? "start" : node.align === "end" ? "end" : "middle";
@@ -145,7 +156,13 @@ function LeafNode({ node, style, frame, progress }: { node: Exclude<VisualNode, 
     case "icon": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100"><IconShape icon={node.icon} color={color}/></svg></g>;
     case "image": {
       const file = node.asset.startsWith("upload-") ? `visual-assets/${node.asset.slice(7)}` : `assets/${assetFiles[node.asset as keyof typeof assetFiles]}`;
-      return <g {...wrapperProps}><image href={staticFile(file)} width={node.width} height={node.height} preserveAspectRatio="xMidYMid meet"/></g>;
+      const position = node.position ?? "center";
+      const vertical = position.split("-").find((part) => part === "top" || part === "bottom") ?? "mid";
+      const horizontal = position.split("-").find((part) => part === "left" || part === "right") ?? "mid";
+      const align = (value: string | undefined) => value === "left" ? "xMin" : value === "right" ? "xMax" : "xMid";
+      const verticalAlign = vertical === "top" ? "YMin" : vertical === "bottom" ? "YMax" : "YMid";
+      const preserveAspectRatio = `${align(horizontal)}${verticalAlign} ${node.fit === "cover" ? "slice" : "meet"}`;
+      return <g {...wrapperProps}><image href={staticFile(file)} width={node.width} height={node.height} preserveAspectRatio={preserveAspectRatio}/></g>;
     }
     case "diagram": return <g {...wrapperProps}><svg width={node.width} height={node.height} viewBox="0 0 100 100"><Diagram kind={node.kind} labels={node.labels} color={color} accent={resolveVisualColor(node.accent, style, resolveVisualColor("accent", style))}/></svg></g>;
   }
@@ -170,16 +187,31 @@ export function VisualCompositionView({ scene, composition, style, preset, frame
     }
     const clipId = `reveal-${safeId(scene.id)}-${safeId(layer.id)}`;
     const transform = `translate(${motion.translateX} ${motion.translateY}) translate(540 960) scale(${motion.scale}) translate(-540 -960)`;
-    const nodes = [...layer.nodes].sort((a,b)=>(a.zIndex??0)-(b.zIndex??0));
+    const nodes = layer.nodes.map((node, index) => ({ node, index })).sort((a,b)=>(a.node.zIndex??0)-(b.node.zIndex??0));
+    const actions = scene.motionActions ?? [];
+    const semanticActions = actions.filter((action) => action.targetNode.split("/")[0] === layer.id);
+    const particles = semanticActions.flatMap((action) => {
+      const count = action.particleCount ?? 0;
+      if (action.kind !== "particle-flow" || !action.path || !count) return [];
+      const actionProgress = motionActionProgress(action, frame);
+      if (actionProgress === null) return [];
+      return Array.from({ length: count }, (_, index) => {
+        const phase = (actionProgress - index / count + 1) % 1;
+        return { action, index, ...pointAlongPolyline(action.path!, phase) };
+      });
+    });
     const depthShadow = layer.depth > 0.25 ? `drop-shadow(0 ${Math.round(4 + layer.depth * 8)}px ${Math.round(4 + layer.depth * 6)}px rgba(4, 22, 31, 0.2))` : undefined;
     return <g key={layer.id} opacity={motion.opacity} transform={transform} style={depthShadow ? { filter: depthShadow } : undefined}>
       {motion.reveal < 1 && <defs><clipPath id={clipId}><rect x="0" y="0" width={1080*motion.reveal} height="1920"/></clipPath></defs>}
       <g clipPath={motion.reveal < 1 ? `url(#${clipId})` : undefined}>
-        {nodes.map((node,index)=>{
-          if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} node={node} style={style} frame={frame} progress={progress}/>;
-          const groupTransform = `translate(${node.x} ${node.y}) rotate(${node.rotation??0} ${node.width/2} ${node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
-          return <g key={`group-${index}`} transform={groupTransform} opacity={node.opacity??1}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} node={child} style={style} frame={frame} progress={progress}/>)}</g>;
+        {nodes.map(({ node, index })=>{
+           if (node.type !== "group") return <LeafNode key={`${node.type}-${index}`} id={`${layer.id}/${index}`} node={node} style={style} frame={frame} progress={progress} actions={actions}/>;
+           const groupRef = `${layer.id}/${index}`;
+           const groupMotion = nodeMotion(actions, groupRef, node, frame);
+           const groupTransform = `translate(${node.x + groupMotion.translateX} ${node.y + groupMotion.translateY}) rotate(${(node.rotation??0) + groupMotion.rotation} ${node.width/2} ${node.height/2}) translate(${node.width/2} ${node.height/2}) scale(${groupMotion.scale}) translate(${-node.width/2} ${-node.height/2}) scale(${node.width/1080} ${node.height/1920})`;
+           return <g key={`group-${index}`} transform={groupTransform} opacity={(node.opacity??1) * groupMotion.opacity}>{node.children.map((child,childIndex)=><LeafNode key={`${child.type}-${childIndex}`} id={`${layer.id}/${index}.${childIndex}`} node={child} style={style} frame={frame} progress={progress} actions={actions}/>)}</g>;
         })}
+        {particles.map((particle) => <circle key={`${particle.action.id}-${particle.index}`} cx={particle.x} cy={particle.y} r={particle.action.id.includes("uv") ? 6 : 8} fill={resolveVisualColor("accent", style)} opacity=".92" pointerEvents="none"/>)}
       </g>
     </g>;
   };

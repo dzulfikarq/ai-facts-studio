@@ -6,7 +6,7 @@ import type { VisualSemanticPlan } from "./visual-semantic-plan";
 export const visualRelationshipKinds = ["flows-to", "carries", "erodes", "evaporates-from", "contains", "filters", "deflects", "illuminates", "falls-on"] as const;
 export type VisualRelationshipKind = typeof visualRelationshipKinds[number];
 export type VisualRelationship = { from: VisualObjectId; relation: VisualRelationshipKind; to: VisualObjectId };
-export type CompositionSource = "existing" | "library" | "procedural" | "manual";
+export type CompositionSource = "existing" | "library" | "procedural" | "manual" | "ai-vector";
 export type VisualAuthoringStatus = "ready_for_review" | "needs_review" | "needs_visual_authoring";
 export type VisualPlan = { objects: VisualObjectId[]; relationships: VisualRelationship[]; source?: CompositionSource; status?: VisualAuthoringStatus; authoringConfirmed?: boolean; approved?: boolean };
 
@@ -119,24 +119,25 @@ export function composeVisualScene(input: ComposerInput): ComposedVisual {
   const shared = [...new Set(input.sharedWorldObjects)];
   const existingPlan = input.existingVisualPlan;
   const isManual = existingPlan?.source === "manual" || existingPlan?.authoringConfirmed === true;
+  const isSelectedRaster = existingPlan?.source === "library" && Boolean(input.existingComposition?.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
   const existingRelationships = input.semanticPlan?.relationships ?? deriveVisualRelationships(copy, detected);
   const relevantExisting = Boolean(input.existingComposition && !hasGenericIconCards(input.existingComposition) && detected.length > 0
     && detected.every((id) => compositionShowsObject(input.existingComposition!, id, input.assetLibrary))
     && existingRelationships.every((relationship) => visualRelationshipIsVisible(relationship, input.existingComposition!)));
-  const canReuse = Boolean(input.existingComposition && input.preserveExisting && (isManual || existingPlan?.approved || relevantExisting));
+  const canReuse = Boolean(input.existingComposition && input.preserveExisting && (isManual || isSelectedRaster || existingPlan?.approved || existingPlan?.source === "ai-vector" || relevantExisting));
   if (canReuse && input.existingComposition) {
     const staleCopy = Boolean(existingPlan?.approved && !isManual);
     return {
       composition: input.existingComposition,
       compositionType: undefined,
       compositionSource: isManual ? "manual" : existingPlan?.source ?? "existing",
-      status: staleCopy || (isManual && existingPlan?.status !== "ready_for_review") ? "needs_review" : existingPlan?.status ?? "ready_for_review",
+      status: staleCopy || ((isManual || isSelectedRaster) && existingPlan?.status !== "ready_for_review") ? "needs_review" : existingPlan?.status ?? "ready_for_review",
       objects: existingPlan?.objects ?? detected,
       focus: input.semanticPlan?.visualFocus ?? input.sceneVisualFocus ?? existingPlan?.objects[0] ?? detected[0] ?? null,
       relationships: input.semanticPlan?.relationships ?? existingPlan?.relationships ?? deriveVisualRelationships(copy, [...new Set([...detected, ...shared])]),
       illustrationIntent: input.illustrationIntent || "Pertahankan komposisi scene yang sudah dibuat; periksa kembali hubungan visual setelah perubahan narasi.",
       missingVisuals: [],
-      warnings: staleCopy || isManual ? ["Komposisi sebelumnya dipertahankan; periksa kecocokannya dengan narasi terbaru sebelum approval."] : [],
+      warnings: staleCopy || isManual || isSelectedRaster ? ["Komposisi sebelumnya dipertahankan; periksa kecocokannya dengan narasi terbaru sebelum approval."] : [],
     };
   }
 

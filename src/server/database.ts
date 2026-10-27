@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { parseResearchPackage } from "../domain/research";
-import { buildVisualStoryboard, visualApprovalFingerprint, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { buildVisualStoryboard, legacyMotionApprovalFingerprint, visualApprovalFingerprint, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { aiGenerationSchema } from "./ai-generation/provider";
 import { visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
 
@@ -42,6 +42,72 @@ db.exec(`
     UNIQUE(project_id, source_sha256)
   );
   CREATE INDEX IF NOT EXISTS jobs_created_at_idx ON jobs(created_at);
+  CREATE TABLE IF NOT EXISTS visual_asset_catalog (
+    asset_id TEXT PRIMARY KEY,
+    metadata_json TEXT NOT NULL,
+    asset_type TEXT NOT NULL,
+    category TEXT NOT NULL,
+    source TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    style TEXT NOT NULL,
+    format TEXT NOT NULL,
+    license TEXT NOT NULL,
+    available_local INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS visual_asset_catalog_filters_idx ON visual_asset_catalog(category, asset_type, style, provider, license, created_at);
+  CREATE VIRTUAL TABLE IF NOT EXISTS visual_asset_catalog_fts USING fts5(asset_id UNINDEXED, name, tags, concepts, creator, tokenize='unicode61 remove_diacritics 2');
+  CREATE TABLE IF NOT EXISTS asset_pack_icons (
+    pack TEXT NOT NULL,
+    icon_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    package_version TEXT NOT NULL,
+    PRIMARY KEY(pack, icon_id)
+  );
+  CREATE INDEX IF NOT EXISTS asset_pack_icons_category_idx ON asset_pack_icons(pack, category, icon_id);
+  CREATE VIRTUAL TABLE IF NOT EXISTS asset_pack_icons_fts USING fts5(icon_id UNINDEXED, category, tags, tokenize='unicode61 remove_diacritics 2');
+  CREATE TABLE IF NOT EXISTS reusable_scene_compositions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    style_id TEXT NOT NULL,
+    layout TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    concepts_json TEXT NOT NULL,
+    composition_json TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    thumbnail_data_url TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS reusable_scene_filters_idx ON reusable_scene_compositions(style_id, layout, updated_at);
+  CREATE VIRTUAL TABLE IF NOT EXISTS reusable_scene_compositions_fts USING fts5(id UNINDEXED, name, tags, concepts, tokenize='unicode61 remove_diacritics 2');
+  CREATE TABLE IF NOT EXISTS visual_preparation_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, request_id)
+  );
+  CREATE INDEX IF NOT EXISTS visual_preparation_jobs_project_idx ON visual_preparation_jobs(project_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS motion_preparation_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, request_id)
+  );
+  CREATE INDEX IF NOT EXISTS motion_preparation_jobs_project_idx ON motion_preparation_jobs(project_id, created_at DESC);
   CREATE TABLE IF NOT EXISTS render_attempts (
     id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL REFERENCES jobs(id),
@@ -116,6 +182,9 @@ if (cleanupTable?.sql && !cleanupTable.sql.includes("'visual-assets'")) {
 db.exec("INSERT OR IGNORE INTO video_job_requests (id, created_at) SELECT id, created_at FROM jobs");
 db.exec(aiGenerationSchema);
 
+const visualCatalogColumns = db.prepare("PRAGMA table_info(visual_asset_catalog)").all() as Array<{ name: string }>;
+if (!visualCatalogColumns.some((column) => column.name === "available_local")) db.exec("ALTER TABLE visual_asset_catalog ADD COLUMN available_local INTEGER NOT NULL DEFAULT 1");
+
 const aiGenerationColumns = db.prepare("PRAGMA table_info(ai_generation_attempts)").all() as Array<{ name: string }>;
 if (!aiGenerationColumns.some((column) => column.name === "input_tokens")) db.exec("ALTER TABLE ai_generation_attempts ADD COLUMN input_tokens INTEGER");
 if (!aiGenerationColumns.some((column) => column.name === "output_tokens")) db.exec("ALTER TABLE ai_generation_attempts ADD COLUMN output_tokens INTEGER");
@@ -124,6 +193,9 @@ db.exec("CREATE INDEX IF NOT EXISTS ai_generation_attempts_provider_model_reques
 
 const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
 if (!jobColumns.some((column) => column.name === "renderer_version")) db.exec("ALTER TABLE jobs ADD COLUMN renderer_version INTEGER NOT NULL DEFAULT 1");
+
+const preparationColumns = db.prepare("PRAGMA table_info(visual_preparation_jobs)").all() as Array<{ name: string }>;
+if (!preparationColumns.some((column) => column.name === "request_sha256")) db.exec("ALTER TABLE visual_preparation_jobs ADD COLUMN request_sha256 TEXT NOT NULL DEFAULT ''");
 
 const ttsColumns = db.prepare("PRAGMA table_info(tts_assets)").all() as Array<{ name: string }>;
 if (!ttsColumns.some((column) => column.name === "model")) db.exec("ALTER TABLE tts_assets ADD COLUMN model TEXT NOT NULL DEFAULT 'legacy'");
@@ -192,10 +264,10 @@ export function projectFromRow(row: { id: string; data_json: string; created_at:
     ...(project.visualStoryboard as unknown as Record<string, unknown>),
     scenes: rawStoryboard.scenes.map((scene) => {
       if (scene.authoringStatus !== "ready") return scene;
-      const migrated = { ...scene, authoringStatus: "ready_for_review" };
+      const migrated = { ...scene, authoringStatus: "ready_for_review", motionIntensity: scene.motionIntensity ?? "balanced", motionTiming: scene.motionTiming ?? "approximate", motionStatus: scene.motionStatus ?? "not_prepared", motionActions: scene.motionActions ?? [] };
       if (scene.approved === true && typeof scene.approvedFingerprint === "string") {
         const old = { ...migrated, authoringStatus: "ready" } as unknown as VisualStoryboardScene;
-        if (visualApprovalFingerprint(old) === scene.approvedFingerprint) {
+        if (legacyMotionApprovalFingerprint(old) === scene.approvedFingerprint) {
           (migrated as Record<string, unknown>).approvedFingerprint = visualApprovalFingerprint(migrated as unknown as VisualStoryboardScene);
         }
       }
@@ -206,7 +278,11 @@ export function projectFromRow(row: { id: string; data_json: string; created_at:
   project.visualStoryboard = normalizedResearch.success && savedStoryboard.success
     && savedStoryboard.data.scenes.length === normalizedResearch.data.scenes.length
     && savedStoryboard.data.scenes.every((scene, index) => scene.sceneId === normalizedResearch.data.scenes[index]?.id && scene.durationSec === Math.round(((normalizedResearch.data.scenes[index]?.endSec ?? 0) - (normalizedResearch.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)
-    ? savedStoryboard.data
+    ? {
+      ...savedStoryboard.data,
+      scenes: savedStoryboard.data.scenes.map((scene) => scene.approved && scene.approvedFingerprint === legacyMotionApprovalFingerprint(scene)
+        ? { ...scene, approvedFingerprint: visualApprovalFingerprint(scene) } : scene),
+    }
     : normalizedResearch.success ? buildVisualStoryboard(normalizedResearch.data) : project.visualStoryboard;
   project.pendingTts ??= null;
   project.visualAssets = Array.isArray(project.visualAssets) ? project.visualAssets.flatMap((asset) => {

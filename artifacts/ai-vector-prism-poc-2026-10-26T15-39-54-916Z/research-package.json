@@ -1,0 +1,182 @@
+{
+  "schemaVersion": "1.1",
+  "id": "ai-vector-prism-poc",
+  "title": "Cahaya Matahari dan Prisma",
+  "category": "Sains & Antariksa",
+  "visualPreset": "flat-2d-storytelling",
+  "language": "id-ID",
+  "targetDurationSec": 8,
+  "aspectRatio": "9:16",
+  "narration": "Cahaya Matahari terdiri dari berbagai warna yang dapat dipisahkan menggunakan prisma.",
+  "references": [],
+  "scenes": [
+    {
+      "id": "sunlight-prism-spectrum",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 8,
+      "narrationText": "Cahaya Matahari terdiri dari berbagai warna yang dapat dipisahkan menggunakan prisma.",
+      "onScreenText": "PRISMA MEMISAHKAN CAHAYA PUTIH",
+      "templateId": "infographic",
+      "visualDescription": "Satu berkas cahaya putih memasuki prisma kaca lalu keluar sebagai spektrum warna yang terlihat jelas.",
+      "motionCues": [
+        "fadeIn",
+        "reveal"
+      ],
+      "sfxCues": [],
+      "referenceIds": [],
+      "visualComposition": {
+        "background": "#0f172a",
+        "layers": [
+          {
+            "id": "incoming-light",
+            "depth": 0.25,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 120,
+                "y": 911,
+                "width": 300,
+                "height": 18,
+                "opacity": 0.96,
+                "shape": "rect",
+                "fill": "#ffffff"
+              }
+            ]
+          },
+          {
+            "id": "prism-glass",
+            "depth": 0.45,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 420,
+                "y": 780,
+                "width": 300,
+                "height": 340,
+                "opacity": 0.46,
+                "shape": "polygon",
+                "fill": "#e0f2fe",
+                "stroke": "#bae6fd",
+                "strokeWidth": 4,
+                "points": [
+                  {
+                    "x": 0,
+                    "y": 0
+                  },
+                  {
+                    "x": 0,
+                    "y": 1
+                  },
+                  {
+                    "x": 1,
+                    "y": 0.5
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "spectrum-beams",
+            "depth": 0.65,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 713.15,
+                "y": 900.75,
+                "width": 280,
+                "height": 12,
+                "rotation": -18,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#ef4444"
+              },
+              {
+                "type": "shape",
+                "x": 716.95,
+                "y": 914.9,
+                "width": 280,
+                "height": 12,
+                "rotation": -12,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#f97316"
+              },
+              {
+                "type": "shape",
+                "x": 719.25,
+                "y": 929.35,
+                "width": 280,
+                "height": 12,
+                "rotation": -6,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#facc15"
+              },
+              {
+                "type": "shape",
+                "x": 720,
+                "y": 944,
+                "width": 280,
+                "height": 12,
+                "rotation": 0,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#22c55e"
+              },
+              {
+                "type": "shape",
+                "x": 719.25,
+                "y": 958.65,
+                "width": 280,
+                "height": 12,
+                "rotation": 6,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#3b82f6"
+              },
+              {
+                "type": "shape",
+                "x": 716.95,
+                "y": 973.1,
+                "width": 280,
+                "height": 12,
+                "rotation": 12,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#4f46e5"
+              },
+              {
+                "type": "shape",
+                "x": 713.15,
+                "y": 987.25,
+                "width": 280,
+                "height": 12,
+                "rotation": 18,
+                "opacity": 0.92,
+                "shape": "rect",
+                "fill": "#a855f7"
+              }
+            ]
+          }
+        ]
+      },
+      "motionPlan": [
+        {
+          "cue": "fadeIn",
+          "targetLayer": "all",
+          "delayFrames": 0,
+          "durationFrames": 150,
+          "easing": "spring"
+        },
+        {
+          "cue": "reveal",
+          "targetLayer": "all",
+          "delayFrames": 6,
+          "durationFrames": 150,
+          "easing": "spring"
+        }
+      ]
+    }
+  ]
+}

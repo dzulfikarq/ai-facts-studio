@@ -1,0 +1,261 @@
+{
+  "topic": "Bagaimana Bumi Melindungi Kita dari Sinar Matahari?",
+  "rendererVersion": 3,
+  "motionTiming": "approximate; no word-level audio alignment available",
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "headline": "MATAHARI MENYINARI BUMI",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Fokus objek: earth-world/0",
+      "motionActions": [
+        {
+          "id": "visual-focus",
+          "kind": "focus-shift",
+          "targetNode": "earth-world/0",
+          "startFrame": 30,
+          "durationFrames": 131,
+          "easing": "easeInOut",
+          "keyframes": [
+            {
+              "at": 0,
+              "scale": 1
+            },
+            {
+              "at": 1,
+              "scale": 1.035
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sceneNumber": 2,
+      "headline": "ATMOSFER MENYELIMUTI BUMI",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Fokus objek: atmosphere/0",
+      "motionActions": [
+        {
+          "id": "visual-focus",
+          "kind": "focus-shift",
+          "targetNode": "atmosphere/0",
+          "startFrame": 30,
+          "durationFrames": 131,
+          "easing": "easeInOut",
+          "keyframes": [
+            {
+              "at": 0,
+              "scale": 1
+            },
+            {
+              "at": 1,
+              "scale": 1.035
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sceneNumber": 3,
+      "headline": "OZON MENYERAP UV-B DAN UV-C",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Aliran partikel: uv approach ozone · Aliran partikel: partial uv transmission · Lintasan digambar: uv path draw",
+      "motionActions": [
+        {
+          "id": "uv-approach-ozone",
+          "kind": "particle-flow",
+          "targetNode": "uv-rays/0",
+          "startFrame": 23,
+          "durationFrames": 106,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 300,
+              "y": 890.6
+            },
+            {
+              "x": 590,
+              "y": 979
+            }
+          ],
+          "particleCount": 4
+        },
+        {
+          "id": "partial-uv-transmission",
+          "kind": "particle-flow",
+          "targetNode": "uv-rays/0",
+          "startFrame": 107,
+          "durationFrames": 58,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 650,
+              "y": 980
+            },
+            {
+              "x": 736,
+              "y": 1025
+            },
+            {
+              "x": 822,
+              "y": 1070
+            }
+          ],
+          "particleCount": 1
+        },
+        {
+          "id": "uv-path-draw",
+          "kind": "draw",
+          "targetNode": "uv-rays/0",
+          "startFrame": 15,
+          "durationFrames": 131,
+          "easing": "easeInOut"
+        }
+      ]
+    },
+    {
+      "sceneNumber": 4,
+      "headline": "MAGNETOSFER MEMBELOKKAN PARTIKEL",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Aliran partikel: charged particle deflection",
+      "motionActions": [
+        {
+          "id": "charged-particle-deflection",
+          "kind": "particle-flow",
+          "targetNode": "magnetic-field/0",
+          "startFrame": 34,
+          "durationFrames": 134,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 580,
+              "y": 650
+            },
+            {
+              "x": 296.7808,
+              "y": 835.7024
+            },
+            {
+              "x": 313.4656,
+              "y": 1019.6192000000001
+            },
+            {
+              "x": 419.91040000000004,
+              "y": 1213.3568
+            },
+            {
+              "x": 740.0896000000002,
+              "y": 706.6432
+            },
+            {
+              "x": 846.5344,
+              "y": 900.3808
+            },
+            {
+              "x": 863.2192,
+              "y": 1084.2975999999999
+            },
+            {
+              "x": 580,
+              "y": 1270
+            }
+          ],
+          "particleCount": 3
+        }
+      ]
+    },
+    {
+      "sceneNumber": 5,
+      "headline": "DUA PERISAI, DUA TUGAS",
+      "durationSec": 6.4,
+      "motionIntensity": "balanced",
+      "motionTiming": "approximate",
+      "motionStatus": "ready_for_review",
+      "motionSummary": "Aliran partikel: uv approach ozone · Lintasan digambar: uv path draw · Aliran partikel: charged particle deflection",
+      "motionActions": [
+        {
+          "id": "uv-approach-ozone",
+          "kind": "particle-flow",
+          "targetNode": "uv-rays/0",
+          "startFrame": 23,
+          "durationFrames": 106,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 280,
+              "y": 867
+            },
+            {
+              "x": 630,
+              "y": 915
+            }
+          ],
+          "particleCount": 4
+        },
+        {
+          "id": "uv-path-draw",
+          "kind": "draw",
+          "targetNode": "uv-rays/0",
+          "startFrame": 15,
+          "durationFrames": 131,
+          "easing": "easeInOut"
+        },
+        {
+          "id": "charged-particle-deflection",
+          "kind": "particle-flow",
+          "targetNode": "magnetic-field/0",
+          "startFrame": 34,
+          "durationFrames": 134,
+          "easing": "linear",
+          "path": [
+            {
+              "x": 580,
+              "y": 680
+            },
+            {
+              "x": 296.7808,
+              "y": 865.7024
+            },
+            {
+              "x": 313.4656,
+              "y": 1049.6192
+            },
+            {
+              "x": 419.91040000000004,
+              "y": 1243.3568
+            },
+            {
+              "x": 740.0896000000002,
+              "y": 736.6432
+            },
+            {
+              "x": 846.5344,
+              "y": 930.3808
+            },
+            {
+              "x": 863.2192,
+              "y": 1114.2975999999999
+            },
+            {
+              "x": 580,
+              "y": 1300
+            }
+          ],
+          "particleCount": 3
+        }
+      ]
+    }
+  ]
+}

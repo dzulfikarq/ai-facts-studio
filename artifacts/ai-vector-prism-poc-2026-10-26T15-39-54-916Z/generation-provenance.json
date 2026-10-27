@@ -1,0 +1,11 @@
+{
+  "source": "opencode-live",
+  "model": "ollama-cloud/beam",
+  "cached": false,
+  "specSha256": "e1441d4b0f2bff3eb62b9a09eb0ddf0b0b75bae121316ad13edd32642698aa39",
+  "input": {
+    "headline": "CAHAYA MATAHARI TERURAI MENJADI SPEKTRUM",
+    "narration": "Cahaya Matahari terdiri dari berbagai warna yang dapat dipisahkan menggunakan prisma.",
+    "visualDescription": "Satu berkas cahaya putih memasuki prisma kaca lalu keluar sebagai spektrum warna yang terlihat jelas."
+  }
+}

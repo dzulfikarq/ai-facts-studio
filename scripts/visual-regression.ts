@@ -10,7 +10,7 @@ import { parseResearchPackage, templateIds, visualPresets, type ResearchPackage,
 import { defaultMotionPlan, defaultVisualComposition } from "../src/domain/visual-defaults";
 import { visualCompositionSchema } from "../src/domain/visual-composition";
 import { applyVisualStoryboard, buildVisualStoryboard, visualStoryboardQualityGate } from "../src/domain/visual-storyboard";
-import { RENDERER_VERSION } from "../src/video/renderer-version";
+import { PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 import type { VideoProps } from "../src/video/types";
 
 const root = process.cwd();
@@ -152,7 +152,7 @@ if (recordOnly) {
   console.log(serialized);
 } else {
   const baseline = JSON.parse(await readFile(baselinePath, "utf8")) as { rendererVersion: number; scale: number; frames: Record<string, string> };
-  assert.equal(baseline.rendererVersion, RENDERER_VERSION);
+  assert.ok([RENDERER_VERSION, PREVIOUS_RENDERER_VERSION].includes(baseline.rendererVersion), `golden baseline renderer V${baseline.rendererVersion} is not current/previous V${RENDERER_VERSION}`);
   assert.deepEqual(hashes, baseline.frames, "golden frame changed; inspect renders/visual-regression before updating baseline");
   console.log(`PASS: ${cases.length} golden frames; 8 templates, 3 presets, 9 cues, lightning, seven mountain scenes, five salt scenes, five Earth scenes, transitions.`);
 }

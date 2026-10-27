@@ -1,6 +1,6 @@
 # AI Facts Studio V1.0.4
 
-Local-first studio for turning reviewed research into reusable, animated 2D vertical videos. V1.0.4 validates approved narration through AAC MP4 render, records audio provenance/integrity, and rejects silent/clipped expected narration. AI Research/Storyboard generation is explicit: Development uses authenticated local OpenCode or manual prompt/paste; Production uses Gemini Text. Template rendering uses no AI calls; TTS remains a separate explicit path. The app defaults to `127.0.0.1`; drafts, audio, jobs, and MP4s stay local except text sent to the selected provider.
+Local-first studio for turning reviewed research into reusable, animated 2D vertical videos. V1.0.4 validates approved narration through AAC MP4 render, records audio provenance/integrity, and rejects silent/clipped expected narration. AI Research/Storyboard generation is explicit: Development uses authenticated local OpenCode or manual prompt/paste; Production uses Gemini Text. Template rendering uses no AI calls; TTS remains a separate explicit path. Smart Asset Library searches local SQLite assets and pinned Tabler metadata, saves reusable scenes, exports credits, and offers explicit Openverse search/import for CC0, Public Domain, CC BY, and CC BY-SA; imports are stored locally, never fetched at render time. Optional AI Image uses Hugging Face Inference Providers only after server-side operator opt-in, live model verification, and per-image cost confirmation; unknown billing is disclosed, not called free. The app defaults to `127.0.0.1`; drafts, audio, jobs, and MP4s stay local except text/image prompts sent to explicitly selected providers and explicitly selected Openverse downloads.
 
 ## Requirements
 
@@ -18,9 +18,9 @@ copy .env.example .env   # Windows; optional
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173>. **Create video → Generate with AI** creates Research/Storyboard drafts for free-form topics; review/edit before project creation. **Settings → AI Generation** selects Development (OpenCode local + manual Advanced fallback) or configured Production (Gemini Text). OpenCode setup/auth: [`AI_GENERATION_SETUP.md`](docs/AI_GENERATION_SETUP.md). The mode is stored separately from `NODE_ENV` and TTS. Automated topic-specific art is not generated; scene visual direction remains editorial. Preview Video is interactive and uses no production render job/quota. AI Voice remains separate: load voices → optional **Test Voice** → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini**. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, confirmation is required before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
+Open <http://127.0.0.1:5173>. **Create video → Generate with AI** creates Research/Storyboard drafts for free-form topics; review/edit before project creation. **Settings → AI Generation** selects Development (OpenCode local + manual Advanced fallback) or configured Production (Gemini Text). OpenCode setup/auth: [`AI_GENERATION_SETUP.md`](docs/AI_GENERATION_SETUP.md). The mode is stored separately from `NODE_ENV` and TTS. Visual Storyboard offers curated compositions, AI Vector, manual upload, and **Pilih Ilustrasi** for searchable local assets, Tabler icons, reusable scenes, and opt-in Openverse search. AI Image provider stays disabled by default. To opt in, set server-side `HF_TOKEN`, `HF_IMAGE_GENERATION_ENABLED=true`, and `HF_IMAGE_ALLOW_PAID=true`; live `hf-inference` models are verified before use. User reviews prompt/settings, confirms each image with unknown-cost disclosure, then previews and explicitly applies local result. Without opt-in, prompt copy and manual PNG/JPEG/WebP import remain available. Preview Video is interactive and uses no production render job/quota. AI Voice remains separate: load voices → optional **Test Voice** → **Preview Narasi Lengkap** → listen → **Gunakan Audio Ini**. Local render creates H.264, 1080×1920, 30 fps; approved narration is AAC. Without audio, confirmation is required before silent render. Renderer verifies codec, dimensions, duration, file size, SHA-256, and renderer version. Project deletion removes its upload, snapshots, and MP4s through a retryable cleanup queue; shared content-addressed audio cache remains.
 
-Engine renders supplied Research Package scenes/compositions; it does **not** turn arbitrary titles into researched storyboards or topic-specific illustrations. Compose new topics from reusable nodes/diagrams or author their composition manually.
+Engine renders supplied Research Package scenes/compositions; it does **not** turn arbitrary titles into researched storyboards or automatically generate topic-specific raster art. AI Vector is explicit OpenCode authoring; optional AI Image calls only after operator opt-in and explicit per-image user confirmation. Current live generation remains untested until an operator configures token and authorizes a cost-aware request. A cited, hand-authored water-droplet rainbow sample demonstrates five science scenes without substituting a prism for raindrops; it still needs per-scene human approval. See [Visual Storyboard workflow and evidence](docs/VISUAL_STORYBOARD.md).
 
 The first render may download Chromium. `npm run build && npm start` serves production UI/API on `http://127.0.0.1:3001`.
 
@@ -31,6 +31,8 @@ npm test
 npm run smoke:api
 npm run smoke:tts
 npm run smoke:render
+npm run smoke:visual-storyboard
+npm run smoke:ai-image
 npm run smoke:samples
 npm run smoke:samples-audio
 npm run test:visual
@@ -39,6 +41,7 @@ npm run build
 npm run render -- samples/mountain-formation.json
 npm run render -- samples/lightning-charge.json
 npm run render -- samples/kenapa-air-laut-asin.json
+npm run render -- samples/bagaimana-pelangi-terbentuk.json
 npm audit
 ```
 
@@ -90,6 +93,8 @@ Cloud dispatch/status/download are not connected to the local UI. Workflow does 
 - [Template and asset guide](docs/TEMPLATE_AND_ASSET_GUIDE.md)
 - [AI Voice / TTS setup](docs/TTS_SETUP.md)
 - [AI Generation settings](docs/AI_GENERATION_SETUP.md)
+- [Visual Storyboard, illustration sources, and PoC evidence](docs/VISUAL_STORYBOARD.md)
+- [Smart Asset Library status and evidence](docs/VISUAL_STORYBOARD.md#smart-asset-library-v1)
 - [GitHub Actions setup](docs/GITHUB_ACTIONS_SETUP.md)
 - [OpenCode integration](docs/OPENCODE_INTEGRATION.md)
 - [User guide](docs/USER_GUIDE.md)

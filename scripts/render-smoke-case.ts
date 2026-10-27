@@ -6,13 +6,13 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { parseResearchPackage } from "../src/domain/research";
-import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 import type { ResearchPackage } from "../src/domain/research";
 import { renderSnapshot } from "./render-core";
 
 const execFileAsync = promisify(execFile);
 const version = Number(process.argv[2]);
-assert.ok(version === RENDERER_VERSION || version === LEGACY_RENDERER_VERSION);
+assert.ok([RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, LEGACY_RENDERER_VERSION].includes(version));
 const outputPath = path.resolve(process.argv[3]!);
 const audioName = process.argv[4]!;
 const audioPath = path.resolve("public/audio", audioName);
@@ -26,16 +26,20 @@ if (version === LEGACY_RENDERER_VERSION) {
   legacy.schemaVersion = "1.0";
   for (const scene of legacy.scenes) { delete scene.visualComposition; delete scene.motionPlan; }
   research = legacy as unknown as ResearchPackage;
+} else if (version === PREVIOUS_RENDERER_VERSION) {
+  const previous = structuredClone(current) as unknown as { scenes: Array<Record<string, unknown>> };
+  for (const scene of previous.scenes) delete scene.motionActions;
+  research = previous as unknown as ResearchPackage;
 }
 
 try {
   await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", audioPath]);
   const audioSha256 = createHash("sha256").update(await readFile(audioPath)).digest("hex");
-  await assert.rejects(renderSnapshot({ research, audio: { file: `audio/${audioName}`, durationSec: 2, source: "upload", sha256: "0".repeat(64) }, ...(version === RENDERER_VERSION ? { rendererVersion: RENDERER_VERSION } : {}) }, outputPath), /SHA-256/, "modified snapshot audio must fail integrity check before render");
+  await assert.rejects(renderSnapshot({ research, audio: { file: `audio/${audioName}`, durationSec: 2, source: "upload", sha256: "0".repeat(64) }, ...(version !== LEGACY_RENDERER_VERSION ? { rendererVersion: version } : {}) }, outputPath), /SHA-256/, "modified snapshot audio must fail integrity check before render");
   const manifest = await renderSnapshot({
     research,
     audio: { file: `audio/${audioName}`, durationSec: 2, source: "upload", sha256: audioSha256 },
-    ...(version === RENDERER_VERSION ? { rendererVersion: RENDERER_VERSION } : {}),
+    ...(version !== LEGACY_RENDERER_VERSION ? { rendererVersion: version } : {}),
   }, outputPath, () => {}, 1 / 3);
   assert.equal(manifest.rendererVersion, version);
   assert.equal(manifest.videoCodec, "h264");

@@ -9,21 +9,32 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { openverseLicenseIds, reusableSceneInputSchema } from "../domain/asset-library";
 import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
-import { applyVisualStoryboard, buildVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema } from "../domain/visual-storyboard";
-import { validateRasterImage, visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
+import { applyVisualStoryboard, buildVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
+import type { VisualPreparationJob, VisualPreparationScene } from "../domain/visual-preparation";
+import type { MotionPreparationJob, MotionPreparationScene } from "../domain/motion-preparation";
+import { motionIntensitySchema, planSceneMotion } from "../domain/motion-director";
+import { trustedImageAssets } from "../domain/visual-composition";
+import { visualAssetSchema, type VisualAsset, type VisualLibraryEntry } from "../domain/visual-assets";
 import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
 import { dataDir, db, jobForClient, projectFromRow, type JobRow, type StoredAudio, type StoredProject } from "./database";
 import { generateAiResearchStoryboard, AiGenerationOutputError } from "./ai-generation/generate";
 import { generateVisualSemanticPlan, visualPlannerInputSchema } from "./ai-generation/visual-planner";
+import { generateAiVectorIllustration } from "./ai-generation/vector-illustrator";
 import { GeminiTextGenerationError, GeminiTextGenerationProvider } from "./ai-generation/gemini-text-provider";
 import { getOpenCodeProviderStatus, OpenCodeGenerationError, OpenCodeTextGenerationProvider } from "./ai-generation/opencode-provider";
 import { AiGenerationRequestError } from "./ai-generation/quota";
 import { getAiGenerationSettings, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "./ai-generation/provider";
+import { DEFAULT_HF_IMAGE_MODEL, HF_IMAGE_RESOLUTIONS, HuggingFaceImageError, HuggingFaceInferenceImageProvider, discoverHuggingFaceImageModels, huggingFaceImageConfiguration } from "./ai-generation/huggingface-image";
+import { validateAndOptimizeRasterImage } from "./visual-asset-processing";
+import { validateRasterImage } from "../domain/visual-assets";
+import { prepareSmartVisual, type ReusableCandidate } from "./visual-orchestrator";
+import { assetFtsExpression, backfillVisualAssetCatalog, fetchOpenverseThumbnail, indexTablerIcons, sanitizedTablerSvg, searchOpenverse, searchTablerIcons, upsertVisualAssetCatalog, downloadOpenverseImage } from "./asset-library";
 import { createSpeechProvider, SpeechProviderError, ttsCacheKey, type SpeechAudio, type SpeechVoice, type SpeechVoiceCatalog } from "./tts/provider";
 
 const execFileAsync = promisify(execFile);
@@ -44,6 +55,12 @@ let activeRenderJob: string | null = null;
 let activeJobCreation = false;
 let activeAiGeneration = false;
 let activeAiGenerationPhase: "idle" | "connecting" | "generating" | "validating" | "repairing" = "idle";
+let activeAiImageGeneration = false;
+let activeVisualPreparation = false;
+let activeMotionPreparation = false;
+type AiImageStatus = "Not Configured" | "Ready" | "Generating" | "Rate Limited" | "Quota Exhausted" | "Failed";
+let aiImageRuntime: { status: AiImageStatus; message: string | null; retryAt: string | null } = { status: "Not Configured", message: null, retryAt: null };
+let aiImageModelCache: { models: Awaited<ReturnType<typeof discoverHuggingFaceImageModels>>; expiresAt: number } | null = null;
 const activeTtsKeys = new Set<string>();
 const activeProjectTasks = new Set<string>();
 const speechProvider = await createSpeechProvider();
@@ -75,6 +92,8 @@ await mkdir(audioDir, { recursive: true });
 await mkdir(visualAssetDir, { recursive: true });
 await mkdir(jobDir, { recursive: true });
 await mkdir(renderDir, { recursive: true });
+indexTablerIcons(db);
+backfillVisualAssetCatalog(db, (asset) => path.join(visualAssetDir, asset.file));
 app.use(express.json({ limit: "1mb" }));
 
 function projectRow(id: string) {
@@ -83,9 +102,11 @@ function projectRow(id: string) {
 
 function snapshotForProject(project: StoredProject): RenderSnapshot {
   const extension = project.audio ? path.extname(project.audio.file) : "";
+  const referencedAssetIds = new Set(project.visualStoryboard.scenes.flatMap((scene) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node]))
+    .flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : [])));
   return {
     research: applyVisualStoryboard(project.researchPackage, project.visualStoryboard),
-    visualAssets: project.visualAssets,
+    visualAssets: project.visualAssets.filter((asset) => referencedAssetIds.has(asset.id)),
     rendererVersion: RENDERER_VERSION,
     audio: project.audio ? {
       file: `audio/jobs/${project.audio.sha256}${extension}`,
@@ -132,7 +153,7 @@ function snapshotContentMatchesProject(snapshotPath: string, project: StoredProj
     const audioContent = (audio: RenderSnapshot["audio"]) => audio ? { file: audio.file, durationSec: audio.durationSec, timingMode: audio.timingMode ?? "scaled" } : null;
      const oldContent = { research: oldResearch.data, audio: audioContent(snapshot.audio), assets: (snapshot.visualAssets ?? []).map((asset) => [asset.file, asset.sha256]) };
      const audio = audioContent(snapshotForProject(project).audio);
-     const assets = project.visualAssets.map((asset) => [asset.file, asset.sha256]);
+      const assets = (snapshotForProject(project).visualAssets ?? []).map((asset) => [asset.file, asset.sha256]);
      return [currentResearch.data, currentVisualResearch.data].some((research) => JSON.stringify(oldContent) === JSON.stringify({ research, audio, assets }));
   } catch { return false; }
 }
@@ -157,7 +178,13 @@ function getProject(id: string) {
   const pendingTts = pendingAsset && existsSync(path.resolve(root, "public", pendingAsset.file))
     ? { ...project.pendingTts!, audioUrl: `/${pendingAsset.file}`, durationSec: pendingAsset.duration_sec, bytes: pendingAsset.bytes, voiceName: pendingAsset.voice_name, locale: pendingAsset.locale, style: pendingAsset.style, speakingRate: pendingAsset.speaking_rate, generatedAt: pendingAsset.created_at }
     : null;
-  return { ...project, pendingTts, pendingTtsMatchesNarration: project.pendingTts?.scriptSha256 === currentScriptSha, audioMatchesNarration, latestJobCurrent, latestJobContentCurrent, latestJob: jobForClient(latest) };
+  const preparationRow = db.prepare("SELECT data_json FROM visual_preparation_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
+  let visualPreparation: VisualPreparationJob | null = null;
+  try { if (preparationRow) visualPreparation = JSON.parse(preparationRow.data_json) as VisualPreparationJob; } catch { /* malformed progress is not project data */ }
+  const motionPreparationRow = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
+  let motionPreparation: MotionPreparationJob | null = null;
+  try { if (motionPreparationRow) motionPreparation = JSON.parse(motionPreparationRow.data_json) as MotionPreparationJob; } catch { /* malformed progress is not project data */ }
+  return { ...project, pendingTts, pendingTtsMatchesNarration: project.pendingTts?.scriptSha256 === currentScriptSha, audioMatchesNarration, latestJobCurrent, latestJobContentCurrent, latestJob: jobForClient(latest), visualPreparation, motionPreparation };
 }
 
 function saveProject(id: string, project: StoredProject) {
@@ -190,6 +217,290 @@ function missingVisualAssetReferences(storyboard: ReturnType<typeof buildVisualS
   })));
 }
 
+function writeVisualPreparationJob(job: VisualPreparationJob, insert = false, requestSha256 = "") {
+  job.processed = job.scenes.filter((scene) => scene.status !== "pending" && scene.status !== "preparing").length;
+  job.readyForReview = job.scenes.filter((scene) => scene.status === "ready_for_review").length;
+  job.needsAttention = job.scenes.filter((scene) => scene.status === "needs_attention").length;
+  job.failed = job.scenes.filter((scene) => scene.status === "failed").length;
+  job.approved = job.scenes.filter((scene) => scene.status === "approved").length;
+  job.updatedAt = new Date().toISOString();
+  if (job.scenes.every((scene) => scene.status !== "pending" && scene.status !== "preparing")) {
+    job.status = job.failed === job.total && job.total > 0 ? "failed" : job.failed ? "partial_failure" : "completed";
+    job.currentSceneId = null;
+  }
+  const sql = insert
+    ? "INSERT INTO visual_preparation_jobs (id, project_id, request_id, request_sha256, status, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    : "UPDATE visual_preparation_jobs SET status = ?, data_json = ?, updated_at = ? WHERE id = ?";
+  if (insert) db.prepare(sql).run(job.id, job.projectId, job.requestId, requestSha256, job.status, JSON.stringify(job), job.createdAt, job.updatedAt);
+  else db.prepare(sql).run(job.status, JSON.stringify(job), job.updatedAt, job.id);
+}
+
+function writeMotionPreparationJob(job: MotionPreparationJob, insert = false, requestSha256 = "") {
+  job.processed = job.scenes.filter((scene) => !["pending", "preparing"].includes(scene.status)).length;
+  job.readyForReview = job.scenes.filter((scene) => scene.status === "ready_for_review").length;
+  job.preserved = job.scenes.filter((scene) => scene.status === "preserved").length;
+  job.needsAttention = job.scenes.filter((scene) => scene.status === "needs_attention").length;
+  job.failed = job.scenes.filter((scene) => scene.status === "failed").length;
+  job.updatedAt = new Date().toISOString();
+  if (job.scenes.every((scene) => !["pending", "preparing"].includes(scene.status))) {
+    job.status = job.cancelRequested ? "cancelled" : job.failed === job.total && job.total > 0 ? "failed" : job.failed ? "partial_failure" : "completed";
+    job.currentSceneId = null;
+  }
+  if (insert) {
+    db.prepare("INSERT INTO motion_preparation_jobs (id, project_id, request_id, request_sha256, status, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(job.id, job.projectId, job.requestId, requestSha256, job.status, JSON.stringify(job), job.createdAt, job.updatedAt);
+  } else {
+    db.prepare("UPDATE motion_preparation_jobs SET status = ?, data_json = ?, updated_at = ? WHERE id = ?")
+      .run(job.status, JSON.stringify(job), job.updatedAt, job.id);
+  }
+}
+
+async function runMotionPreparation(job: MotionPreparationJob) {
+  if (activeMotionPreparation) return;
+  activeMotionPreparation = true;
+  activeProjectTasks.add(job.projectId);
+  try {
+    // Let the 202 response flush so an immediate cancel request can reach the worker before its first scene.
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    for (const state of job.scenes) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const latestJob = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE id = ?").get(job.id) as { data_json: string } | undefined;
+      if (latestJob && (JSON.parse(latestJob.data_json) as MotionPreparationJob).cancelRequested) job.cancelRequested = true;
+      if (job.cancelRequested) break;
+      if (state.status !== "pending") continue;
+      state.status = "preparing";
+      state.message = "Menentukan gerak dari narasi dan objek visual yang benar-benar tersedia.";
+      job.currentSceneId = state.sceneId;
+      writeMotionPreparationJob(job);
+      try {
+        const row = projectRow(job.projectId);
+        if (!row) throw new Error("Project tidak ditemukan.");
+        const project = projectFromRow(row);
+        const sceneIndex = project.visualStoryboard.scenes.findIndex((scene) => scene.sceneId === state.sceneId);
+        if (sceneIndex < 0) throw new Error("Scene tidak ditemukan di Visual Storyboard.");
+        const scene = project.visualStoryboard.scenes[sceneIndex]!;
+        if (scene.approved || scene.motionStatus === "static" || scene.motionStatus === "ready_for_review" && scene.motionActions.length > 0) {
+          state.status = "preserved";
+          state.message = "Motion plan yang sudah direview/approved dipertahankan; batch tidak menimpanya.";
+          writeMotionPreparationJob(job);
+          continue;
+        }
+        const currentResearch = applyVisualStoryboard(project.researchPackage, project.visualStoryboard);
+        const gate = visualStoryboardQualityGate(currentResearch, project.visualStoryboard, project.visualAssets);
+        const sceneIssues = gate.scenes[scene.sceneId] ?? [];
+        if (scene.authoringStatus === "needs_visual_authoring" || sceneIssues.length > 0) {
+          state.status = "needs_attention";
+          state.message = sceneIssues[0] ?? "Komposisi belum cukup valid untuk motion planning.";
+          writeMotionPreparationJob(job);
+          continue;
+        }
+        const motion = planSceneMotion(scene, job.intensity);
+        const nextScene = { ...scene, ...motion, approved: false, approvedFingerprint: null };
+        project.visualStoryboard = { ...project.visualStoryboard, scenes: project.visualStoryboard.scenes.map((item, index) => index === sceneIndex ? nextScene : item) };
+        const merged = parseResearchPackage(applyVisualStoryboard(project.researchPackage, project.visualStoryboard));
+        if (!merged.success) throw new Error("Motion Plan tidak cocok dengan Research Package.");
+        project.researchPackage = merged.data;
+        const savedStoryboard = visualStoryboardSchema.safeParse(project.visualStoryboard);
+        if (!savedStoryboard.success) throw new Error(savedStoryboard.error.issues[0]?.message ?? "Motion Plan tidak valid.");
+        project.visualStoryboard = savedStoryboard.data;
+        state.status = "ready_for_review";
+        state.message = motion.motionActions.length ? "Motion Plan deterministik dibuat; timing approximate, review sebelum approve." : "Komposisi cocok sebagai scene statis; tidak ada objek aman untuk digerakkan.";
+        withTransaction(() => {
+          saveProject(job.projectId, project);
+          writeMotionPreparationJob(job);
+        });
+        invalidateBundleCache();
+      } catch (error) {
+        state.status = "failed";
+        state.message = error instanceof Error ? error.message : "Motion preparation gagal.";
+        writeMotionPreparationJob(job);
+      }
+    }
+    if (job.cancelRequested) {
+      for (const scene of job.scenes) if (["pending", "preparing"].includes(scene.status)) {
+        scene.status = "cancelled";
+        scene.message = "Dibatalkan pengguna; scene belum diproses.";
+      }
+    }
+    writeMotionPreparationJob(job);
+  } finally {
+    activeProjectTasks.delete(job.projectId);
+    activeMotionPreparation = false;
+  }
+}
+
+function protectedVisualScene(scene: VisualStoryboard["scenes"][number]) {
+  const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+  return scene.approved || scene.authoringConfirmed || scene.compositionSource === "manual" || scene.compositionSource === "ai-vector" || hasImage;
+}
+
+function reusableVisualCandidates(scene: VisualStoryboard["scenes"][number]) {
+  const match = assetFtsExpression(`${scene.visualSummary} ${scene.narrationText} ${scene.objects.map((object) => `${object.objectId} ${object.label}`).join(" ")}`);
+  const rows = match
+    ? db.prepare("SELECT id, data_json FROM reusable_scene_compositions WHERE id IN (SELECT id FROM reusable_scene_compositions_fts WHERE reusable_scene_compositions_fts MATCH ?) ORDER BY usage_count DESC, updated_at DESC LIMIT 40").all(match)
+    : db.prepare("SELECT id, data_json FROM reusable_scene_compositions ORDER BY usage_count DESC, updated_at DESC LIMIT 40").all();
+  return (rows as Array<{ id: string; data_json: string }>).flatMap((row) => {
+    try {
+      const value = JSON.parse(row.data_json) as Record<string, unknown>;
+      const parsed = reusableSceneInputSchema.safeParse({
+        name: value.name, tags: value.tags, concepts: value.concepts, styleId: value.styleId, layout: value.layout,
+        compositionType: value.compositionType, composition: value.composition, palette: value.palette,
+        motionIntent: value.motionIntent, motionSummary: value.motionSummary, motionPlan: value.motionPlan,
+        objects: value.objects, relationships: value.relationships, visualFocus: value.visualFocus,
+        assetIds: value.assetIds, thumbnailDataUrl: value.thumbnailDataUrl, provenance: value.provenance,
+      });
+      return parsed.success ? [{ ...parsed.data, id: row.id }] : [];
+    } catch { return []; }
+  });
+}
+
+async function trustedCatalogAsset(assetId: string) {
+  const row = db.prepare("SELECT metadata_json, available_local FROM visual_asset_catalog WHERE asset_id = ?").get(assetId) as { metadata_json: string; available_local: number } | undefined;
+  if (!row || !row.available_local) return null;
+  try {
+    const parsed = visualAssetSchema.safeParse(JSON.parse(row.metadata_json));
+    if (!parsed.success) return null;
+    const file = path.resolve(visualAssetDir, parsed.data.file);
+    if (path.dirname(file) !== visualAssetDir || !existsSync(file) || await sha256File(file) !== parsed.data.sha256) return null;
+    return parsed.data;
+  } catch { return null; }
+}
+
+async function visualResourcesForScene(scene: VisualStoryboard["scenes"][number], project: StoredProject, trustedAssetCache: Map<string, Promise<VisualAsset | null>>) {
+  const reusableScenes = reusableVisualCandidates(scene);
+  const match = assetFtsExpression(`${scene.visualSummary} ${scene.narrationText} ${scene.objects.map((object) => `${object.objectId} ${object.label}`).join(" ")}`);
+  const catalogRows = match
+    ? db.prepare(`SELECT metadata_json FROM visual_asset_catalog WHERE asset_type = 'illustration' AND available_local = 1 AND asset_id IN (SELECT asset_id FROM visual_asset_catalog_fts WHERE visual_asset_catalog_fts MATCH ?) ORDER BY created_at DESC LIMIT 24`).all(match) as Array<{ metadata_json: string }>
+    : [];
+  const assetIds = new Set([
+    ...project.visualAssets.map((asset) => asset.id),
+    ...reusableScenes.flatMap((item) => item.assetIds),
+    ...catalogRows.flatMap((item) => {
+      try { return [visualAssetSchema.parse(JSON.parse(item.metadata_json)).id]; } catch { return []; }
+    }),
+  ]);
+  const assets = (await Promise.all([...assetIds].map((assetId) => {
+    let cached = trustedAssetCache.get(assetId);
+    if (!cached) { cached = trustedCatalogAsset(assetId); trustedAssetCache.set(assetId, cached); }
+    return cached;
+  }))).filter((asset): asset is VisualAsset => asset !== null);
+  const assetMap = new Map(assets.map((asset) => [asset.id, asset]));
+  return { reusableScenes: reusableScenes.filter((item) => item.assetIds.every((id) => assetMap.has(id))), assets, assetMap };
+}
+
+async function prepareVisualSceneSafely(scene: VisualStoryboard["scenes"][number], storyboard: VisualStoryboard, project: StoredProject, trustedAssetCache: Map<string, Promise<VisualAsset | null>>) {
+  const resources = await visualResourcesForScene(scene, project, trustedAssetCache);
+  let reusableScenes = resources.reusableScenes;
+  let assets = resources.assets;
+  for (let attempt = 0; attempt <= resources.assets.length; attempt++) {
+    const result = prepareSmartVisual({ scene, storyboard, reusableScenes, assets });
+    const invalid = result.assetIds.filter((id) => !resources.assetMap.has(id));
+    if (!invalid.length) return { result, assets: resources.assetMap };
+    assets = assets.filter((asset) => !invalid.includes(asset.id));
+    reusableScenes = reusableScenes.filter((candidate) => candidate.assetIds.every((id) => !invalid.includes(id)));
+  }
+  return { result: prepareSmartVisual({ scene, storyboard, reusableScenes: [], assets: [] }), assets: resources.assetMap };
+}
+
+async function runVisualPreparation(job: VisualPreparationJob) {
+  if (activeVisualPreparation) return;
+  activeVisualPreparation = true;
+  activeProjectTasks.add(job.projectId);
+  const trustedAssetCache = new Map<string, Promise<VisualAsset | null>>();
+  try {
+    for (const state of job.scenes) {
+      if (state.status !== "pending") continue;
+      state.status = "preparing";
+      state.message = "Objek, hubungan, gaya, dan aset lokal sedang diperiksa.";
+      job.currentSceneId = state.sceneId;
+      writeVisualPreparationJob(job);
+      try {
+        const row = projectRow(job.projectId);
+        if (!row) throw new Error("Project tidak ditemukan.");
+        const project = projectFromRow(row);
+        const index = project.visualStoryboard.scenes.findIndex((scene) => scene.sceneId === state.sceneId);
+        if (index < 0) throw new Error("Scene tidak ditemukan lagi di Visual Storyboard.");
+        const scene = project.visualStoryboard.scenes[index]!;
+        if (protectedVisualScene(scene)) {
+          state.status = scene.approved ? "approved" : scene.authoringStatus === "needs_visual_authoring" ? "needs_attention" : "ready_for_review";
+          state.source = "preserved";
+          state.message = "Ilustrasi terpilih/manual dipertahankan; perubahan otomatis tidak menimpanya.";
+          state.recommendations = ["Gunakan Ubah Ilustrasi untuk mengganti setelah konfirmasi."];
+          writeVisualPreparationJob(job);
+          continue;
+        }
+        if (scene.authoringStatus !== "needs_visual_authoring") {
+          state.status = "needs_attention";
+          state.source = "preserved";
+          state.message = "Ilustrasi sudah tersedia; Smart Hybrid mempertahankannya untuk review manusia.";
+          state.recommendations = ["Buka Preview dan approve, atau pilih sumber baru secara eksplisit."];
+          writeVisualPreparationJob(job);
+          continue;
+        }
+
+        const { result, assets } = await prepareVisualSceneSafely(scene, project.visualStoryboard, project, trustedAssetCache);
+        const nextScene = result.composition ? {
+          ...scene,
+          composition: result.composition,
+          ...(result.compositionType ? { compositionType: result.compositionType } : {}),
+          ...(result.layout ? { layout: result.layout } : {}),
+          ...(result.compositionSource ? { compositionSource: result.compositionSource } : {}),
+          ...(result.illustrationSource ? { illustrationSource: result.illustrationSource } : {}),
+          ...(result.objects ? { objects: result.objects } : {}),
+          ...(result.relationships ? { relationships: result.relationships } : {}),
+          ...(result.visualFocus !== undefined ? { visualFocus: result.visualFocus } : {}),
+          ...(result.illustrationIntent ? { illustrationIntent: result.illustrationIntent } : {}),
+          ...(result.motionIntent ? { motionIntent: result.motionIntent } : {}),
+          ...(result.motionSummary ? { motionSummary: result.motionSummary } : {}),
+          missingVisuals: result.missingVisuals,
+          warnings: result.warnings,
+          authoringStatus: result.status,
+          authoringConfirmed: false,
+          approved: false,
+          approvedFingerprint: null,
+        } : {
+          ...scene,
+          missingVisuals: result.missingVisuals,
+          warnings: result.warnings,
+          authoringStatus: "needs_visual_authoring" as const,
+          authoringConfirmed: false,
+          approved: false,
+          approvedFingerprint: null,
+        };
+        project.visualStoryboard = { ...project.visualStoryboard, scenes: project.visualStoryboard.scenes.map((item, itemIndex) => itemIndex === index ? nextScene : item) };
+        for (const assetId of result.assetIds) {
+          const asset = assets.get(assetId);
+          if (!asset) throw new Error(`Aset ${assetId} tidak lolos verifikasi lokal.`);
+          if (!project.visualAssets.some((item) => item.id === assetId)) project.visualAssets.push(asset);
+        }
+        const merged = parseResearchPackage(applyVisualStoryboard(project.researchPackage, project.visualStoryboard));
+        if (!merged.success) throw new Error("Komposisi hasil Smart Hybrid tidak cocok dengan Research Package.");
+        project.researchPackage = merged.data;
+        const gate = visualStoryboardQualityGate(project.researchPackage, project.visualStoryboard, project.visualAssets);
+        const hasGateIssues = (gate.scenes[state.sceneId]?.length ?? 0) > 0;
+        state.source = result.source === "needs-authoring" ? undefined : result.source;
+        state.status = nextScene.authoringStatus === "needs_visual_authoring" || hasGateIssues ? "needs_attention" : "ready_for_review";
+        state.message = state.status === "needs_attention" ? result.warnings[0] ?? "Perlu perbaikan sebelum review." : "Ilustrasi disiapkan; review visual dan approve tetap diperlukan.";
+        state.recommendations = state.status === "needs_attention" ? ["AI Vector bila OpenCode Development siap", "Pilih ilustrasi/reusable scene", "AI Image hanya setelah izin biaya", "Upload ilustrasi sendiri"] : [];
+        withTransaction(() => {
+          saveProject(job.projectId, project);
+          writeVisualPreparationJob(job);
+        });
+        invalidateBundleCache();
+      } catch (error) {
+        state.status = "failed";
+        state.message = error instanceof Error ? error.message : "Persiapan scene gagal.";
+        state.recommendations = ["Coba Perbaiki Scene Bermasalah; scene lain tetap diproses."];
+        writeVisualPreparationJob(job);
+      }
+    }
+    writeVisualPreparationJob(job);
+  } finally {
+    activeProjectTasks.delete(job.projectId);
+    activeVisualPreparation = false;
+  }
+}
+
 function illustrationUploadMiddleware(request: express.Request, response: express.Response, next: express.NextFunction) {
   illustrationUpload.single("illustration")(request, response, (error) => {
     if (!error) return next();
@@ -210,7 +521,7 @@ function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
   const relativePath = path.relative(base, target);
   if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)
     || rootName === "audio" && path.dirname(target) !== audioDir
-    || rootName === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp)$/.test(path.basename(target)))) {
+    || rootName === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))) {
     throw new Error("Cleanup path keluar dari direktori yang diizinkan.");
   }
   db.prepare("INSERT OR IGNORE INTO file_cleanup_queue (root, relative_path, created_at) VALUES (?, ?, ?)")
@@ -226,6 +537,180 @@ function projectReferencesVisualAsset(file: string, excludingProjectId?: string)
   });
 }
 
+function snapshotReferencesVisualAsset(file: string) {
+  const rows = db.prepare("SELECT snapshot_path FROM jobs").all() as Array<{ snapshot_path: string }>;
+  return rows.some((row) => {
+    const snapshotPath = path.resolve(row.snapshot_path);
+    if (!snapshotPath.startsWith(`${jobDir}${path.sep}`)) return false;
+    try { return (JSON.parse(readFileSync(snapshotPath, "utf8")) as RenderSnapshot).visualAssets?.some((asset) => asset.file === file) ?? false; }
+    catch { return false; }
+  });
+}
+
+function reusableSceneReferencesVisualAsset(file: string) {
+  const rows = db.prepare("SELECT data_json FROM reusable_scene_compositions").all() as Array<{ data_json: string }>;
+  return rows.some((row) => {
+    try { return (JSON.parse(row.data_json) as { assetIds?: string[] }).assetIds?.some((id) => id === `upload-${file}`) ?? false; }
+    catch { return false; }
+  });
+}
+
+function visualAssetReferencedByStoryboard(storyboard: VisualStoryboard, assetId: string) {
+  return storyboard.scenes.some((scene) => scene.composition.layers.some((layer) => layer.nodes.some((node) => {
+    const candidates = node.type === "group" ? node.children : [node];
+    return candidates.some((candidate) => candidate.type === "image" && candidate.asset === assetId);
+  })));
+}
+
+function getVisualAssetLibrary(): VisualLibraryEntry[] {
+  const projects = db.prepare("SELECT id, data_json FROM projects ORDER BY updated_at DESC").all() as Array<{ id: string; data_json: string }>;
+  const assets = new Map<string, VisualAsset & { projectIds: string[]; previewUrl: string; localAvailable: boolean; referenceCount: number }>();
+  for (const row of projects) {
+    let stored: StoredProject;
+    try { stored = JSON.parse(row.data_json) as StoredProject; } catch { continue; }
+    for (const candidate of Array.isArray(stored.visualAssets) ? stored.visualAssets : []) {
+      const parsed = visualAssetSchema.safeParse(candidate);
+      if (!parsed.success) continue;
+      const existing = assets.get(parsed.data.id);
+      if (existing) existing.projectIds = [...new Set([...existing.projectIds, row.id])];
+      else assets.set(parsed.data.id, { ...parsed.data, projectIds: [row.id], previewUrl: `/visual-assets/${parsed.data.file}`, localAvailable: existsSync(path.join(visualAssetDir, parsed.data.file)), referenceCount: 0 });
+    }
+  }
+  const builtIns = trustedImageAssets.map((id) => ({
+    id, name: `${id[0]!.toUpperCase()}${id.slice(1)} · built-in`, source: "built-in" as const,
+    format: "svg" as const, width: 512, height: 512, style: "clean-flat-2d", license: "AI Facts Studio built-in asset",
+    semanticTags: [id], projectIds: [] as [], previewUrl: `/assets/${id}.svg`, localAvailable: true, referenceCount: 0,
+  }));
+  return [...builtIns, ...[...assets.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))];
+}
+
+function visualAssetUsageIndex() {
+  const usages = new Map<string, { projectIds: Set<string>; count: number }>();
+  const add = (assetId: string, projectId: string, count = 1) => {
+    const entry = usages.get(assetId) ?? { projectIds: new Set<string>(), count: 0 };
+    entry.projectIds.add(projectId);
+    entry.count += count;
+    usages.set(assetId, entry);
+  };
+  const rows = db.prepare("SELECT id, data_json FROM projects").all() as Array<{ id: string; data_json: string }>;
+  for (const row of rows) {
+    try {
+      const project = JSON.parse(row.data_json) as StoredProject;
+      for (const asset of project.visualAssets ?? []) add(asset.id, row.id, 0);
+      for (const scene of project.visualStoryboard.scenes) for (const layer of scene.composition.layers) for (const node of layer.nodes) {
+        const nodes = node.type === "group" ? node.children : [node];
+        for (const candidate of nodes) if (candidate.type === "image" && candidate.asset.startsWith("upload-")) add(candidate.asset, row.id);
+      }
+    } catch { /* ignore malformed legacy row */ }
+  }
+  const reusable = db.prepare("SELECT id, data_json FROM reusable_scene_compositions").all() as Array<{ id: string; data_json: string }>;
+  for (const row of reusable) {
+    try { for (const assetId of (JSON.parse(row.data_json) as { assetIds?: string[] }).assetIds ?? []) add(assetId, `reusable:${row.id}`); }
+    catch { /* keep malformed reusable metadata out of counts */ }
+  }
+  return usages;
+}
+
+function searchVisualAssetCatalog(query: string, filters: Record<string, string>, page: number, pageSize: number) {
+  const match = assetFtsExpression(query);
+  const conditions: string[] = [];
+  const values: (string | number)[] = [];
+  for (const key of ["category", "assetType", "style", "provider", "license"] as const) {
+    const value = filters[key];
+    if (!value) continue;
+    const column = key === "assetType" ? "asset_type" : key;
+    conditions.push(`${column} = ?`);
+    values.push(value);
+  }
+  if (match) { conditions.push("asset_id IN (SELECT asset_id FROM visual_asset_catalog_fts WHERE visual_asset_catalog_fts MATCH ?)"); values.push(match); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const total = (db.prepare(`SELECT COUNT(*) AS count FROM visual_asset_catalog ${where}`).get(...values) as { count: number }).count;
+  const rows = db.prepare(`SELECT metadata_json, available_local FROM visual_asset_catalog ${where} ORDER BY created_at DESC, asset_id LIMIT ? OFFSET ?`)
+    .all(...values, pageSize, (page - 1) * pageSize) as Array<{ metadata_json: string; available_local: number }>;
+  const usage = visualAssetUsageIndex();
+  const assets = rows.flatMap(({ metadata_json, available_local }) => {
+    try {
+      const asset = visualAssetSchema.parse(JSON.parse(metadata_json));
+      const refs = usage.get(asset.id);
+      return [{ ...asset, projectIds: [...(refs?.projectIds ?? [])].filter((id) => !id.startsWith("reusable:")), previewUrl: `/visual-assets/${asset.file}`, localAvailable: Boolean(available_local) && existsSync(path.join(visualAssetDir, asset.file)), referenceCount: refs?.count ?? 0 }];
+    } catch { return []; }
+  });
+  const facets = Object.fromEntries(["category", "asset_type", "style", "provider", "license"].map((column) => [column, (db.prepare(`SELECT DISTINCT ${column} AS value FROM visual_asset_catalog ORDER BY ${column}`).all() as Array<{ value: string }>).map((row) => row.value)]));
+  return { assets, total, page, pageSize, pageCount: Math.ceil(total / pageSize), facets };
+}
+
+async function persistVisualAsset(projectId: string, asset: VisualAsset, bytes: Buffer) {
+  const expectedHash = createHash("sha256").update(bytes).digest("hex");
+  if (expectedHash !== asset.sha256 || asset.file !== `${expectedHash}.${asset.format === "jpeg" ? "jpg" : asset.format}`) throw new Error("Hash file visual tidak cocok dengan metadata.");
+  const destination = path.join(visualAssetDir, asset.file);
+  let createdFile = false;
+  try {
+    try { await writeFile(destination, bytes, { flag: "wx" }); createdFile = true; }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== expectedHash) throw error;
+    }
+    const row = projectRow(projectId);
+    if (!row) throw new Error("Project tidak ditemukan.");
+    const project = projectFromRow(row);
+    const existingIndex = project.visualAssets.findIndex((item) => item.id === asset.id);
+    if (existingIndex >= 0) project.visualAssets[existingIndex] = asset;
+    else project.visualAssets.push(asset);
+    saveProject(projectId, project);
+    upsertVisualAssetCatalog(db, asset);
+    invalidateBundleCache();
+    return { project: getProject(projectId), asset };
+  } catch (error) {
+    if (createdFile) {
+      const referenced = projectReferencesVisualAsset(asset.file) || snapshotReferencesVisualAsset(asset.file) || reusableSceneReferencesVisualAsset(asset.file);
+      if (!referenced) await rm(destination, { force: true });
+    }
+    throw error;
+  }
+}
+
+async function availableHfImageModels(forceRefresh = false) {
+  if (!forceRefresh && aiImageModelCache && aiImageModelCache.expiresAt > Date.now()) return aiImageModelCache.models;
+  const models = await discoverHuggingFaceImageModels();
+  aiImageModelCache = { models, expiresAt: Date.now() + 5 * 60_000 };
+  return models;
+}
+
+async function aiImageProviderCatalog() {
+  const config = huggingFaceImageConfiguration();
+  const provider = {
+    id: "huggingface-inference",
+    displayName: "Hugging Face Inference Providers · hf-inference",
+    models: [] as Array<{ id: string; license: string | null }>,
+    selectedModel: config.model || DEFAULT_HF_IMAGE_MODEL,
+    supportedAspectRatios: ["9:16"],
+    resolutions: [...HF_IMAGE_RESOLUTIONS],
+    estimatedCost: null,
+    costDisclosure: "Harga, kredit tersisa, dan kuota akun tidak dapat diverifikasi aplikasi; setiap request dapat dikenai biaya.",
+  };
+  if (!config.configured) return {
+    status: "Not Configured" as AiImageStatus, configured: false, providers: [provider],
+    message: !config.token ? "HF_TOKEN belum diatur di server." : !config.enabled ? "AI Image disabled. Set HF_IMAGE_GENERATION_ENABLED=true untuk opt-in operator." : "Set HF_IMAGE_ALLOW_PAID=true hanya jika operator mengizinkan kemungkinan biaya; saldo tidak dapat diverifikasi.",
+    retryAt: null,
+  };
+  let models: typeof provider.models;
+  try { models = await availableHfImageModels(); }
+  catch (error) {
+    aiImageRuntime = { status: "Failed", message: error instanceof Error ? error.message : "Katalog Hugging Face gagal diperiksa.", retryAt: null };
+    return { status: aiImageRuntime.status, configured: false, providers: [provider], message: aiImageRuntime.message, retryAt: null };
+  }
+  provider.models = models;
+  if (activeAiImageGeneration) return { status: "Generating" as AiImageStatus, configured: models.length > 0, providers: [provider], message: "Satu gambar sedang dibuat; request tambahan ditolak.", retryAt: null };
+  if (aiImageRuntime.status === "Rate Limited" && aiImageRuntime.retryAt && Date.parse(aiImageRuntime.retryAt) <= Date.now()) {
+    aiImageRuntime = { status: "Ready", message: null, retryAt: null };
+  }
+  if (aiImageRuntime.status === "Rate Limited" || aiImageRuntime.status === "Quota Exhausted" || aiImageRuntime.status === "Failed") {
+    return { status: aiImageRuntime.status, configured: models.length > 0, providers: [provider], message: aiImageRuntime.message, retryAt: aiImageRuntime.retryAt };
+  }
+  if (!models.length) return { status: "Failed" as AiImageStatus, configured: false, providers: [provider], message: "Tidak ada model text-to-image live pada hf-inference.", retryAt: null };
+  aiImageRuntime = { status: "Ready", message: null, retryAt: null };
+  return { status: "Ready" as AiImageStatus, configured: true, providers: [provider], message: "Model diverifikasi live pada Hub. Harga dan saldo akun tidak diketahui; generation dapat dikenai biaya.", retryAt: null };
+}
+
 let cleanupRun: Promise<number> | null = null;
 
 function processFileCleanupQueue(): Promise<number> {
@@ -235,14 +720,14 @@ function processFileCleanupQueue(): Promise<number> {
 }
 
 async function runFileCleanupQueue() {
-  const queue = db.prepare("SELECT root, relative_path FROM file_cleanup_queue ORDER BY created_at").all() as Array<{ root: string; relative_path: string }>;
+  const queue = db.prepare("SELECT root, relative_path FROM file_cleanup_queue ORDER BY CASE root WHEN 'jobs' THEN 0 ELSE 1 END, created_at").all() as Array<{ root: string; relative_path: string }>;
   for (const item of queue) {
     const base = cleanupRoots[item.root as CleanupRoot];
     const target = base ? path.resolve(base, item.relative_path) : "";
     const relative = base ? path.relative(base, target) : "";
     if (!base || !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
       || item.root === "audio" && path.dirname(target) !== audioDir
-      || item.root === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp)$/.test(path.basename(target)))) {
+      || item.root === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))) {
       db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
         .run("Cleanup path invalid/outside allowed root.", item.root, item.relative_path);
       continue;
@@ -252,7 +737,18 @@ async function runFileCleanupQueue() {
         db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
         continue;
       }
+      if (item.root === "visual-assets" && snapshotReferencesVisualAsset(path.basename(target))) {
+        db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+          .run("Asset masih dirujuk snapshot render.", item.root, item.relative_path);
+        continue;
+      }
+      if (item.root === "visual-assets" && reusableSceneReferencesVisualAsset(path.basename(target))) {
+        db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+          .run("Asset masih dirujuk reusable scene.", item.root, item.relative_path);
+        continue;
+      }
       await rm(target, { recursive: true, force: true });
+      if (item.root === "visual-assets") db.prepare("UPDATE visual_asset_catalog SET available_local = 0 WHERE asset_id = ?").run(`upload-${path.basename(target)}`);
       db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
     } catch (error) {
       db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
@@ -445,6 +941,55 @@ app.post("/api/projects/:id/scenes/:sceneId/visual-plan", async (request, respon
   }
 });
 
+app.post("/api/projects/:id/scenes/:sceneId/visual-vector", async (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  if (activeAiGeneration) return apiError(response, 409, "AI generation sedang berjalan. Tunggu sampai selesai.", { code: "generation-in-progress" });
+  const requestData = visualPlannerRequestSchema.safeParse(request.body ?? {});
+  if (!requestData.success) return apiError(response, 400, "Pilihan model AI Vector tidak valid.", { code: "invalid-ai-vector-input", issues: requestData.error.issues });
+  const row = projectRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeProjectTasks.has(String(request.params.id)) || activeRenderJob || activeJobCreation) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
+  const project = projectFromRow(row);
+  const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === String(request.params.sceneId));
+  if (!scene) return apiError(response, 404, "Scene Visual Storyboard tidak ditemukan.");
+  const inputResult = visualPlannerInputSchema.safeParse({
+    headline: scene.headline, narration: scene.narrationText, visualDescription: scene.visualSummary,
+    artDirection: { styleId: project.visualStoryboard.styleId, palette: project.visualStoryboard.palette },
+    visualPlan: { focus: scene.visualFocus, objects: scene.objects.map((item) => item.objectId), relationships: scene.relationships },
+  });
+  if (!inputResult.success) return apiError(response, 400, "Copy scene belum memenuhi kontrak AI Vector.", { issues: inputResult.error.issues });
+  if (readAiGenerationMode(db) !== "development") return apiError(response, 409, "AI Vector PoC membutuhkan OpenCode Development mode.", { code: "opencode-mode-required" });
+
+  const openCode = new OpenCodeTextGenerationProvider(requestData.data.model ?? "");
+  const status = await openCode.status();
+  if (!status.configured) return apiError(response, 503, status.disabledReason ?? "OpenCode lokal belum tersedia.", { code: "opencode-unavailable" });
+  if (!requestData.data.model || !status.models.some((model) => model.id === requestData.data.model)) {
+    return apiError(response, 400, "Pilih model OpenCode terhubung untuk AI Vector.", { code: "opencode-model-required" });
+  }
+
+  activeAiGeneration = true;
+  activeAiGenerationPhase = "connecting";
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.once("aborted", abort);
+  response.once("close", () => { if (!response.writableEnded) abort(); });
+  try {
+    const result = await generateAiVectorIllustration(db, openCode, inputResult.data, {
+      signal: controller.signal,
+      onPhase: (phase) => { activeAiGenerationPhase = phase; },
+    });
+    response.json(result);
+  } catch (error) {
+    if (error instanceof OpenCodeGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+    if (controller.signal.aborted) return apiError(response, 499, "AI Vector generation dibatalkan.", { code: "cancelled" });
+    apiError(response, 422, error instanceof Error ? error.message : "AI Vector output tidak valid.", { code: "ai-vector-invalid" });
+  } finally {
+    request.off("aborted", abort);
+    activeAiGeneration = false;
+    activeAiGenerationPhase = "idle";
+  }
+});
+
 app.get("/api/ai-generation/status", (request, response) => {
   if (!localSettingsOnly(request, response)) return;
   response.json({ active: activeAiGeneration, phase: activeAiGenerationPhase });
@@ -538,6 +1083,7 @@ app.post("/api/projects", (request, response) => {
 app.put("/api/projects/:id", (request, response) => {
   const row = projectRow(request.params.id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeProjectTasks.has(String(request.params.id)) || activeRenderJob || activeJobCreation) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
   const project = projectFromRow(row);
@@ -561,6 +1107,437 @@ app.put("/api/projects/:id", (request, response) => {
   response.json(getProject(row.id));
 });
 
+app.get("/api/projects/:id/visual-preparation", (request, response) => {
+  const id = String(request.params.id);
+  if (!projectRow(id)) return apiError(response, 404, "Project tidak ditemukan.");
+  const row = db.prepare("SELECT data_json FROM visual_preparation_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
+  try { response.json({ job: row ? JSON.parse(row.data_json) as VisualPreparationJob : null }); }
+  catch { apiError(response, 500, "Status persiapan visual tidak dapat dibaca."); }
+});
+
+app.post("/api/projects/:id/visual-preparation", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const id = String(request.params.id);
+  const row = projectRow(id);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  const input = z.object({ requestId: z.string().uuid(), sceneIds: z.array(z.string().trim().min(1).max(100)).max(30).optional() }).strict().safeParse(request.body);
+  if (!input.success) return apiError(response, 400, "Permintaan persiapan visual tidak valid.", { code: "invalid-visual-preparation", issues: input.error.issues });
+  const requestSha256 = createHash("sha256").update(JSON.stringify({ sceneIds: input.data.sceneIds ? [...new Set(input.data.sceneIds)].sort() : null })).digest("hex");
+  const sameRequest = db.prepare("SELECT data_json, request_sha256 FROM visual_preparation_jobs WHERE project_id = ? AND request_id = ?").get(id, input.data.requestId) as { data_json: string; request_sha256: string } | undefined;
+  if (sameRequest) {
+    if (sameRequest.request_sha256 && sameRequest.request_sha256 !== requestSha256) return apiError(response, 409, "Request ID sudah dipakai untuk pilihan scene berbeda.", { code: "idempotency-conflict" });
+    return response.status(200).json({ job: JSON.parse(sameRequest.data_json), replay: true });
+  }
+  const active = db.prepare("SELECT data_json FROM visual_preparation_jobs WHERE project_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
+  if (active) return response.status(202).json({ job: JSON.parse(active.data_json), replay: true });
+  if (activeVisualPreparation || activeMotionPreparation) return apiError(response, 409, "Satu batch visual/motion sedang berjalan. Tunggu sampai selesai.", { code: "visual-preparation-busy" });
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
+  const project = projectFromRow(row);
+  const requested = input.data.sceneIds ? new Set(input.data.sceneIds) : null;
+  if (requested && [...requested].some((sceneId) => !project.visualStoryboard.scenes.some((scene) => scene.sceneId === sceneId))) {
+    return apiError(response, 400, "Pilihan scene tidak ada di project.", { code: "visual-preparation-scene-not-found" });
+  }
+  const research = applyVisualStoryboard(project.researchPackage, project.visualStoryboard);
+  const gate = visualStoryboardQualityGate(research, project.visualStoryboard, project.visualAssets);
+  const now = new Date().toISOString();
+  const scenes: VisualPreparationScene[] = project.visualStoryboard.scenes.map((scene) => {
+    if (scene.approved) return { sceneId: scene.sceneId, status: "approved", source: "preserved", message: "Approval dipertahankan; tidak ada generasi ulang." };
+    if (protectedVisualScene(scene)) return {
+      sceneId: scene.sceneId, status: scene.authoringStatus === "needs_visual_authoring" ? "needs_attention" : "ready_for_review",
+      source: "preserved", message: "Ilustrasi manual/terpilih dipertahankan; tidak ditimpa batch.",
+    };
+    if (scene.authoringStatus === "needs_visual_authoring" && (!requested || requested.has(scene.sceneId))) {
+      return { sceneId: scene.sceneId, status: "pending", message: "Menunggu Smart Hybrid." };
+    }
+    if (scene.authoringStatus === "needs_visual_authoring") return {
+      sceneId: scene.sceneId, status: "needs_attention", message: "Belum diproses oleh permintaan ini.",
+      recommendations: ["Pilih Perbaiki Scene Bermasalah untuk mencoba lagi."],
+    };
+    return {
+      sceneId: scene.sceneId,
+      status: (gate.scenes[scene.sceneId]?.length ?? 0) ? "needs_attention" : "ready_for_review",
+      source: "preserved", message: "Ilustrasi yang tersedia dipertahankan untuk review manusia.",
+    };
+  });
+  const job: VisualPreparationJob = {
+    id: randomUUID(), projectId: id, requestId: input.data.requestId, status: "running", total: scenes.length, processed: 0,
+    currentSceneId: null, readyForReview: 0, needsAttention: 0, failed: 0, approved: 0, scenes, createdAt: now, updatedAt: now,
+  };
+  withTransaction(() => writeVisualPreparationJob(job, true, requestSha256));
+  activeProjectTasks.add(id);
+  void runVisualPreparation(job).catch((error) => {
+    for (const scene of job.scenes) if (scene.status === "pending" || scene.status === "preparing") {
+      scene.status = "failed";
+      scene.message = error instanceof Error ? error.message : "Batch persiapan visual gagal.";
+    }
+    job.status = "failed";
+    job.currentSceneId = null;
+    writeVisualPreparationJob(job);
+    activeProjectTasks.delete(id);
+    activeVisualPreparation = false;
+  });
+  response.status(202).json({ job, replay: false });
+});
+
+app.get("/api/projects/:id/motion-preparation", (request, response) => {
+  const id = String(request.params.id);
+  if (!projectRow(id)) return apiError(response, 404, "Project tidak ditemukan.");
+  const row = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
+  try { response.json({ job: row ? JSON.parse(row.data_json) as MotionPreparationJob : null }); }
+  catch { apiError(response, 500, "Status persiapan motion tidak dapat dibaca."); }
+});
+
+app.post("/api/projects/:id/motion-preparation", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const id = String(request.params.id);
+  const row = projectRow(id);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  const input = z.object({ requestId: z.string().uuid(), intensity: motionIntensitySchema.default("balanced"), sceneIds: z.array(z.string().trim().min(1).max(100)).max(30).optional() }).strict().safeParse(request.body);
+  if (!input.success) return apiError(response, 400, "Permintaan Motion Director tidak valid.", { code: "invalid-motion-preparation", issues: input.error.issues });
+  const sceneIds = input.data.sceneIds ? [...new Set(input.data.sceneIds)].sort() : null;
+  const requestSha256 = createHash("sha256").update(JSON.stringify({ intensity: input.data.intensity, sceneIds })).digest("hex");
+  const sameRequest = db.prepare("SELECT data_json, request_sha256 FROM motion_preparation_jobs WHERE project_id = ? AND request_id = ?").get(id, input.data.requestId) as { data_json: string; request_sha256: string } | undefined;
+  if (sameRequest) {
+    if (sameRequest.request_sha256 !== requestSha256) return apiError(response, 409, "Request ID sudah dipakai untuk pilihan motion berbeda.", { code: "idempotency-conflict" });
+    return response.status(200).json({ job: JSON.parse(sameRequest.data_json), replay: true });
+  }
+  const active = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE project_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
+  if (active) return response.status(202).json({ job: JSON.parse(active.data_json), replay: true });
+  if (activeMotionPreparation || activeVisualPreparation || activeRenderJob || activeJobCreation || activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
+  const project = projectFromRow(row);
+  const requested = sceneIds ? new Set(sceneIds) : null;
+  if (requested && [...requested].some((sceneId) => !project.visualStoryboard.scenes.some((scene) => scene.sceneId === sceneId))) {
+    return apiError(response, 400, "Pilihan scene tidak ada di project.", { code: "motion-scene-not-found" });
+  }
+  const research = applyVisualStoryboard(project.researchPackage, project.visualStoryboard);
+  const gate = visualStoryboardQualityGate(research, project.visualStoryboard, project.visualAssets);
+  const scenes: MotionPreparationScene[] = project.visualStoryboard.scenes.map((scene) => {
+    if (scene.approved || scene.motionStatus === "static" || scene.motionActions.length && scene.motionStatus !== "not_prepared") return { sceneId: scene.sceneId, status: "preserved", message: "Motion plan yang sudah ada dipertahankan oleh batch." };
+    if (requested && !requested.has(scene.sceneId)) return { sceneId: scene.sceneId, status: "preserved", message: "Scene tidak dipilih dalam permintaan ini." };
+    const issues = gate.scenes[scene.sceneId] ?? [];
+    if (scene.authoringStatus === "needs_visual_authoring" || issues.length) return { sceneId: scene.sceneId, status: "needs_attention", message: issues[0] ?? "Komposisi belum valid untuk Motion Director." };
+    return { sceneId: scene.sceneId, status: "pending", message: "Menunggu Motion Director deterministik." };
+  });
+  const now = new Date().toISOString();
+  const job: MotionPreparationJob = {
+    id: randomUUID(), projectId: id, requestId: input.data.requestId, status: "running", intensity: input.data.intensity,
+    total: scenes.length, processed: 0, currentSceneId: null, readyForReview: 0, preserved: 0, needsAttention: 0, failed: 0,
+    scenes, createdAt: now, updatedAt: now,
+  };
+  withTransaction(() => writeMotionPreparationJob(job, true, requestSha256));
+  activeProjectTasks.add(id);
+  void runMotionPreparation(job).catch((error) => {
+    for (const scene of job.scenes) if (["pending", "preparing"].includes(scene.status)) {
+      scene.status = "failed";
+      scene.message = error instanceof Error ? error.message : "Motion batch gagal.";
+    }
+    job.status = "failed";
+    job.currentSceneId = null;
+    writeMotionPreparationJob(job);
+    activeProjectTasks.delete(id);
+    activeMotionPreparation = false;
+  });
+  response.status(202).json({ job, replay: false });
+});
+
+app.post("/api/projects/:id/motion-preparation/:jobId/cancel", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const id = String(request.params.id);
+  const jobId = String(request.params.jobId);
+  const row = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE id = ? AND project_id = ?").get(jobId, id) as { data_json: string } | undefined;
+  if (!row) return apiError(response, 404, "Motion preparation job tidak ditemukan.");
+  const job = JSON.parse(row.data_json) as MotionPreparationJob;
+  if (job.status !== "running") return response.json({ job });
+  job.cancelRequested = true;
+  writeMotionPreparationJob(job);
+  response.status(202).json({ job });
+});
+
+app.get("/api/visual-assets/library", (_request, response) => {
+  const page = Math.max(1, Math.min(100_000, Number(_request.query.page) || 1));
+  const pageSize = Math.max(1, Math.min(36, Number(_request.query.pageSize) || 18));
+  const value = (key: string, max = 120) => typeof _request.query[key] === "string" ? String(_request.query[key]).trim().slice(0, max) : "";
+  response.json(searchVisualAssetCatalog(value("q", 200), {
+    category: value("category"), assetType: value("type"), style: value("style"), provider: value("provider"), license: value("license"),
+  }, page, pageSize));
+});
+
+app.get("/api/reusable-scenes", (request, response) => {
+  const query = typeof request.query.q === "string" ? request.query.q.trim().slice(0, 200) : "";
+  const style = typeof request.query.style === "string" ? request.query.style.slice(0, 80) : "";
+  const layout = typeof request.query.layout === "string" ? request.query.layout.slice(0, 80) : "";
+  const page = Math.max(1, Math.min(100_000, Number(request.query.page) || 1));
+  const pageSize = Math.max(1, Math.min(24, Number(request.query.pageSize) || 12));
+  const match = assetFtsExpression(query);
+  const conditions: string[] = [];
+  const values: (string | number)[] = [];
+  if (style) { conditions.push("style_id = ?"); values.push(style); }
+  if (layout) { conditions.push("layout = ?"); values.push(layout); }
+  if (match) { conditions.push("id IN (SELECT id FROM reusable_scene_compositions_fts WHERE reusable_scene_compositions_fts MATCH ?)"); values.push(match); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const total = (db.prepare(`SELECT COUNT(*) AS count FROM reusable_scene_compositions ${where}`).get(...values) as { count: number }).count;
+  const scenes = db.prepare(`SELECT data_json, version, usage_count, created_at, updated_at FROM reusable_scene_compositions ${where} ORDER BY usage_count DESC, updated_at DESC LIMIT ? OFFSET ?`).all(...values, pageSize, (page - 1) * pageSize)
+    .flatMap((row) => {
+      try {
+        const stored = row as { data_json: string; version: number; usage_count: number; created_at: string; updated_at: string };
+        return [{ ...JSON.parse(stored.data_json), version: stored.version, usageCount: stored.usage_count, createdAt: stored.created_at, updatedAt: stored.updated_at }];
+      } catch { return []; }
+    });
+  const facets = {
+    styles: (db.prepare("SELECT DISTINCT style_id AS value FROM reusable_scene_compositions ORDER BY style_id").all() as Array<{ value: string }>).map((row) => row.value),
+    layouts: (db.prepare("SELECT DISTINCT layout AS value FROM reusable_scene_compositions ORDER BY layout").all() as Array<{ value: string }>).map((row) => row.value),
+  };
+  response.json({ scenes, total, page, pageSize, pageCount: Math.ceil(total / pageSize), facets });
+});
+
+app.post("/api/projects/:id/reusable-scenes", async (request, response) => {
+  const projectId = String(request.params.id);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  const parsed = reusableSceneInputSchema.safeParse(request.body);
+  if (!parsed.success) return apiError(response, 400, "Reusable scene tidak valid.", { code: "invalid-reusable-scene", issues: parsed.error.issues });
+  const project = projectFromRow(row);
+  const usedAssetIds = [...new Set(parsed.data.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : []))].sort();
+  if (JSON.stringify(usedAssetIds) !== JSON.stringify([...new Set(parsed.data.assetIds)].sort())) return apiError(response, 400, "Asset references tidak cocok dengan composition JSON.", { code: "reusable-scene-assets-mismatch" });
+  for (const assetId of usedAssetIds) {
+    const asset = project.visualAssets.find((item) => item.id === assetId);
+    if (!asset || !existsSync(path.join(visualAssetDir, asset.file)) || await sha256File(path.join(visualAssetDir, asset.file)) !== asset.sha256) return apiError(response, 400, "Reusable scene merujuk aset lokal yang tidak tersedia atau hash-nya berubah.", { code: "reusable-scene-asset-unavailable", assetId });
+  }
+  let thumbnail: Buffer;
+  try {
+    thumbnail = Buffer.from(parsed.data.thumbnailDataUrl.slice("data:image/png;base64,".length), "base64");
+    if (`data:image/png;base64,${thumbnail.toString("base64")}` !== parsed.data.thumbnailDataUrl) throw new Error("PNG thumbnail encoding tidak canonical.");
+    validateRasterImage(thumbnail);
+  } catch (error) { return apiError(response, 400, error instanceof Error ? error.message : "Thumbnail PNG tidak valid.", { code: "invalid-reusable-scene-thumbnail" }); }
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const scene = { ...parsed.data, assetIds: usedAssetIds, id, version: 1, usageCount: 0, createdAt: now, updatedAt: now };
+  withTransaction(() => {
+    db.prepare(`INSERT INTO reusable_scene_compositions (id, name, style_id, layout, tags_json, concepts_json, composition_json, data_json, thumbnail_data_url, version, usage_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`)
+      .run(id, scene.name, scene.styleId, scene.layout, JSON.stringify(scene.tags), JSON.stringify(scene.concepts), JSON.stringify(scene.composition), JSON.stringify(scene), scene.thumbnailDataUrl, now, now);
+    db.prepare("INSERT INTO reusable_scene_compositions_fts (id, name, tags, concepts) VALUES (?, ?, ?, ?)")
+      .run(id, scene.name, scene.tags.join(" "), scene.concepts.join(" "));
+  });
+  response.status(201).json(scene);
+});
+
+app.post("/api/projects/:id/reusable-scenes/:sceneId/attach", async (request, response) => {
+  const projectId = String(request.params.id);
+  const sceneId = String(request.params.sceneId);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(projectId)) return apiError(response, 409, "Reusable scene tidak dapat dipakai saat render atau snapshot berjalan.");
+  const stored = db.prepare("SELECT data_json FROM reusable_scene_compositions WHERE id = ?").get(sceneId) as { data_json: string } | undefined;
+  if (!stored) return apiError(response, 404, "Reusable scene tidak ditemukan.");
+  let scene: ReturnType<typeof reusableSceneInputSchema.parse> & { id: string; version: number; usageCount: number; createdAt: string; updatedAt: string };
+  try {
+    const saved = JSON.parse(stored.data_json) as typeof scene;
+    const input = reusableSceneInputSchema.parse({
+      name: saved.name, tags: saved.tags, concepts: saved.concepts, styleId: saved.styleId, layout: saved.layout, compositionType: saved.compositionType,
+      composition: saved.composition, palette: saved.palette, motionIntent: saved.motionIntent, motionSummary: saved.motionSummary, motionPlan: saved.motionPlan,
+      objects: saved.objects, relationships: saved.relationships, visualFocus: saved.visualFocus, assetIds: saved.assetIds,
+      thumbnailDataUrl: saved.thumbnailDataUrl, provenance: saved.provenance,
+    });
+    scene = { ...input, id: saved.id, version: saved.version, usageCount: saved.usageCount, createdAt: saved.createdAt, updatedAt: saved.updatedAt };
+  }
+  catch { return apiError(response, 500, "Reusable scene tersimpan tidak valid."); }
+  activeProjectTasks.add(projectId);
+  try {
+    const currentRow = projectRow(projectId);
+    if (!currentRow) return apiError(response, 404, "Project tidak ditemukan.");
+    const project = projectFromRow(currentRow);
+    const missing: string[] = [];
+    for (const assetId of scene.assetIds) {
+      const catalog = db.prepare("SELECT metadata_json FROM visual_asset_catalog WHERE asset_id = ?").get(assetId) as { metadata_json: string } | undefined;
+      if (!catalog) { missing.push(assetId); continue; }
+      const asset = visualAssetSchema.safeParse(JSON.parse(catalog.metadata_json));
+      if (!asset.success || !existsSync(path.join(visualAssetDir, asset.data.file)) || await sha256File(path.join(visualAssetDir, asset.data.file)) !== asset.data.sha256) { missing.push(assetId); continue; }
+      if (!project.visualAssets.some((item) => item.id === assetId)) project.visualAssets.push(asset.data);
+    }
+    if (missing.length) return apiError(response, 409, "Sebagian aset reusable scene tidak tersedia lokal.", { code: "reusable-scene-assets-unavailable", assets: missing });
+    saveProject(projectId, project);
+    db.prepare("UPDATE reusable_scene_compositions SET usage_count = usage_count + 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), sceneId);
+    invalidateBundleCache();
+    response.json({ project: getProject(projectId), scene });
+  } finally { activeProjectTasks.delete(projectId); }
+});
+
+app.delete("/api/reusable-scenes/:sceneId", async (request, response) => {
+  const id = String(request.params.sceneId);
+  const stored = db.prepare("SELECT data_json FROM reusable_scene_compositions WHERE id = ?").get(id) as { data_json: string } | undefined;
+  if (!stored) return apiError(response, 404, "Reusable scene tidak ditemukan.");
+  let assetIds: string[] = [];
+  try { assetIds = (JSON.parse(stored.data_json) as { assetIds?: string[] }).assetIds ?? []; } catch { /* malformed record has no trusted file references */ }
+  withTransaction(() => {
+    db.prepare("DELETE FROM reusable_scene_compositions WHERE id = ?").run(id);
+    db.prepare("DELETE FROM reusable_scene_compositions_fts WHERE id = ?").run(id);
+    for (const assetId of assetIds) {
+      const file = assetId.replace(/^upload-/, "");
+      if (!projectReferencesVisualAsset(file) && !snapshotReferencesVisualAsset(file)) queueFileCleanup("visual-assets", path.join(visualAssetDir, file));
+    }
+  });
+  const cleanupPending = await tryProcessFileCleanupQueue();
+  response.json({ deleted: true, cleanupPending });
+});
+
+app.get("/api/asset-packs/tabler", (request, response) => {
+  const page = Math.max(1, Math.min(100_000, Number(request.query.page) || 1));
+  const pageSize = Math.max(1, Math.min(36, Number(request.query.pageSize) || 24));
+  const query = typeof request.query.q === "string" ? request.query.q.trim().slice(0, 120) : "";
+  const category = typeof request.query.category === "string" ? request.query.category.slice(0, 80) : "";
+  response.json(searchTablerIcons(db, query, category, page, pageSize));
+});
+
+app.get("/api/asset-packs/tabler/icons/:iconId.svg", (request, response) => {
+  try {
+    const svg = sanitizedTablerSvg(String(request.params.iconId));
+    response.type("image/svg+xml").set("X-Content-Type-Options", "nosniff").set("Cache-Control", "public, max-age=86400, immutable").send(svg);
+  } catch { apiError(response, 404, "Ikon Tabler tidak tersedia."); }
+});
+
+app.get("/api/openverse/images", async (request, response) => {
+  const query = typeof request.query.q === "string" ? request.query.q.trim().slice(0, 200) : "";
+  const license = typeof request.query.license === "string" ? request.query.license.slice(0, 80) : openverseLicenseIds.join(",");
+  const page = Math.max(1, Math.min(10_000, Number(request.query.page) || 1));
+  const pageSize = Math.max(1, Math.min(24, Number(request.query.pageSize) || 18));
+  try { response.json(await searchOpenverse(query, license, page, pageSize)); }
+  catch (error) { apiError(response, 502, error instanceof Error ? error.message : "Openverse search gagal.", { code: "openverse-search-failed" }); }
+});
+
+app.get("/api/openverse/thumbnail", async (request, response) => {
+  const url = typeof request.query.url === "string" ? request.query.url.slice(0, 2000) : "";
+  try {
+    const thumbnail = await fetchOpenverseThumbnail(url);
+    response.type(thumbnail.mimeType).set("X-Content-Type-Options", "nosniff").set("Cache-Control", "public, max-age=3600")
+      .set("Content-Security-Policy", "default-src 'none'; sandbox").send(thumbnail.buffer);
+  } catch (error) { apiError(response, 502, error instanceof Error ? error.message : "Thumbnail Openverse gagal dimuat.", { code: "openverse-thumbnail-failed" }); }
+});
+
+app.get("/api/projects/:id/visual-assets/credits.csv", (request, response) => {
+  const project = getProject(String(request.params.id));
+  if (!project) return apiError(response, 404, "Project tidak ditemukan.");
+  const referenced = new Set(project.visualStoryboard.scenes.flatMap((scene: VisualStoryboard["scenes"][number]) => scene.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).flatMap((node) => node.type === "image" && node.asset.startsWith("upload-") ? [node.asset] : [])));
+  const rows = (project.visualAssets as VisualAsset[]).filter((asset) => referenced.has(asset.id)).map((asset) => [asset.name, asset.creator ?? "", asset.attribution ?? "", asset.license, asset.licenseUrl ?? "", asset.sourceUrl ?? "", asset.provider ?? ""]);
+  const csv = [ ["Asset", "Creator", "Attribution", "License", "License URL", "Source URL", "Provider"], ...rows ]
+    .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
+  response.type("text/csv").set("Content-Disposition", "attachment; filename=visual-asset-credits.csv").send(`\ufeff${csv}`);
+});
+
+app.get("/api/ai-image/providers", async (_request, response) => {
+  response.json(await aiImageProviderCatalog());
+});
+
+app.post("/api/projects/:id/scenes/:sceneId/ai-image/generate", async (request, response) => {
+  const projectId = String(request.params.id);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(projectId)) return apiError(response, 409, "AI Image tidak dapat berjalan saat render atau perubahan project lain berlangsung.", { code: "project-busy" });
+  if (activeAiImageGeneration) return apiError(response, 409, "Satu AI Image generation sedang berlangsung.", { code: "generation-in-progress" });
+  const config = huggingFaceImageConfiguration();
+  if (!config.configured) return apiError(response, 503, "AI Image provider belum dikonfigurasi dan diizinkan operator.", { code: "ai-image-not-configured" });
+  if (aiImageRuntime.status === "Rate Limited" && aiImageRuntime.retryAt && Date.parse(aiImageRuntime.retryAt) > Date.now()) {
+    return apiError(response, 429, aiImageRuntime.message ?? "Hugging Face rate limited.", { code: "ai-image-rate-limited", retryAt: aiImageRuntime.retryAt });
+  }
+  if (aiImageRuntime.status === "Quota Exhausted") return apiError(response, 402, aiImageRuntime.message ?? "Hugging Face quota exhausted.", { code: "ai-image-quota-exhausted" });
+  const input = z.object({
+    provider: z.literal("huggingface-inference"),
+    model: z.string().trim().min(3).max(120),
+    prompt: z.string().trim().min(20).max(12000),
+    resolution: z.enum(HF_IMAGE_RESOLUTIONS),
+    confirmed: z.literal(true),
+    costAcknowledged: z.literal(true),
+  }).strict().safeParse(request.body);
+  if (!input.success) return apiError(response, 400, "AI Image request tidak valid atau konfirmasi biaya tidak ada.", { code: "invalid-ai-image-request", issues: input.error.issues });
+  const project = projectFromRow(row);
+  const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === String(request.params.sceneId));
+  if (!scene) return apiError(response, 404, "Scene Visual Storyboard tidak ditemukan.");
+  activeAiImageGeneration = true;
+  aiImageRuntime = { status: "Generating", message: "Satu gambar sedang dibuat.", retryAt: null };
+  activeProjectTasks.add(projectId);
+  try {
+    const availableModels = await availableHfImageModels(true);
+    const model = availableModels.find((item) => item.id === input.data.model);
+    if (!model) {
+      const message = "Model tidak terdaftar live pada hf-inference; pilih model yang tersedia lalu coba lagi.";
+      aiImageRuntime = { status: "Failed", message, retryAt: null };
+      return apiError(response, 409, message, { code: "ai-image-model-unavailable" });
+    }
+    const provider = new HuggingFaceInferenceImageProvider(config.token);
+    const generated = await provider.generate({
+      model: model.id, prompt: input.data.prompt, resolution: input.data.resolution,
+      userConfirmed: input.data.confirmed, costAcknowledged: input.data.costAcknowledged,
+    });
+    const processed = await validateAndOptimizeRasterImage(Buffer.from(generated.bytes), generated.mimeType);
+    const now = new Date().toISOString();
+    const sha256 = createHash("sha256").update(processed.buffer).digest("hex");
+    const file = `${sha256}.${processed.image.extension}`;
+    const repositoryLicense = model.license ? `Model repository license tag: ${model.license}; generated-output license is not confirmed.` : "Generated-output license was not provided; review provider and model terms.";
+    const asset = visualAssetSchema.parse({
+      id: `upload-${file}`, name: `AI Image · ${scene.headline}`.slice(0, 120), visualCategory: "user-illustration", assetType: "illustration",
+      semanticTags: scene.objects.map((object) => object.label).slice(0, 20), supportedConcepts: [scene.visualSummary, scene.illustrationIntent].map((value) => value.slice(0, 80)).slice(0, 12),
+      role: "AI-generated educational illustration; semantic fit and crop require human review.", format: processed.image.format,
+      aspectRatio: processed.image.width / processed.image.height, source: "ai-generated",
+      provider: "Hugging Face Inference Providers · hf-inference", prompt: input.data.prompt, model: model.id,
+      license: repositoryLicense, licenseUrl: `https://huggingface.co/${model.id}`,
+      usageMetadata: JSON.stringify({ providerResponseHeaders: generated.usageMetadata ?? {}, price: "not provided", remainingBalance: "not provided", generatedOutputLicense: "not provided" }).slice(0, 950),
+      style: project.visualStoryboard.styleId, createdAt: now, sha256, bytes: processed.buffer.length,
+      width: processed.image.width, height: processed.image.height, file,
+    });
+    const persisted = await persistVisualAsset(projectId, asset, processed.buffer);
+    aiImageRuntime = { status: "Ready", message: null, retryAt: null };
+    response.status(201).json({ ...persisted, optimized: processed.optimized, originalBytes: processed.originalBytes, status: "Ready" });
+  } catch (error) {
+    if (error instanceof HuggingFaceImageError) {
+      const status = error.code === "ai-image-rate-limited" ? "Rate Limited" : error.code === "ai-image-quota-exhausted" ? "Quota Exhausted" : "Failed";
+      const retryAt = status === "Rate Limited" ? new Date(Date.now() + (error.retryAfterMs ?? 60_000)).toISOString() : null;
+      aiImageRuntime = { status, message: error.message, retryAt };
+      const httpStatus = status === "Rate Limited" ? 429 : status === "Quota Exhausted" ? 402 : error.code === "ai-image-model-unavailable" ? 409 : 502;
+      return apiError(response, httpStatus, error.message, { code: error.code, retryAt });
+    }
+    aiImageRuntime = { status: "Failed", message: error instanceof Error ? error.message : "AI Image gagal diproses.", retryAt: null };
+    apiError(response, 502, aiImageRuntime.message ?? "AI Image gagal diproses.", { code: "ai-image-provider-failed" });
+  } finally {
+    activeAiImageGeneration = false;
+    activeProjectTasks.delete(projectId);
+  }
+});
+
+app.post("/api/projects/:id/visual-assets/:assetId/attach", async (request, response) => {
+  const projectId = String(request.params.id);
+  const assetId = String(request.params.assetId);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (!/^upload-[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(assetId)) return apiError(response, 400, "ID aset library tidak valid.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(projectId)) return apiError(response, 409, "Aset tidak dapat diubah saat render atau snapshot berjalan.");
+  const catalogAsset = db.prepare("SELECT metadata_json FROM visual_asset_catalog WHERE asset_id = ?").get(assetId) as { metadata_json: string } | undefined;
+  let storedAsset: VisualAsset;
+  try {
+    if (catalogAsset) storedAsset = visualAssetSchema.parse(JSON.parse(catalogAsset.metadata_json));
+    else {
+      const asset = getVisualAssetLibrary().find((item) => item.id === assetId);
+      if (!asset || asset.source === "built-in") return apiError(response, 404, "Aset tidak tersedia di library.");
+      const { projectIds: _projectIds, previewUrl: _previewUrl, localAvailable: _localAvailable, referenceCount: _referenceCount, ...assetData } = asset;
+      storedAsset = visualAssetSchema.parse(assetData);
+    }
+  } catch { return apiError(response, 404, "Metadata aset tidak valid."); }
+  activeProjectTasks.add(projectId);
+  try {
+    const assetPath = path.resolve(visualAssetDir, storedAsset.file);
+    if (path.dirname(assetPath) !== visualAssetDir || !existsSync(assetPath) || await sha256File(assetPath) !== storedAsset.sha256) {
+      return apiError(response, 409, "File aset library hilang atau hash berubah.", { code: "visual-asset-integrity-failed" });
+    }
+    const currentRow = projectRow(projectId);
+    if (!currentRow) return apiError(response, 404, "Project tidak ditemukan.");
+    const project = projectFromRow(currentRow);
+    if (!project.visualAssets.some((item) => item.id === storedAsset.id)) project.visualAssets.push(storedAsset);
+    saveProject(projectId, project);
+    upsertVisualAssetCatalog(db, storedAsset);
+    invalidateBundleCache();
+    response.json({ project: getProject(projectId), asset: storedAsset });
+  } finally { activeProjectTasks.delete(projectId); }
+});
+
 app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async (request, response) => {
   const id = String(request.params.id);
   const row = projectRow(id);
@@ -571,33 +1548,40 @@ app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async 
   let createdFile = false;
   let asset: VisualAsset | undefined;
   try {
-    const image = validateRasterImage(request.file.buffer);
-    const expectedMime = image.format === "jpeg" ? "image/jpeg" : `image/${image.format}`;
-    if (request.file.mimetype !== expectedMime) return apiError(response, 400, "MIME type dan signature gambar tidak cocok.", { code: "image-mime-mismatch" });
-    const sha256 = createHash("sha256").update(request.file.buffer).digest("hex");
+    const processed = await validateAndOptimizeRasterImage(request.file.buffer, request.file.mimetype);
+    const image = processed.image;
+    const sha256 = createHash("sha256").update(processed.buffer).digest("hex");
     const file = `${sha256}.${image.extension}`;
     const name = typeof request.body?.name === "string" && request.body.name.trim()
       ? request.body.name.trim().slice(0, 120)
       : path.basename(request.file.originalname, path.extname(request.file.originalname)).slice(0, 120) || "Ilustrasi pengguna";
     const listField = (value: unknown, max: number) => typeof value === "string" ? [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean).map((item) => item.slice(0, 80)))].slice(0, max) : [];
+    const source = request.body?.source === "ai-generated" ? "ai-generated" : "user-upload";
+    const prompt = typeof request.body?.prompt === "string" ? request.body.prompt.trim().slice(0, 4000) : "";
+    const provider = typeof request.body?.provider === "string" && request.body.provider.trim() ? request.body.provider.trim().slice(0, 120) : "external-manual-import";
+    const model = typeof request.body?.model === "string" && request.body.model.trim() ? request.body.model.trim().slice(0, 120) : undefined;
     asset = visualAssetSchema.parse({
       id: `upload-${file}`, name, visualCategory: "user-illustration",
+      assetType: "illustration",
       semanticTags: listField(request.body?.semanticTags, 20), supportedConcepts: listField(request.body?.supportedConcepts, 12),
-      role: "Ilustrasi pengguna; kecocokan menunggu review manusia.",
-      format: image.format, aspectRatio: image.width / image.height, source: "user-upload",
-      license: typeof request.body?.license === "string" && request.body.license.trim() ? request.body.license.trim().slice(0, 160) : "unspecified",
-      sha256, bytes: request.file.size, width: image.width, height: image.height, file,
+      role: source === "ai-generated" ? "Ilustrasi AI eksternal yang diimpor manual; kecocokan menunggu review manusia." : "Ilustrasi pengguna; kecocokan menunggu review manusia.",
+      format: image.format, aspectRatio: image.width / image.height, source,
+      license: typeof request.body?.license === "string" && request.body.license.trim() ? request.body.license.trim().slice(0, 160) : "User-provided; license/provenance not specified",
+      style: typeof request.body?.style === "string" && request.body.style.trim() ? request.body.style.trim().slice(0, 120) : "clean-flat-2d",
+      ...(source === "ai-generated" ? { prompt, provider, ...(model ? { model } : {}) } : {}),
+      sha256, bytes: processed.buffer.length, width: image.width, height: image.height, file,
     });
     const destination = path.join(visualAssetDir, file);
-    try { await writeFile(destination, request.file.buffer, { flag: "wx" }); createdFile = true; }
+    try { await writeFile(destination, processed.buffer, { flag: "wx" }); createdFile = true; }
     catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== sha256) throw error;
     }
     const current = projectFromRow(row);
     if (!current.visualAssets.some((item) => item.id === asset!.id)) current.visualAssets.push(asset);
     saveProject(id, current);
+    upsertVisualAssetCatalog(db, asset);
     invalidateBundleCache();
-    response.status(201).json({ project: getProject(id), asset });
+    response.status(201).json({ project: getProject(id), asset, optimized: processed.optimized, originalBytes: processed.originalBytes });
   } catch (error) {
     if (createdFile && asset) {
       const referenced = (db.prepare("SELECT data_json FROM projects").all() as Array<{ data_json: string }>).some((item) => {
@@ -607,6 +1591,94 @@ app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async 
     }
     apiError(response, 400, error instanceof Error ? error.message : "Ilustrasi gagal divalidasi.", { code: "invalid-illustration" });
   } finally { activeProjectTasks.delete(id); }
+});
+
+app.post("/api/projects/:id/asset-packs/tabler/:iconId/import", async (request, response) => {
+  const projectId = String(request.params.id);
+  const iconId = String(request.params.iconId);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(projectId)) return apiError(response, 409, "Aset tidak dapat diubah saat render atau snapshot berjalan.");
+  const indexed = db.prepare("SELECT category, tags, package_version FROM asset_pack_icons WHERE pack = 'tabler-outline' AND icon_id = ?").get(iconId) as { category: string; tags: string; package_version: string } | undefined;
+  if (!indexed) return apiError(response, 404, "Ikon Tabler tidak tersedia di pack lokal.");
+  activeProjectTasks.add(projectId);
+  try {
+    const svg = Buffer.from(sanitizedTablerSvg(iconId), "utf8");
+    const sha256 = createHash("sha256").update(svg).digest("hex");
+    const file = `${sha256}.svg`;
+    const tags = JSON.parse(indexed.tags) as string[];
+    const asset = visualAssetSchema.parse({
+      id: `upload-${file}`, name: iconId.replaceAll("-", " "), visualCategory: "tabler-icon", assetType: "icon-object",
+      semanticTags: [...new Set([iconId.replaceAll("-", " "), ...tags])].slice(0, 20), supportedConcepts: tags.slice(0, 12),
+      role: `Tabler outline icon · category ${indexed.category}; icon bukan ilustrasi scene lengkap.`, format: "svg", aspectRatio: 1,
+      source: "tabler-pack", provider: `@tabler/icons ${indexed.package_version}`, license: "MIT License", licenseUrl: "https://github.com/tabler/tabler-icons/blob/main/LICENSE",
+      attribution: `Tabler Icons, Copyright (c) 2020-2026 Paweł Kuna. MIT License. Package @tabler/icons ${indexed.package_version}; full notice: /licenses/TABLER-ICONS-MIT.txt`, sourceUrl: `https://tabler.io/icons/${iconId}`,
+      style: "tabler-outline", sha256, bytes: svg.length, width: 24, height: 24, file,
+    });
+    response.status(201).json(await persistVisualAsset(projectId, asset, svg));
+  } catch (error) { apiError(response, 400, error instanceof Error ? error.message : "Tabler icon gagal diimpor.", { code: "tabler-import-failed" }); }
+  finally { activeProjectTasks.delete(projectId); }
+});
+
+app.post("/api/projects/:id/openverse/:imageId/import", async (request, response) => {
+  const projectId = String(request.params.id);
+  const imageId = String(request.params.imageId);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(projectId)) return apiError(response, 409, "Aset tidak dapat diubah saat render atau snapshot berjalan.");
+  activeProjectTasks.add(projectId);
+  try {
+    const downloaded = await downloadOpenverseImage(imageId);
+    const processed = await validateAndOptimizeRasterImage(downloaded.buffer, downloaded.mimeType);
+    const sha256 = createHash("sha256").update(processed.buffer).digest("hex");
+    const file = `${sha256}.${processed.image.extension}`;
+    const list = (value: unknown, fallback: string[], maxItems: number, maxChars: number) => {
+      const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : fallback;
+      return [...new Set(items.map((item) => String(item).trim()).filter(Boolean).map((item) => item.slice(0, maxChars)))].slice(0, maxItems);
+    };
+    const image = downloaded.image;
+    const licenseNames: Record<string, string> = { cc0: "CC0", pdm: "Public Domain Mark", by: "CC BY", "by-sa": "CC BY-SA" };
+    const licenseLabel = `${licenseNames[image.license] ?? image.license.toUpperCase()} ${image.licenseVersion}`.trim();
+    const asset = visualAssetSchema.parse({
+      id: `upload-${file}`, name: typeof request.body?.name === "string" ? request.body.name.trim().slice(0, 120) : image.title.slice(0, 120),
+      visualCategory: "openverse-illustration", assetType: "illustration",
+      semanticTags: list(request.body?.semanticTags, [image.title], 20, 60), supportedConcepts: list(request.body?.supportedConcepts, [image.title], 12, 80),
+      role: "Openverse illustration; local copy, licensed metadata retained, semantic fit requires human review.",
+      format: processed.image.format, aspectRatio: processed.image.width / processed.image.height, source: "openverse",
+      provider: `Openverse · ${image.provider || image.source}`, creator: image.creator,
+      attribution: image.attribution || `${image.title} by ${image.creator} (${licenseLabel}); ${image.landingUrl}`,
+      sourceUrl: image.landingUrl, licenseUrl: image.licenseUrl, license: licenseLabel,
+      style: typeof request.body?.style === "string" ? request.body.style.trim().slice(0, 120) || "openverse-illustration" : "openverse-illustration",
+      sha256, bytes: processed.buffer.length, width: processed.image.width, height: processed.image.height, file,
+    });
+    response.status(201).json({ ...(await persistVisualAsset(projectId, asset, processed.buffer)), optimized: processed.optimized, originalBytes: processed.originalBytes, externalImage: image });
+  } catch (error) { apiError(response, 502, error instanceof Error ? error.message : "Openverse asset import gagal.", { code: "openverse-import-failed" }); }
+  finally { activeProjectTasks.delete(projectId); }
+});
+
+app.delete("/api/projects/:id/visual-assets/:assetId", async (request, response) => {
+  const id = String(request.params.id);
+  const assetId = String(request.params.assetId);
+  const row = projectRow(id);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(id)) return apiError(response, 409, "Aset tidak dapat dilepas saat render atau snapshot berjalan.");
+  const project = projectFromRow(row);
+  const asset = project.visualAssets.find((item) => item.id === assetId);
+  if (!asset) return apiError(response, 404, "Aset tidak ditemukan di project.");
+  if (visualAssetReferencedByStoryboard(project.visualStoryboard, asset.id)) return apiError(response, 409, "Aset masih digunakan scene. Ganti ilustrasi scene sebelum menghapus aset.", { code: "visual-asset-in-use" });
+  if (snapshotReferencesVisualAsset(asset.file)) return apiError(response, 409, "Aset masih dirujuk snapshot render; hapus project/snapshot terkait sebelum melepas aset.", { code: "visual-asset-snapshot-in-use" });
+  project.visualAssets = project.visualAssets.filter((item) => item.id !== assetId);
+  try {
+    withTransaction(() => {
+      saveProject(id, project);
+      if (!projectReferencesVisualAsset(asset.file, id)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
+    });
+    invalidateBundleCache();
+    const cleanupPending = await tryProcessFileCleanupQueue();
+    response.json({ project: getProject(id), cleanupPending });
+  } catch {
+    apiError(response, 500, "Aset tidak dapat dilepas dengan aman.");
+  }
 });
 
 app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request, response) => {
@@ -1012,7 +2084,7 @@ app.post("/api/projects/:id/generate", async (request, response) => {
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   if (activeProjectTasks.has(projectId)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
   const project = projectFromRow(row);
-  const visualGate = visualStoryboardQualityGate(project.researchPackage, project.visualStoryboard, project.visualAssets.map((asset) => asset.id));
+  const visualGate = visualStoryboardQualityGate(project.researchPackage, project.visualStoryboard, project.visualAssets);
   if (!visualGate.ready || project.visualStoryboard.scenes.some((scene) => !scene.approved)) {
     return apiError(response, 409, "Visual Storyboard perlu lolos review dan approval sebelum motion/render.", {
       code: "visual-storyboard-not-approved", issues: visualGate.issues,
@@ -1023,6 +2095,12 @@ app.post("/api/projects/:id/generate", async (request, response) => {
     return apiError(response, 409, "Naskah berubah setelah AI Voice dibuat. Generate ulang audio atau pilih upload manual.", { code: "tts-audio-stale" });
   }
   const snapshot = snapshotForProject(project);
+  for (const asset of snapshot.visualAssets ?? []) {
+    const assetPath = path.resolve(visualAssetDir, asset.file);
+    if (path.dirname(assetPath) !== visualAssetDir || !existsSync(assetPath) || await sha256File(assetPath) !== asset.sha256) {
+      return apiError(response, 409, `Aset visual ${asset.name} hilang atau hash berubah; pilih ulang/unggah lagi sebelum membuat snapshot.`, { code: "visual-asset-integrity-failed", assetId: asset.id });
+    }
+  }
   const source = JSON.stringify(snapshot);
   const sourceSha = createHash("sha256").update(source).digest("hex");
   const existing = db.prepare("SELECT * FROM jobs WHERE project_id = ? AND source_sha256 = ?").get(row.id, sourceSha) as JobRow | undefined;
@@ -1195,4 +2273,30 @@ cleanupRetryTimer.unref();
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3001);
-app.listen(port, host, () => console.log(`AI Facts Studio API: http://${host}:${port}`));
+app.listen(port, host, () => {
+  console.log(`AI Facts Studio API: http://${host}:${port}`);
+  void (async () => {
+    const rows = db.prepare("SELECT data_json FROM visual_preparation_jobs WHERE status = 'running' ORDER BY created_at").all() as Array<{ data_json: string }>;
+    for (const row of rows) {
+      try {
+        const job = JSON.parse(row.data_json) as VisualPreparationJob;
+        for (const scene of job.scenes) if (scene.status === "preparing") scene.status = "pending";
+        job.currentSceneId = null;
+        job.status = "running";
+        writeVisualPreparationJob(job);
+        await runVisualPreparation(job);
+      } catch (error) { console.error("Visual preparation recovery failed:", error instanceof Error ? error.message : "unknown error"); }
+    }
+    const motionRows = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE status = 'running' ORDER BY created_at").all() as Array<{ data_json: string }>;
+    for (const row of motionRows) {
+      try {
+        const job = JSON.parse(row.data_json) as MotionPreparationJob;
+        for (const scene of job.scenes) if (scene.status === "preparing") scene.status = "pending";
+        job.currentSceneId = null;
+        job.status = "running";
+        writeMotionPreparationJob(job);
+        await runMotionPreparation(job);
+      } catch (error) { console.error("Motion preparation recovery failed:", error instanceof Error ? error.message : "unknown error"); }
+    }
+  })();
+});

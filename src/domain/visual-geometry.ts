@@ -21,6 +21,8 @@ export function visualCompositionFrame(composition: VisualComposition) {
   const foreground = composition.layers.filter((layer) => layer.depth > 0.1);
   const nodes = (foreground.length ? foreground : composition.layers).flatMap((layer) => layer.nodes).filter((node) => !isBackground(node));
   if (!nodes.length) return { scale: 1, translateX: 0, translateY: 0 };
+  // Raster frames are art-directed in canvas coordinates; auto-fit would crop safe areas and make thumbnails disagree with user framing.
+  if (nodes.some((node) => node.type === "image" && node.asset.startsWith("upload-"))) return { scale: 1, translateX: 0, translateY: 0 };
   const bounds = nodes.reduce((box, node) => union(box, rotatedBounds(node)), emptyBounds());
   const width = Math.max(1, bounds.right - bounds.left);
   const height = Math.max(1, bounds.bottom - bounds.top);

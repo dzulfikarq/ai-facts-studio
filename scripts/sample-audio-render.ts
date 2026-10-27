@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseResearchPackage } from "../src/domain/research";
+import { RENDERER_VERSION } from "../src/video/renderer-version";
 import { renderSnapshot } from "./render-core";
 
 const sampleName = process.argv[2]!;
@@ -18,7 +19,7 @@ assert.equal(parsed.success, true, `${sampleName} package should validate`);
 if (!parsed.success) throw new Error(`${sampleName} package invalid.`);
 const manifest = await renderSnapshot({
   research: parsed.data,
-  rendererVersion: 2,
+  rendererVersion: RENDERER_VERSION,
   audio: { file: `audio/test-fixtures/${fixtureName}`, durationSec: parsed.data.targetDurationSec, timingMode: "scaled", source: "mock-fixture", sha256: audioSha256 },
 }, outputPath);
 const manifestPath = outputPath.replace(/\.mp4$/i, ".manifest.json");

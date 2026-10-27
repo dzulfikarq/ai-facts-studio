@@ -7,12 +7,19 @@ import type { AnyZodObject } from "remotion";
 import { categories, motionCues, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
-import { applyVisualStoryboard, buildVisualStoryboard, visualApprovalFingerprint, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { defaultMotionPlan } from "../domain/visual-defaults";
 import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
 import type { VisualAsset } from "../domain/visual-assets";
+import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
+import type { AssetPlacement, ReusableSceneEntry } from "./SmartAssetLibraryDialog";
+import { buildIllustrationPrompt } from "../domain/illustration-prompt";
 import type { VisualSemanticPlan } from "../domain/visual-semantic-plan";
+import type { AiVectorIllustration } from "../domain/ai-vector-illustration";
+import type { VisualPreparationJob } from "../domain/visual-preparation";
+import type { MotionPreparationJob } from "../domain/motion-preparation";
+import { planSceneMotion, type MotionIntensity } from "../domain/motion-director";
 import { durationInFrames } from "../domain/timeline";
 import { narrationScript } from "../domain/voice-timing";
 import { previewInputProps } from "../video/video";
@@ -48,6 +55,8 @@ type Project = {
   id: string;
   researchPackage: ResearchPackage;
   visualStoryboard: VisualStoryboard;
+  visualPreparation: VisualPreparationJob | null;
+  motionPreparation: MotionPreparationJob | null;
   visualAssets: VisualAsset[];
   audio: {
     file: string; name: string; durationSec: number; bytes: number; sha256: string;
@@ -75,12 +84,15 @@ type AiGenerationSettings = {
   };
   generationAvailable: boolean;
 };
+type AiImageStatus = "Not Configured" | "Ready" | "Generating" | "Rate Limited" | "Quota Exhausted" | "Failed";
+type AiImageProviderCatalog = { status: AiImageStatus; configured: boolean; providers: Array<{ id: string; displayName: string; models: Array<{ id: string; license: string | null }>; selectedModel: string; supportedAspectRatios: string[]; resolutions: string[]; estimatedCost: null; costDisclosure: string }>; message: string | null; retryAt: string | null };
+type IllustrationImportInfo = { source: "user-upload" | "ai-generated"; prompt?: string; license: string; provider?: string; model?: string };
 type OpenCodeModel = AiGenerationSettings["providers"]["development"]["models"][number];
 type OpenCodeModelGroup = { id: string; name: string; models: OpenCodeModel[] };
 type TtsVoice = { id: string; name: string; locale: string; localeName: string; gender: string; description?: string; wordsPerMinute: number; availability: "api" | "fallback" };
 type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; dailyLimit?: number; requestsUsed?: number; requestsRemaining?: number; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
-type Failure = Error & { issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null; retryAt?: string | null; quotaType?: string | null };
+type Failure = Error & { code?: string; issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null; retryAt?: string | null; quotaType?: string | null };
 type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "warning" | "danger"; onConfirm?: () => Promise<void> };
 type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void; pending?: boolean; error?: string };
 
@@ -89,6 +101,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.error ?? `Request gagal (${response.status})`) as Failure;
+    error.code = body.code;
     error.issues = body.issues;
     error.nextAllowedAt = body.nextAllowedAt;
     error.retryAt = body.retryAt;
@@ -124,12 +137,16 @@ function App() {
   const [jsonDraft, setJsonDraft] = useState("");
   const [status, setStatus] = useState<Status | null>(null);
   const [aiGenerationSettings, setAiGenerationSettings] = useState<AiGenerationSettings | null>(null);
+  const [aiImageProviders, setAiImageProviders] = useState<AiImageProviderCatalog | null>(null);
   const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
   const [aiSettingsError, setAiSettingsError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [generatingVisualSceneId, setGeneratingVisualSceneId] = useState<string | null>(null);
   const [planningVisualSceneId, setPlanningVisualSceneId] = useState<string | null>(null);
+  const [vectorizingVisualSceneId, setVectorizingVisualSceneId] = useState<string | null>(null);
+  const [librarySceneId, setLibrarySceneId] = useState<string | null>(null);
+  const [libraryInitialTab, setLibraryInitialTab] = useState<"mine" | "scenes">("mine");
   const [visualPlannerModel, setVisualPlannerModel] = useState("");
   const [saved, setSaved] = useState(true);
   const [activeStep, setActiveStep] = useState<WorkspaceStep>("materials");
@@ -155,7 +172,7 @@ function App() {
 
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
   const visualResearch = useMemo(() => project && research ? applyVisualStoryboard(research, project.visualStoryboard) : research, [project?.visualStoryboard, project?.id, research]);
-  const visualGate = useMemo(() => project && visualResearch ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets.map((asset) => asset.id)) : null, [project?.visualStoryboard, project?.visualAssets, visualResearch]);
+  const visualGate = useMemo(() => project && visualResearch ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets) : null, [project?.visualStoryboard, project?.visualAssets, visualResearch]);
   const visualApproved = Boolean(visualGate?.ready && project?.visualStoryboard.scenes.length && project.visualStoryboard.scenes.every((scene) => scene.approved));
   const reviewFingerprint = project && visualResearch ? previewReviewFingerprint(visualResearch, project.audio, RENDERER_VERSION) : "";
   const draftAudioMatches = !project?.audio || project.audio.source !== "tts" || Boolean(project.audioMatchesNarration && visualResearch && narrationScript(visualResearch) === narrationScript(project.researchPackage));
@@ -249,12 +266,51 @@ function App() {
   useEffect(() => {
     void refresh().catch((error) => setMessage(friendlyError(error)));
     void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
+    void api<AiImageProviderCatalog>("/api/ai-image/providers").then(setAiImageProviders).catch(() => setAiImageProviders({ status: "Failed", configured: false, providers: [], message: "Provider gambar tidak tersedia; gunakan Prompt Builder + import manual.", retryAt: null }));
   }, []);
 
   useEffect(() => {
     if (!project?.id) return;
     try { localStorage.setItem(`ai-facts-studio:workspace-step:${project.id}`, activeStep); } catch { /* local progress is optional */ }
   }, [project?.id, activeStep]);
+
+  useEffect(() => {
+    const id = project?.id;
+    const jobId = project?.visualPreparation?.id;
+    if (!id || project?.visualPreparation?.status !== "running") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const latest = await api<Project>(`/api/projects/${id}`);
+        if (!cancelled && latest.visualPreparation?.id === jobId) {
+          setProject((current) => current?.id === id ? latest : current);
+          setResearch(latest.researchPackage);
+        }
+      } catch { /* persisted job remains available when workspace reopens */ }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 900);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [project?.id, project?.visualPreparation?.id, project?.visualPreparation?.status]);
+
+  useEffect(() => {
+    const id = project?.id;
+    const jobId = project?.motionPreparation?.id;
+    if (!id || project?.motionPreparation?.status !== "running") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const latest = await api<Project>(`/api/projects/${id}`);
+        if (!cancelled && latest.motionPreparation?.id === jobId) {
+          setProject((current) => current?.id === id ? latest : current);
+          setResearch(latest.researchPackage);
+        }
+      } catch { /* persisted job remains available after refresh */ }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 700);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [project?.id, project?.motionPreparation?.id, project?.motionPreparation?.status]);
 
   useEffect(() => {
     if (!project?.id || !reviewFingerprint) return;
@@ -327,7 +383,7 @@ function App() {
       setTtsVoices(null);
       setTtsLoading(false);
       const loadedVisualResearch = applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
-      const loadedVisualGate = visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets.map((asset) => asset.id));
+      const loadedVisualGate = visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets);
       const loadedVisualApproved = loadedVisualGate.ready && loaded.visualStoryboard.scenes.every((scene) => scene.approved);
       const savedPreviewReview = storedPreviewReviewed(id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION));
       const savedStep = initialStep ?? storedWorkspaceStep(id);
@@ -478,7 +534,7 @@ function App() {
           ...refreshed,
           scenes: refreshed.scenes.map((scene) => scene.sceneId !== sceneId ? scene : {
             ...scene,
-            ...(authoredComposition ? { composition: changed.visualComposition, compositionSource: "manual" as const, authoringConfirmed: true, authoringStatus: "needs_review" as const, layout: "existing-composition" as const, warnings: ["Komposisi manual dipilih; periksa kecocokan objek sebelum approval."] } : {}),
+            ...(authoredComposition ? { composition: changed.visualComposition, compositionSource: "manual" as const, illustrationSource: "manual" as const, authoringConfirmed: true, authoringStatus: "needs_review" as const, layout: "existing-composition" as const, warnings: ["Komposisi manual dipilih; periksa kecocokan objek sebelum approval."] } : {}),
             approved: false,
           }),
         },
@@ -490,13 +546,21 @@ function App() {
     if (!project || !research) return;
     const prior = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
     if (!prior) return;
-    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "composition", "compositionSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
-    const artworkChanged = artworkFields.some((field) => field in change);
-    const statusAfterReview = change.approved === true && prior.authoringStatus === "needs_review" ? "ready_for_review"
-      : change.approved === false && prior.compositionSource === "procedural" && prior.authoringStatus === "ready_for_review" ? "needs_review"
+    const compositionChanged = Boolean(change.composition && JSON.stringify(change.composition) !== JSON.stringify(prior.composition));
+    const effectiveChange = compositionChanged && !("motionActions" in change)
+      ? { ...change, motionActions: [], motionStatus: "not_prepared" as const, motionSummary: "Komposisi berubah; buat ulang Motion Plan sebelum approval." }
+      : change;
+    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionSource", "illustrationSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
+    const artworkChanged = artworkFields.some((field) => field in effectiveChange);
+    const copyChanged = effectiveChange.headline !== undefined && effectiveChange.headline !== prior.headline || effectiveChange.narrationText !== undefined && effectiveChange.narrationText !== prior.narrationText;
+    const statusAfterReview = effectiveChange.approved === true && prior.authoringStatus === "needs_review" ? "ready_for_review"
+      : effectiveChange.approved === false && prior.compositionSource === "procedural" && prior.authoringStatus === "ready_for_review" ? "needs_review"
         : prior.authoringStatus;
-    const updatedScene = { ...prior, authoringStatus: statusAfterReview, ...change };
-    const approved = change.approved ?? (artworkChanged ? false : prior.approved);
+    const updatedScene = {
+      ...prior, authoringStatus: statusAfterReview, ...effectiveChange,
+      ...(copyChanged && prior.motionActions.length && !("motionActions" in effectiveChange) ? { motionStatus: "needs_review" as const } : {}),
+    };
+    const approved = effectiveChange.approved ?? (artworkChanged ? false : prior.approved);
     const nextScene = {
       ...updatedScene,
       approved,
@@ -506,11 +570,15 @@ function App() {
       ...project.visualStoryboard,
       scenes: project.visualStoryboard.scenes.map((scene) => scene.sceneId === sceneId ? nextScene : scene),
     };
-    if (change.headline !== undefined || change.narrationText !== undefined) {
+    if (effectiveChange.headline !== undefined || effectiveChange.narrationText !== undefined) {
       storyboard = buildVisualStoryboard(applyVisualStoryboard(research, storyboard), storyboard);
     }
-    const copyChanged = prior.headline !== storyboard.scenes.find((scene) => scene.sceneId === sceneId)?.headline || prior.narrationText !== storyboard.scenes.find((scene) => scene.sceneId === sceneId)?.narrationText;
-    setProject((current) => current ? { ...current, visualStoryboard: storyboard, ...(copyChanged ? { researchReviewStatus: "needs-review" as const } : {}) } : current);
+    storyboard = {
+      ...storyboard,
+      reusableWorldObjects: visualObjectIds.filter((objectId) => storyboard.scenes.filter((scene) => scene.objects.some((object) => object.objectId === objectId)).length > 1),
+    };
+    const storyboardCopyChanged = prior.headline !== storyboard.scenes.find((scene) => scene.sceneId === sceneId)?.headline || prior.narrationText !== storyboard.scenes.find((scene) => scene.sceneId === sceneId)?.narrationText;
+    setProject((current) => current ? { ...current, visualStoryboard: storyboard, ...(storyboardCopyChanged ? { researchReviewStatus: "needs-review" as const } : {}) } : current);
     setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
     setSaved(false);
     setPreviewReviewed(false);
@@ -563,6 +631,7 @@ function App() {
         compositionType: type,
         layout: type ?? (composed.compositionSource === "procedural" ? "procedural-scene" : "existing-composition"),
         compositionSource: composed.compositionSource,
+        illustrationSource: composed.compositionSource === "manual" ? "manual" : "procedural",
         objects: composed.objects.map((objectId) => ({ objectId, assetId: objectId, role: visualObjectLibrary[objectId].role, label: visualObjectLibrary[objectId].label })),
         relationships: composed.relationships,
         visualFocus: composed.focus,
@@ -607,6 +676,91 @@ function App() {
     finally { setPlanningVisualSceneId(null); setBusy(false); }
   }
 
+  async function generateVectorScene(sceneId: string) {
+    if (!project || busy || vectorizingVisualSceneId) return;
+    const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene) return;
+    if ((scene.authoringConfirmed || scene.approved || scene.compositionSource === "manual") && !await askConfirmation({
+      title: "Ganti ilustrasi manual/approved dengan AI Vector?",
+      message: "AI Vector akan mengganti komposisi; approval lama menjadi stale dan hasil baru perlu ditinjau.",
+      confirmLabel: "Generate AI Vector",
+      cancelLabel: "Pertahankan ilustrasi",
+      tone: "warning",
+    })) return;
+    setBusy(true);
+    setVectorizingVisualSceneId(sceneId);
+    try {
+      const settings = aiGenerationSettings ?? await refreshAiGenerationSettings();
+      if (settings.mode !== "development") throw new Error("AI Vector PoC membutuhkan OpenCode Development mode.");
+      if (!settings.providers.development.models.some((model) => model.id === visualPlannerModel)) throw new Error("Pilih model OpenCode terhubung sebelum menjalankan AI Vector.");
+      const result = await api<{ spec: AiVectorIllustration; cached: boolean; model: string }>(`/api/projects/${project.id}/scenes/${sceneId}/visual-vector`, jsonRequest("POST", { model: visualPlannerModel }));
+      updateVisualScene(sceneId, {
+        composition: result.spec.composition,
+        compositionType: "scientific-diagram",
+        layout: "scientific-diagram",
+        compositionSource: "ai-vector",
+        illustrationSource: "ai-vector",
+        objects: [],
+        relationships: [],
+        visualFocus: null,
+        illustrationIntent: result.spec.description,
+        motionIntent: "gentle-reveal",
+        motionSummary: "Reveal ringan mengikuti motion plan scene.",
+        missingVisuals: [],
+        warnings: [],
+        authoringStatus: "needs_review",
+        authoringConfirmed: false,
+        approved: false,
+      });
+      setMessage(`Ilustrasi AI Vector dibuat oleh ${result.model}${result.cached ? " dari cache" : ""}; tinjau thumbnail sebelum approval.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setVectorizingVisualSceneId(null); setBusy(false); }
+  }
+
+  async function prepareVisualScenes(sceneIds?: string[]) {
+    if (!project || !saved || busy || project.visualPreparation?.status === "running") return;
+    setBusy(true);
+    try {
+      const { job } = await api<{ job: VisualPreparationJob }>(`/api/projects/${project.id}/visual-preparation`, jsonRequest("POST", {
+        requestId: crypto.randomUUID(), ...(sceneIds ? { sceneIds } : {}),
+      }));
+      setProject((current) => current?.id === project.id ? { ...current, visualPreparation: job } : current);
+      setMessage(job.status === "completed" ? "Ilustrasi siap ditinjau. Approval tetap manual." : "Smart Hybrid mulai menyiapkan scene yang belum memiliki ilustrasi memadai.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  function generateSceneMotion(sceneId: string, intensity: MotionIntensity) {
+    const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene || scene.approved || project?.visualPreparation?.status === "running") return;
+    try {
+      updateVisualScene(sceneId, planSceneMotion(scene, intensity));
+      setMessage("Motion Plan deterministik dibuat dari narasi, relasi, dan node visual yang tersedia. Timing approximate; review sebelum approve.");
+    } catch (error) { setMessage(friendlyError(error)); }
+  }
+
+  async function prepareMotionScenes(intensity: MotionIntensity, sceneIds?: string[]) {
+    if (!project || !saved || busy || project.motionPreparation?.status === "running" || project.visualPreparation?.status === "running") return;
+    setBusy(true);
+    try {
+      const { job } = await api<{ job: MotionPreparationJob }>(`/api/projects/${project.id}/motion-preparation`, jsonRequest("POST", {
+        requestId: crypto.randomUUID(), intensity, ...(sceneIds ? { sceneIds } : {}),
+      }));
+      setProject((current) => current?.id === project.id ? { ...current, motionPreparation: job } : current);
+      setMessage(job.status === "completed" ? "Motion batch selesai; scene yang ada dipertahankan." : "Motion Director memproses scene valid tanpa AI request.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function cancelMotionScenes() {
+    if (!project?.motionPreparation || project.motionPreparation.status !== "running") return;
+    try {
+      const { job } = await api<{ job: MotionPreparationJob }>(`/api/projects/${project.id}/motion-preparation/${project.motionPreparation.id}/cancel`, { method: "POST" });
+      setProject((current) => current ? { ...current, motionPreparation: job } : current);
+      setMessage("Pembatalan Motion batch diminta; scene yang selesai tetap tersimpan.");
+    } catch (error) { setMessage(friendlyError(error)); }
+  }
+
   function useAuthoredComposition(sceneId: string) {
     if (!project || !research) return;
     const source = research.scenes.find((scene) => scene.id === sceneId);
@@ -614,6 +768,7 @@ function App() {
     updateVisualScene(sceneId, {
       composition: source.visualComposition,
       compositionSource: "manual",
+      illustrationSource: "manual",
       layout: "existing-composition",
       authoringStatus: "needs_review",
       authoringConfirmed: true,
@@ -622,34 +777,253 @@ function App() {
     });
   }
 
-  function useUploadedIllustration(sceneId: string, assetId: string) {
+  async function useUploadedIllustration(sceneId: string, assetId: string, uploadedAsset?: VisualAsset, confirmationDone = false, fromLibrary = false, placement: AssetPlacement = { mode: "hero", fit: "contain", position: "center" }) {
     if (!project) return;
     const current = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
     if (!current) return;
+    const currentImageId = current.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
+    const replacingImage = currentImageId !== undefined && currentImageId !== assetId;
+    if (!confirmationDone && (current.approved || current.authoringConfirmed || replacingImage) && !await askConfirmation({
+      title: "Ganti ilustrasi scene?",
+      message: "Ilustrasi baru mengganti komposisi sekarang dan membatalkan approval. Tinjau hasil baru sebelum approve ulang.",
+      confirmLabel: "Ganti ilustrasi",
+      cancelLabel: "Pertahankan ilustrasi",
+      tone: "warning",
+    })) return;
+    let asset = uploadedAsset ?? project.visualAssets.find((item) => item.id === assetId);
+    if (assetId.startsWith("upload-") && (fromLibrary || !asset)) {
+      const result = await api<{ project: Project; asset: VisualAsset }>(`/api/projects/${project.id}/visual-assets/${encodeURIComponent(assetId)}/attach`, { method: "POST" });
+      asset = result.asset;
+      setProject((existing) => existing ? { ...existing, visualAssets: result.project.visualAssets } : existing);
+    }
+    if (assetId.startsWith("upload-") && !asset) throw new Error("Aset tidak tersedia. Buka Asset Library dan unggah ulang jika diperlukan.");
+    const source = fromLibrary ? "asset-library" as const : asset?.source === "ai-generated" ? "ai-image" as const : asset ? "upload-image" as const : "asset-library" as const;
+    const { mode } = placement;
+    const fullFrameAiImage = mode === "hero" && asset?.source === "ai-generated";
+    const layerId = `selected-${assetId.slice(7, 19)}`;
+    const node = fullFrameAiImage
+      ? { type: "image" as const, asset: assetId, x: 0, y: 0, width: 1080, height: 1920, fit: placement.fit, position: "center" as const }
+      : mode === "background"
+      ? { type: "image" as const, asset: assetId, x: 0, y: 0, width: 1080, height: 1920, fit: placement.fit, position: placement.position }
+      : mode === "layer"
+        ? { type: "image" as const, asset: assetId, x: 640, y: 630, width: 360, height: 360, fit: placement.fit, position: placement.position }
+        : { type: "image" as const, asset: assetId, x: 40, y: 520, width: 1000, height: 900, fit: placement.fit, position: placement.position };
+    const sourceLayer = { id: layerId, depth: mode === "background" || fullFrameAiImage ? 0.05 : 0.72, nodes: [node] };
+    const addToExisting = mode !== "hero";
+    const existingLayers = current.composition.layers.filter((layer) => layer.id !== layerId);
     const composition = visualCompositionSchema.parse({
       background: project.visualStoryboard.palette.canvas,
-      layers: [{ id: "user-illustration", depth: 0.72, nodes: [{ type: "image", asset: assetId, x: 100, y: 510, width: 880, height: 900 }] }],
+      layers: addToExisting ? [...existingLayers, sourceLayer] : [sourceLayer],
     });
     updateVisualScene(sceneId, {
-      composition, compositionType: "hero-object-focus", layout: "existing-composition", compositionSource: "manual",
+      composition, compositionType: addToExisting ? current.compositionType : "hero-object-focus", layout: addToExisting ? current.layout : "existing-composition", compositionSource: fromLibrary || !asset || asset.source === "ai-generated" ? "library" : "manual", illustrationSource: source,
+      objects: addToExisting ? current.objects : [], relationships: addToExisting ? current.relationships : [], visualFocus: addToExisting ? current.visualFocus : null,
+      illustrationIntent: addToExisting ? current.illustrationIntent : asset?.name ?? `Built-in ${assetId}`,
+      motionIntent: addToExisting ? current.motionIntent : "gentle-reveal", motionSummary: addToExisting ? current.motionSummary : "Fade/reveal ringan pada ilustrasi terpilih.", missingVisuals: addToExisting ? current.missingVisuals : [],
       authoringStatus: "needs_review", authoringConfirmed: false,
-      warnings: ["Aset unggahan dipilih; tinjau makna objek dan hubungan scene sebelum konfirmasi manual."], approved: false,
+      warnings: [source === "ai-image" ? `AI Image (${asset?.provider ?? "provenance manual"}); tinjau akurasi semantik, crop aman, dan terms.` : `Ilustrasi dipakai sebagai ${mode}; ikon bukan pengganti ilustrasi lengkap. Tinjau kecocokan dan crop sebelum approval.`], approved: false,
     });
+    return true;
   }
 
-  async function uploadVisualIllustration(sceneId: string, file: File) {
+  async function uploadVisualIllustration(sceneId: string, file: File, metadata: IllustrationImportInfo) {
     if (!project || busy) return;
+    const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    const currentImageId = scene?.composition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
+    if (scene && (scene.approved || scene.authoringConfirmed || currentImageId !== undefined) && !await askConfirmation({
+      title: "Ganti ilustrasi scene?",
+      message: "File baru mengganti komposisi dan membatalkan approval. Aset tersimpan di library project.",
+      confirmLabel: "Unggah & ganti",
+      cancelLabel: "Batal",
+      tone: "warning",
+    })) return;
     setBusy(true);
     try {
       const form = new FormData();
       form.append("illustration", file);
       form.append("name", file.name.replace(/\.[^.]+$/, "").slice(0, 120));
-      const result = await api<{ project: Project; asset: VisualAsset }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
+      form.append("source", metadata.source);
+      form.append("license", metadata.license);
+      form.append("style", project.visualStoryboard.styleId);
+      form.append("semanticTags", scene?.objects.map((object) => object.label).join(",") ?? "");
+      form.append("supportedConcepts", [scene?.visualFocus, scene?.visualSummary].filter(Boolean).join(","));
+      if (metadata.prompt) form.append("prompt", metadata.prompt);
+      if (metadata.provider) form.append("provider", metadata.provider);
+      if (metadata.model) form.append("model", metadata.model);
+      const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean; originalBytes: number }>(`/api/projects/${project.id}/visual-assets`, { method: "POST", body: form });
       setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
-      useUploadedIllustration(sceneId, result.asset.id);
-      setMessage("Ilustrasi diunggah aman. Tinjau kecocokan makna sebelum konfirmasi dan approval.");
+      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true);
+      setMessage(`Aset tersimpan${result.optimized ? " dan dioptimalkan ke WebP" : ""}. Tinjau thumbnail, safe crop, lisensi, dan kecocokan sebelum approval.`);
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setBusy(false); }
+  }
+
+  async function applyGeneratedAiImage(sceneId: string, asset: VisualAsset, fit: "cover" | "contain") {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const applied = await useUploadedIllustration(sceneId, asset.id, asset, false, false, { mode: "hero", fit, position: "center" });
+      if (applied) setMessage("AI Image diterapkan sebagai full-frame 9:16 lokal. Tinjau preview, makna, crop, dan provenance; approval lama dibatalkan.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function openVisualLibrary(sceneId: string, tab: "mine" | "scenes" = "mine") {
+    if (!project) return;
+    setLibraryInitialTab(tab);
+    setLibrarySceneId(sceneId);
+  }
+
+  async function confirmSceneIllustrationReplacement(sceneId: string, sourceLabel: string) {
+    const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene) return false;
+    const hasImage = scene.composition.layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+    if (!(scene.approved || scene.authoringConfirmed || scene.compositionSource === "manual" || scene.compositionSource === "ai-vector" || hasImage)) return true;
+    return askConfirmation({
+      title: "Ganti komposisi scene?",
+      message: `${sourceLabel} akan mengubah komposisi scene. Approval lama menjadi stale; adaptasi dan approve ulang sebelum render.`,
+      confirmLabel: "Lanjutkan & tinjau",
+      cancelLabel: "Pertahankan komposisi",
+      tone: "warning",
+    });
+  }
+
+  async function selectVisualLibraryAsset(sceneId: string, assetId: string, placement: AssetPlacement) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (!await useUploadedIllustration(sceneId, assetId, undefined, false, true, placement)) return;
+      setLibrarySceneId(null);
+      setMessage(`Aset lokal dipakai sebagai ${placement.mode}, fit ${placement.fit}, posisi ${placement.position}. Tinjau komposisi dan approve ulang.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function importOpenverseAsset(sceneId: string, image: OpenverseImage, placement: AssetPlacement) {
+    if (!project || busy || !await confirmSceneIllustrationReplacement(sceneId, "Ilustrasi Openverse")) return;
+    setBusy(true);
+    try {
+      const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+      const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean }>(`/api/projects/${project.id}/openverse/${encodeURIComponent(image.id)}/import`, jsonRequest("POST", {
+        name: image.title,
+        semanticTags: scene?.objects.map((object) => object.label) ?? [],
+        supportedConcepts: [...new Set([scene?.visualSummary ?? "", ...(scene?.semanticPlan?.requiredAssets ?? [])].filter(Boolean))],
+        style: project.visualStoryboard.styleId,
+      }));
+      setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true, true, placement);
+      setLibrarySceneId(null);
+      setMessage(`Ilustrasi Openverse tersimpan lokal${result.optimized ? " dan dioptimalkan" : ""}. Periksa atribusi, lisensi asli, makna, dan crop.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function importTablerAsset(sceneId: string, icon: TablerIconEntry, placement: AssetPlacement) {
+    if (!project || busy || !await confirmSceneIllustrationReplacement(sceneId, "Ikon Tabler")) return;
+    setBusy(true);
+    try {
+      const result = await api<{ project: Project; asset: VisualAsset }>(`/api/projects/${project.id}/asset-packs/tabler/${encodeURIComponent(icon.id)}/import`, { method: "POST" });
+      setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      await useUploadedIllustration(sceneId, result.asset.id, result.asset, true, true, placement);
+      setLibrarySceneId(null);
+      setMessage(`Tabler ${icon.id} disalin lokal dengan lisensi MIT. Ikon bukan ilustrasi scene lengkap; tinjau ulang.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function useReusableScene(sceneId: string, reusable: ReusableSceneEntry) {
+    if (!project || busy || !await confirmSceneIllustrationReplacement(sceneId, "Reusable scene")) return;
+    setBusy(true);
+    try {
+      const result = await api<{ project: Project; scene: ReusableSceneEntry }>(`/api/projects/${project.id}/reusable-scenes/${reusable.id}/attach`, { method: "POST" });
+      setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      updateScene(sceneId, (source) => ({ ...source, motionPlan: result.scene.motionPlan }));
+      updateVisualScene(sceneId, {
+        composition: result.scene.composition,
+        compositionType: result.scene.compositionType as VisualStoryboardScene["compositionType"],
+        layout: result.scene.layout,
+        compositionSource: "library", illustrationSource: "asset-library",
+        objects: result.scene.objects, relationships: result.scene.relationships,
+        visualFocus: result.scene.visualFocus, illustrationIntent: result.scene.concepts.join(" · ") || result.scene.name,
+        motionIntent: result.scene.motionIntent, motionSummary: result.scene.motionSummary,
+        missingVisuals: [], warnings: ["Reusable composition disalin tanpa judul/narasi sumber. Sesuaikan makna scene baru, hubungan objek, dan crop sebelum approval."],
+        authoringStatus: "needs_review", authoringConfirmed: false, approved: false,
+      });
+      setLibrarySceneId(null);
+      setMessage("Reusable scene disalin—template asli tidak berubah. Sesuaikan scene lalu approve ulang.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function saveReusableScene(sceneId: string, data: Omit<ReusableSceneInput, "thumbnailDataUrl"> & { thumbnailDataUrl: string }) {
+    if (!project) throw new Error("Project tidak tersedia.");
+    await api(`/api/projects/${project.id}/reusable-scenes`, jsonRequest("POST", data));
+    setMessage("Reusable scene tersimpan lokal.");
+  }
+
+  async function selectAiImageSource(sceneId: string) {
+    const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene) return false;
+    if ((scene.approved || scene.authoringConfirmed) && !await askConfirmation({
+      title: "Ganti sumber ilustrasi ke AI Image?",
+      message: "Scene akan menunggu gambar impor dan approval lama menjadi stale. Komposisi saat ini belum dihapus sampai gambar dipilih.",
+      confirmLabel: "Buat prompt AI Image",
+      cancelLabel: "Pertahankan sumber sekarang",
+      tone: "warning",
+    })) return false;
+    updateVisualScene(sceneId, {
+      illustrationSource: "ai-image", authoringStatus: "needs_visual_authoring", authoringConfirmed: false, approved: false,
+      warnings: ["Generate hanya setelah provider opt-in dan konfirmasi biaya per gambar; alternatifnya impor PNG/JPEG/WebP eksternal."],
+    });
+    void api<AiImageProviderCatalog>("/api/ai-image/providers").then(setAiImageProviders).catch(() => {});
+    return true;
+  }
+
+  async function generateAiImage(sceneId: string, providerId: string, model: string, prompt: string, resolution: string): Promise<VisualAsset | null> {
+    if (!project || busy || !aiImageProviders?.configured) return null;
+    const provider = aiImageProviders.providers.find((item) => item.id === providerId);
+    if (providerId !== "huggingface-inference" || !provider?.models.some((item) => item.id === model)) throw new Error("Provider/model tidak ada di katalog live Hugging Face.");
+    if (aiImageProviders.status === "Rate Limited" || aiImageProviders.status === "Quota Exhausted" || aiImageProviders.status === "Generating") {
+      throw new Error(aiImageProviders.message ?? `AI Image berstatus ${aiImageProviders.status}.`);
+    }
+    const confirmed = await askConfirmation({
+      title: "Generate satu gambar melalui Hugging Face?",
+      message: `Prompt akan dikirim ke ${provider.displayName} dengan model ${model}. Harga, sisa kredit, dan kuota tidak dapat diverifikasi aplikasi; request dapat dikenai biaya. Hanya satu gambar dibuat. Lanjutkan?`,
+      confirmLabel: "Generate satu gambar",
+      cancelLabel: "Batal",
+      tone: "warning",
+    });
+    if (!confirmed) return null;
+    setBusy(true);
+    try {
+      const result = await api<{ project: Project; asset: VisualAsset; optimized: boolean; originalBytes: number }>(
+        `/api/projects/${project.id}/scenes/${encodeURIComponent(sceneId)}/ai-image/generate`,
+        jsonRequest("POST", { provider: providerId, model, prompt, resolution, confirmed: true, costAcknowledged: true }),
+      );
+      setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      setAiImageProviders(await api<AiImageProviderCatalog>("/api/ai-image/providers"));
+      setMessage(`AI Image tersimpan lokal${result.optimized ? " dan dioptimalkan ke WebP" : ""}. Preview terpisah; storyboard belum diubah.`);
+      return result.asset;
+    } catch (error) {
+      try { setAiImageProviders(await api<AiImageProviderCatalog>("/api/ai-image/providers")); } catch { /* preserve original generation error */ }
+      throw error;
+    } finally { setBusy(false); }
+  }
+
+  async function removeVisualAsset(assetId: string) {
+    if (!project) return;
+    const confirmed = await askConfirmation({
+      title: "Lepas aset dari project?",
+      message: "Aset hanya dilepas jika tidak dipakai scene atau snapshot render. Aset yang masih dipakai project lain tetap tersimpan.",
+      confirmLabel: "Lepas aset",
+      cancelLabel: "Batal",
+      tone: "warning",
+      onConfirm: async () => {
+        const result = await api<{ project: Project }>(`/api/projects/${project.id}/visual-assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
+        setProject((current) => current ? { ...current, visualAssets: result.project.visualAssets } : current);
+      },
+    });
+    if (confirmed) setMessage("Aset dilepas dari project.");
   }
 
   function confirmUploadedIllustration(sceneId: string) {
@@ -1059,14 +1433,24 @@ function App() {
             storyboard={project.visualStoryboard}
             gate={visualGate!}
             saved={saved}
-            busy={busy}
+            busy={busy || project.visualPreparation?.status === "running" || project.motionPreparation?.status === "running"}
             generatingSceneId={generatingVisualSceneId}
             onChange={updateVisualScene}
             onGenerate={regenerateVisualScene}
             onUseCurrentComposition={useAuthoredComposition}
             assets={project.visualAssets}
+            projectId={project.id}
+            librarySceneId={librarySceneId}
+            onOpenLibrary={(sceneId, tab) => void openVisualLibrary(sceneId, tab)}
+            onCloseLibrary={() => setLibrarySceneId(null)}
+            onDeleteAsset={(assetId) => void removeVisualAsset(assetId)}
             onUploadAsset={uploadVisualIllustration}
-            onUseAsset={useUploadedIllustration}
+            onUseAsset={(sceneId, assetId, mode) => void selectVisualLibraryAsset(sceneId, assetId, mode)}
+            onApplyGeneratedAiImage={(sceneId, asset, fit) => void applyGeneratedAiImage(sceneId, asset, fit)}
+            onImportOpenverse={(sceneId, image, mode) => void importOpenverseAsset(sceneId, image, mode)}
+            onImportTabler={(sceneId, icon, mode) => void importTablerAsset(sceneId, icon, mode)}
+            onUseReusableScene={(sceneId, reusable) => void useReusableScene(sceneId, reusable)}
+            onSaveReusableScene={saveReusableScene}
             onConfirmUserAsset={confirmUploadedIllustration}
             aiMode={aiGenerationSettings?.mode ?? null}
             plannerAvailable={Boolean(aiGenerationSettings && (aiGenerationSettings.mode === "development"
@@ -1077,6 +1461,22 @@ function App() {
             onSelectModel={setVisualPlannerModel}
             planningSceneId={planningVisualSceneId}
             onPlan={planVisualScene}
+            vectorAvailable={Boolean(aiGenerationSettings?.mode === "development" && aiGenerationSettings.providers.development.models.some((model) => model.id === visualPlannerModel))}
+            vectorizingSceneId={vectorizingVisualSceneId}
+            onGenerateVector={generateVectorScene}
+            onPrepareAll={() => void prepareVisualScenes()}
+            onPrepareIssues={(sceneIds) => void prepareVisualScenes(sceneIds)}
+            onGenerateMotion={generateSceneMotion}
+            onPrepareMotion={(intensity) => void prepareMotionScenes(intensity)}
+            onCancelMotion={() => void cancelMotionScenes()}
+            onRetryMotion={(sceneIds, intensity) => void prepareMotionScenes(intensity, sceneIds)}
+            onSelectAiImageSource={selectAiImageSource}
+            onGenerateAiImage={generateAiImage}
+            imageProviderCatalog={aiImageProviders}
+            preparation={project.visualPreparation}
+            motionPreparation={project.motionPreparation}
+            projectTitle={project.researchPackage.title}
+            libraryInitialTab={libraryInitialTab}
           />}
 
           {activeStep === "narration" && <div className="workspace-step-content single narration-step">
@@ -1168,7 +1568,7 @@ function App() {
               {project.latestJob?.state === "rendering" && <div className="progress-track"><i style={{ width: `${project.latestJob.progress}%` }} /></div>}
               {project.latestJob?.manifest && <div className="manifest-line">{project.latestJob.manifest.width}×{project.latestJob.manifest.height} · H.264 · {audioManifestLabel(project.latestJob.manifest)} · {project.latestJob.manifest.durationSec.toFixed(1)} dtk · renderer v{project.latestJob.manifest.rendererVersion ?? project.latestJob.rendererVersion}</div>}
               {project.latestJob?.error && <p className="render-error">{project.latestJob.error}</p>}
-              <div className="render-actions"><button type="button" className="button button-primary full-button" onClick={() => void renderFinal()} disabled={busy || project.latestJob?.state === "rendering" || (currentJob?.state === "rendered") || (currentJob?.state === "failed" && currentJob.attemptCount >= 3)}>{busy ? "Render sedang diproses…" : project.latestJob?.state === "rendering" ? `Rendering ${project.latestJob.progress}%` : currentJob?.state === "rendered" ? "Render selesai" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION && project.latestJobContentCurrent ? "Buat snapshot V2 & render MP4" : project.latestJob && !project.latestJobContentCurrent ? "Render versi terbaru" : "Buat snapshot & render MP4"}<b>→</b></button>
+               <div className="render-actions"><button type="button" className="button button-primary full-button" onClick={() => void renderFinal()} disabled={busy || project.latestJob?.state === "rendering" || (currentJob?.state === "rendered") || (currentJob?.state === "failed" && currentJob.attemptCount >= 3)}>{busy ? "Render sedang diproses…" : project.latestJob?.state === "rendering" ? `Rendering ${project.latestJob.progress}%` : currentJob?.state === "rendered" ? "Render selesai" : project.latestJob?.rendererVersion === LEGACY_RENDERER_VERSION && project.latestJobContentCurrent ? `Buat snapshot V${RENDERER_VERSION} & render MP4` : project.latestJob && !project.latestJobContentCurrent ? "Render versi terbaru" : "Buat snapshot & render MP4"}<b>→</b></button>
                 {project.latestJob?.downloadUrl && <a className="button button-light download-button" href={project.latestJob.downloadUrl}>{project.latestJobContentCurrent ? "Unduh MP4" : "Unduh render sebelumnya"} ↓</a>}
               </div>
               {!project.audio && <p className="audio-warning">Audio belum tersedia. Render senyap hanya berjalan setelah konfirmasi eksplisit.</p>}

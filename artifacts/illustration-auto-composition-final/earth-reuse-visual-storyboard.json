@@ -1,0 +1,937 @@
+{
+  "schemaVersion": "1.0",
+  "styleId": "clean-flat-2d",
+  "palette": {
+    "canvas": "#e8f3ed",
+    "surface": "#b8d8d0",
+    "primary": "#267a76",
+    "accent": "#edaa59",
+    "text": "#173740"
+  },
+  "typographyIntent": {
+    "heading": "Sans-serif tebal, kontras tinggi",
+    "body": "Sans-serif bersih untuk caption pendek",
+    "hierarchy": "Headline 1–2 baris; objek ilustrasi jadi fokus; narasi tetap caption."
+  },
+  "headlineStrategy": "short-concept-first",
+  "reusableWorldObjects": [
+    "sun",
+    "earth",
+    "atmosphere",
+    "ozone-layer",
+    "uv-rays",
+    "charged-particles",
+    "magnetosphere"
+  ],
+  "scenes": [
+    {
+      "sceneId": "earth-01-sunlight",
+      "sceneNumber": 1,
+      "durationSec": 8,
+      "headline": "ATMOSFER MENYARING SINAR UV",
+      "narrationText": "Sinar Matahari membawa cahaya dan sinar ultraviolet. Atmosfer Bumi menyaring sebagian energi sebelum mencapai permukaan.",
+      "visualSummary": "Matahari mengirim sinar UV menuju Bumi; atmosfer menjadi lapisan pelindung.",
+      "layout": "full-landscape",
+      "compositionType": "full-landscape",
+      "objects": [
+        {
+          "objectId": "sun",
+          "assetId": "sun",
+          "role": "Sumber energi",
+          "label": "MATAHARI"
+        },
+        {
+          "objectId": "earth",
+          "assetId": "earth",
+          "role": "Planet",
+          "label": "BUMI"
+        },
+        {
+          "objectId": "atmosphere",
+          "assetId": "atmosphere",
+          "role": "Pelindung gas",
+          "label": "ATMOSFER"
+        },
+        {
+          "objectId": "uv-rays",
+          "assetId": "uv-rays",
+          "role": "Radiasi ultraviolet",
+          "label": "SINAR UV"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "atmosphere",
+          "relation": "filters",
+          "to": "uv-rays"
+        },
+        {
+          "from": "sun",
+          "relation": "illuminates",
+          "to": "earth"
+        }
+      ],
+      "visualFocus": "earth",
+      "illustrationIntent": "Matahari, sinar, atmosfer, dan Bumi berbagi satu adegan ruang angkasa.",
+      "motionIntent": "gentle-reveal",
+      "motionSummary": "Reveal bertahap menjaga fokus pada ilustrasi.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "sunlight",
+            "depth": 0.05,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 120,
+                "y": 600,
+                "width": 190,
+                "height": 190,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 305,
+                "y": 680,
+                "width": 270,
+                "height": 170,
+                "motion": "draw",
+                "d": "M0 50 L100 95 M0 15 L100 60 M0 85 L100 100",
+                "fill": "none",
+                "stroke": "#f4b765",
+                "strokeWidth": 9
+              }
+            ]
+          },
+          {
+            "id": "earth-world",
+            "depth": 0.48,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 470,
+                "y": 800,
+                "width": 360,
+                "height": 360,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#3c9cad",
+                "stroke": "#fffaf0",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 490,
+                "y": 835,
+                "width": 310,
+                "height": 270,
+                "d": "M0 24 L23 0 L42 13 L44 34 L30 45 L36 67 L15 82 L4 64 Z M48 14 L69 5 L90 22 L82 43 L65 38 L58 55 L44 39 Z M53 55 L78 42 L99 55 L89 76 L78 82 L73 100 L57 91 L50 73 Z",
+                "fill": "#79b777",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "shape",
+                "x": 440,
+                "y": 770,
+                "width": 420,
+                "height": 420,
+                "opacity": 0.86,
+                "shape": "ellipse",
+                "fill": "none",
+                "stroke": "#73b8cf",
+                "strokeWidth": 11
+              }
+            ]
+          },
+          {
+            "id": "uv-rays",
+            "depth": 0.86,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 300,
+                "y": 875,
+                "width": 290,
+                "height": 130,
+                "motion": "draw",
+                "d": "M0 12 L100 80",
+                "fill": "none",
+                "stroke": "#d95f55",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 300,
+                "y": 1000,
+                "width": 290,
+                "height": 120,
+                "motion": "draw",
+                "d": "M0 85 L100 20",
+                "fill": "none",
+                "stroke": "#e6a244",
+                "strokeWidth": 8
+              },
+              {
+                "type": "text",
+                "x": 210,
+                "y": 1120,
+                "width": 410,
+                "height": 42,
+                "text": "SINAR UV",
+                "color": "#173740",
+                "fontSize": 22,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "earth-02-ozone",
+      "sceneNumber": 2,
+      "durationSec": 8,
+      "headline": "LAPISAN OZON MENAHAN UV",
+      "narrationText": "Lapisan ozon di stratosfer menyerap sebagian besar UV-B dan hampir seluruh UV-C. Lebih banyak UV-A dapat menembus hingga permukaan.",
+      "visualSummary": "Sinar Matahari menuju Bumi; atmosfer Bumi dan lapisan ozon digambarkan sebagai pita pelindung yang menyerap sebagian sinar ultraviolet.",
+      "layout": "cross-section",
+      "compositionType": "cross-section",
+      "objects": [
+        {
+          "objectId": "sun",
+          "assetId": "sun",
+          "role": "Sumber energi",
+          "label": "MATAHARI"
+        },
+        {
+          "objectId": "earth",
+          "assetId": "earth",
+          "role": "Planet",
+          "label": "BUMI"
+        },
+        {
+          "objectId": "atmosphere",
+          "assetId": "atmosphere",
+          "role": "Pelindung gas",
+          "label": "ATMOSFER"
+        },
+        {
+          "objectId": "ozone-layer",
+          "assetId": "ozone-layer",
+          "role": "Penyaring UV",
+          "label": "LAPISAN OZON"
+        },
+        {
+          "objectId": "uv-rays",
+          "assetId": "uv-rays",
+          "role": "Radiasi ultraviolet",
+          "label": "SINAR UV"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "ozone-layer",
+          "relation": "filters",
+          "to": "uv-rays"
+        },
+        {
+          "from": "sun",
+          "relation": "illuminates",
+          "to": "earth"
+        }
+      ],
+      "visualFocus": "ozone-layer",
+      "illustrationIntent": "Penampang atmosfer menunjukkan ozon menyerap sebagian besar UV-B dan hampir seluruh UV-C; sebagian UV-A menembus.",
+      "motionIntent": "path-animation",
+      "motionSummary": "Hujan, aliran air, atau uap bergerak di lintasan proses yang relevan.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "sunlight",
+            "depth": 0.05,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 120,
+                "y": 600,
+                "width": 190,
+                "height": 190,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 305,
+                "y": 680,
+                "width": 270,
+                "height": 170,
+                "motion": "draw",
+                "d": "M0 50 L100 95 M0 15 L100 60 M0 85 L100 100",
+                "fill": "none",
+                "stroke": "#f4b765",
+                "strokeWidth": 9
+              }
+            ]
+          },
+          {
+            "id": "earth-world",
+            "depth": 0.48,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 470,
+                "y": 800,
+                "width": 360,
+                "height": 360,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#3c9cad",
+                "stroke": "#fffaf0",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 490,
+                "y": 835,
+                "width": 310,
+                "height": 270,
+                "d": "M0 24 L23 0 L42 13 L44 34 L30 45 L36 67 L15 82 L4 64 Z M48 14 L69 5 L90 22 L82 43 L65 38 L58 55 L44 39 Z M53 55 L78 42 L99 55 L89 76 L78 82 L73 100 L57 91 L50 73 Z",
+                "fill": "#79b777",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "shape",
+                "x": 440,
+                "y": 770,
+                "width": 420,
+                "height": 420,
+                "opacity": 0.86,
+                "shape": "ellipse",
+                "fill": "none",
+                "stroke": "#73b8cf",
+                "strokeWidth": 11
+              }
+            ]
+          },
+          {
+            "id": "ozone",
+            "depth": 0.67,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 455,
+                "y": 785,
+                "width": 390,
+                "height": 390,
+                "opacity": 0.96,
+                "shape": "ellipse",
+                "fill": "none",
+                "stroke": "#8c75c5",
+                "strokeWidth": 16
+              },
+              {
+                "type": "path",
+                "x": 260,
+                "y": 950,
+                "width": 390,
+                "height": 110,
+                "motion": "draw",
+                "d": "M0 50 H100",
+                "fill": "none",
+                "stroke": "#8c75c5",
+                "strokeWidth": 10
+              }
+            ]
+          },
+          {
+            "id": "uv-rays",
+            "depth": 0.86,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 300,
+                "y": 875,
+                "width": 290,
+                "height": 130,
+                "motion": "draw",
+                "d": "M0 12 L100 80",
+                "fill": "none",
+                "stroke": "#d95f55",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 300,
+                "y": 1000,
+                "width": 290,
+                "height": 120,
+                "motion": "draw",
+                "d": "M0 85 L100 20",
+                "fill": "none",
+                "stroke": "#e6a244",
+                "strokeWidth": 8
+              },
+              {
+                "type": "text",
+                "x": 210,
+                "y": 1120,
+                "width": 410,
+                "height": 42,
+                "text": "UV-B / UV-C DISERAP",
+                "color": "#173740",
+                "fontSize": 22,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "earth-03-magnetosphere",
+      "sceneNumber": 3,
+      "durationSec": 8,
+      "headline": "MAGNETOSFER MEMBELOKKAN PARTIKEL",
+      "narrationText": "Matahari juga mengirim partikel bermuatan. Medan magnet Bumi membentuk magnetosfer yang membelokkan banyak partikel ke wilayah kutub.",
+      "visualSummary": "Partikel bermuatan Matahari dibelokkan oleh medan magnet di sekitar Bumi.",
+      "layout": "scientific-diagram",
+      "compositionType": "scientific-diagram",
+      "objects": [
+        {
+          "objectId": "sun",
+          "assetId": "sun",
+          "role": "Sumber energi",
+          "label": "MATAHARI"
+        },
+        {
+          "objectId": "earth",
+          "assetId": "earth",
+          "role": "Planet",
+          "label": "BUMI"
+        },
+        {
+          "objectId": "charged-particles",
+          "assetId": "charged-particles",
+          "role": "Partikel dari Matahari",
+          "label": "PARTIKEL BERMUATAN"
+        },
+        {
+          "objectId": "magnetosphere",
+          "assetId": "magnetosphere",
+          "role": "Pembelok partikel",
+          "label": "MAGNETOSFER"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "magnetosphere",
+          "relation": "deflects",
+          "to": "charged-particles"
+        }
+      ],
+      "visualFocus": "magnetosphere",
+      "illustrationIntent": "Medan magnet mengarahkan partikel bermuatan mengitari Bumi; bukan sinar UV.",
+      "motionIntent": "particle-flow",
+      "motionSummary": "Partikel bergerak deterministik mengikuti arah lingkungan; lintasan terungkap bertahap.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "sunlight",
+            "depth": 0.05,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 90,
+                "y": 620,
+                "width": 120,
+                "height": 120,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 205,
+                "y": 670,
+                "width": 265,
+                "height": 230,
+                "motion": "draw",
+                "d": "M0 20 L100 42 M0 49 L100 55 M0 79 L100 66",
+                "fill": "none",
+                "stroke": "#f5b95e",
+                "strokeWidth": 7
+              }
+            ]
+          },
+          {
+            "id": "magnetic-field",
+            "depth": 0.3,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 250,
+                "y": 650,
+                "width": 660,
+                "height": 620,
+                "d": "M50 0 C0 14 0 35 18 50 C0 65 0 86 50 100 M50 0 C100 14 100 35 82 50 C100 65 100 86 50 100",
+                "fill": "none",
+                "stroke": "#73b8cf",
+                "strokeWidth": 11
+              },
+              {
+                "type": "path",
+                "x": 305,
+                "y": 715,
+                "width": 550,
+                "height": 490,
+                "d": "M50 0 C14 18 14 35 28 50 C14 65 14 82 50 100 M50 0 C86 18 86 35 72 50 C86 65 86 82 50 100",
+                "fill": "none",
+                "stroke": "#8c75c5",
+                "strokeWidth": 5
+              }
+            ]
+          },
+          {
+            "id": "earth-world",
+            "depth": 0.54,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 470,
+                "y": 800,
+                "width": 360,
+                "height": 360,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#3c9cad",
+                "stroke": "#fffaf0",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 490,
+                "y": 835,
+                "width": 310,
+                "height": 270,
+                "d": "M0 24 L23 0 L42 13 L44 34 L30 45 L36 67 L15 82 L4 64 Z M48 14 L69 5 L90 22 L82 43 L65 38 L58 55 L44 39 Z M53 55 L78 42 L99 55 L89 76 L78 82 L73 100 L57 91 L50 73 Z",
+                "fill": "#79b777",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "shape",
+                "x": 440,
+                "y": 770,
+                "width": 420,
+                "height": 420,
+                "opacity": 0.86,
+                "shape": "ellipse",
+                "fill": "none",
+                "stroke": "#73b8cf",
+                "strokeWidth": 11
+              }
+            ]
+          },
+          {
+            "id": "charged-particles",
+            "depth": 0.9,
+            "nodes": [
+              {
+                "type": "icon",
+                "x": 270,
+                "y": 780,
+                "width": 80,
+                "height": 80,
+                "motion": "flow",
+                "icon": "charged-particle",
+                "color": "#ed826d"
+              },
+              {
+                "type": "icon",
+                "x": 300,
+                "y": 1040,
+                "width": 72,
+                "height": 72,
+                "motion": "flow",
+                "icon": "charged-particle",
+                "color": "#f1b75d"
+              },
+              {
+                "type": "icon",
+                "x": 850,
+                "y": 700,
+                "width": 70,
+                "height": 70,
+                "motion": "flow",
+                "icon": "charged-particle",
+                "color": "#ed826d"
+              },
+              {
+                "type": "path",
+                "x": 360,
+                "y": 700,
+                "width": 190,
+                "height": 450,
+                "motion": "draw",
+                "d": "M0 0 C90 12 90 33 50 48 C10 65 30 90 100 100",
+                "fill": "none",
+                "stroke": "#ed826d",
+                "strokeWidth": 7
+              },
+              {
+                "type": "text",
+                "x": 225,
+                "y": 1320,
+                "width": 630,
+                "height": 42,
+                "text": "PARTIKEL DIBELOKKAN",
+                "color": "#173740",
+                "fontSize": 24,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    },
+    {
+      "sceneId": "earth-04-two-shields",
+      "sceneNumber": 4,
+      "durationSec": 8,
+      "headline": "DUA PERISAI, DUA TUGAS",
+      "narrationText": "Atmosfer dan ozon membantu menyaring ultraviolet, sementara magnetosfer mengarahkan partikel bermuatan. Dua sistem ini memberi perlindungan berbeda.",
+      "visualSummary": "Matahari, Bumi, atmosfer, lapisan ozon, sinar UV, partikel bermuatan, dan magnetosfer tampil sebagai dua sistem perlindungan berbeda.",
+      "layout": "scientific-diagram",
+      "compositionType": "scientific-diagram",
+      "objects": [
+        {
+          "objectId": "sun",
+          "assetId": "sun",
+          "role": "Sumber energi",
+          "label": "MATAHARI"
+        },
+        {
+          "objectId": "earth",
+          "assetId": "earth",
+          "role": "Planet",
+          "label": "BUMI"
+        },
+        {
+          "objectId": "atmosphere",
+          "assetId": "atmosphere",
+          "role": "Pelindung gas",
+          "label": "ATMOSFER"
+        },
+        {
+          "objectId": "ozone-layer",
+          "assetId": "ozone-layer",
+          "role": "Penyaring UV",
+          "label": "LAPISAN OZON"
+        },
+        {
+          "objectId": "uv-rays",
+          "assetId": "uv-rays",
+          "role": "Radiasi ultraviolet",
+          "label": "SINAR UV"
+        },
+        {
+          "objectId": "charged-particles",
+          "assetId": "charged-particles",
+          "role": "Partikel dari Matahari",
+          "label": "PARTIKEL BERMUATAN"
+        },
+        {
+          "objectId": "magnetosphere",
+          "assetId": "magnetosphere",
+          "role": "Pembelok partikel",
+          "label": "MAGNETOSFER"
+        }
+      ],
+      "relationships": [
+        {
+          "from": "ozone-layer",
+          "relation": "filters",
+          "to": "uv-rays"
+        },
+        {
+          "from": "magnetosphere",
+          "relation": "deflects",
+          "to": "charged-particles"
+        },
+        {
+          "from": "sun",
+          "relation": "illuminates",
+          "to": "earth"
+        }
+      ],
+      "visualFocus": "earth",
+      "illustrationIntent": "Bumi menampilkan dua perlindungan berbeda: atmosfer/ozon menyaring UV, medan magnet membelokkan partikel.",
+      "motionIntent": "particle-flow",
+      "motionSummary": "Partikel bergerak deterministik mengikuti arah lingkungan; lintasan terungkap bertahap.",
+      "composition": {
+        "background": "#e8f3ed",
+        "layers": [
+          {
+            "id": "sunlight",
+            "depth": 0.06,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 105,
+                "y": 610,
+                "width": 125,
+                "height": 125,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#f5b95e",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "path",
+                "x": 215,
+                "y": 670,
+                "width": 340,
+                "height": 260,
+                "motion": "draw",
+                "d": "M0 10 L100 45 M0 42 L100 58 M0 78 L100 72",
+                "fill": "none",
+                "stroke": "#f5b95e",
+                "strokeWidth": 7
+              }
+            ]
+          },
+          {
+            "id": "earth-world",
+            "depth": 0.36,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 470,
+                "y": 800,
+                "width": 360,
+                "height": 360,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "#3c9cad",
+                "stroke": "#fffaf0",
+                "strokeWidth": 7
+              },
+              {
+                "type": "path",
+                "x": 490,
+                "y": 835,
+                "width": 310,
+                "height": 270,
+                "d": "M0 24 L23 0 L42 13 L44 34 L30 45 L36 67 L15 82 L4 64 Z M48 14 L69 5 L90 22 L82 43 L65 38 L58 55 L44 39 Z M53 55 L78 42 L99 55 L89 76 L78 82 L73 100 L57 91 L50 73 Z",
+                "fill": "#79b777",
+                "stroke": "none",
+                "strokeWidth": 0
+              },
+              {
+                "type": "shape",
+                "x": 440,
+                "y": 770,
+                "width": 420,
+                "height": 420,
+                "opacity": 0.86,
+                "shape": "ellipse",
+                "fill": "none",
+                "stroke": "#73b8cf",
+                "strokeWidth": 11
+              }
+            ]
+          },
+          {
+            "id": "atmospheric-shield",
+            "depth": 0.62,
+            "nodes": [
+              {
+                "type": "shape",
+                "x": 440,
+                "y": 770,
+                "width": 420,
+                "height": 420,
+                "opacity": 1,
+                "shape": "ellipse",
+                "fill": "none",
+                "stroke": "#8c75c5",
+                "strokeWidth": 18
+              }
+            ]
+          },
+          {
+            "id": "uv-rays",
+            "depth": 0.7,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 280,
+                "y": 855,
+                "width": 350,
+                "height": 120,
+                "motion": "draw",
+                "d": "M0 10 L100 50",
+                "fill": "none",
+                "stroke": "#d95f55",
+                "strokeWidth": 8
+              },
+              {
+                "type": "path",
+                "x": 280,
+                "y": 980,
+                "width": 350,
+                "height": 110,
+                "motion": "draw",
+                "d": "M0 80 L100 50",
+                "fill": "none",
+                "stroke": "#e6a244",
+                "strokeWidth": 8
+              }
+            ]
+          },
+          {
+            "id": "magnetic-field",
+            "depth": 0.78,
+            "nodes": [
+              {
+                "type": "path",
+                "x": 250,
+                "y": 680,
+                "width": 660,
+                "height": 620,
+                "d": "M50 0 C0 14 0 35 18 50 C0 65 0 86 50 100 M50 0 C100 14 100 35 82 50 C100 65 100 86 50 100",
+                "fill": "none",
+                "stroke": "#73b8cf",
+                "strokeWidth": 9
+              }
+            ]
+          },
+          {
+            "id": "charged-particles",
+            "depth": 0.9,
+            "nodes": [
+              {
+                "type": "icon",
+                "x": 285,
+                "y": 720,
+                "width": 66,
+                "height": 66,
+                "motion": "flow",
+                "icon": "charged-particle",
+                "color": "#ed826d"
+              },
+              {
+                "type": "icon",
+                "x": 335,
+                "y": 1050,
+                "width": 66,
+                "height": 66,
+                "motion": "flow",
+                "icon": "charged-particle",
+                "color": "#f1b75d"
+              }
+            ]
+          },
+          {
+            "id": "annotations",
+            "depth": 0.96,
+            "nodes": [
+              {
+                "type": "text",
+                "x": 290,
+                "y": 1215,
+                "width": 500,
+                "height": 38,
+                "text": "ATMOSFER + OZON",
+                "color": "#173740",
+                "fontSize": 23,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "text",
+                "x": 290,
+                "y": 1260,
+                "width": 500,
+                "height": 38,
+                "text": "SINAR UV DISERAP",
+                "color": "#173740",
+                "fontSize": 23,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              },
+              {
+                "type": "text",
+                "x": 290,
+                "y": 1360,
+                "width": 500,
+                "height": 38,
+                "text": "MAGNETOSFER: PARTIKEL",
+                "color": "#173740",
+                "fontSize": 21,
+                "font": "heading",
+                "weight": "800",
+                "align": "middle"
+              }
+            ]
+          }
+        ]
+      },
+      "compositionSource": "library",
+      "missingVisuals": [],
+      "warnings": [],
+      "authoringStatus": "ready",
+      "authoringConfirmed": false,
+      "notes": "",
+      "approved": false,
+      "approvedFingerprint": null
+    }
+  ]
+}

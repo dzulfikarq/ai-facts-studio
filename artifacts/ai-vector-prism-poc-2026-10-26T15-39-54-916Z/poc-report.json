@@ -1,0 +1,40 @@
+{
+  "model": "ollama-cloud/beam",
+  "cached": false,
+  "generationSource": "live-opencode-spec-replay",
+  "source": "OpenCode text model -> validated ai-vector-v1 -> existing VisualCompositionView -> Remotion",
+  "instruction": "Cahaya Matahari terdiri dari berbagai warna yang dapat dipisahkan menggunakan prisma.",
+  "description": "White sunlight enters a translucent triangular glass prism and emerges as separated, visible spectrum rays.",
+  "sceneCount": 1,
+  "layerIds": [
+    "incoming-light",
+    "prism-glass",
+    "spectrum-beams"
+  ],
+  "nodeCount": 9,
+  "hasGradient": false,
+  "qualityGate": {
+    "status": "needs_review",
+    "issues": [],
+    "reviewNotes": [
+      "Scene 1: komposisi tersedia; tinjau kecocokan visual sebelum approval."
+    ]
+  },
+  "humanApprovalRequired": true,
+  "rendererVersion": 2,
+  "thumbnailFrame": 100,
+  "thumbnailProgress": 0.4166666666666667,
+  "compositionSha256": "49f7a2cbad2ac28df7cdbc231ec9c5c3489b99f1b33c89362d1a528984531c44",
+  "storyboardCompositionSha256": "49f7a2cbad2ac28df7cdbc231ec9c5c3489b99f1b33c89362d1a528984531c44",
+  "remotionInputCompositionSha256": "49f7a2cbad2ac28df7cdbc231ec9c5c3489b99f1b33c89362d1a528984531c44",
+  "matchingComposition": true,
+  "artifacts": [
+    "ai-vector-spec.json",
+    "storyboard-thumbnail.png",
+    "storyboard-thumbnail.svg",
+    "ai-vector-prism-poc.mp4",
+    "remotion-frame.png",
+    "visual-storyboard.json",
+    "research-package.json"
+  ]
+}

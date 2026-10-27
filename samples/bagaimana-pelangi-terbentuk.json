@@ -1,0 +1,223 @@
+{
+  "schemaVersion": "1.1",
+  "id": "how-rainbows-form-id",
+  "title": "Bagaimana Pelangi Terbentuk?",
+  "category": "Sains & Antariksa",
+  "visualPreset": "animated-infographic",
+  "language": "id-ID",
+  "targetDurationSec": 32,
+  "aspectRatio": "9:16",
+  "narration": "Pelangi terbentuk saat cahaya Matahari bertemu tetes hujan. Cahaya dibiaskan ketika masuk, dipantulkan di dalam tetes, lalu dibiaskan lagi saat keluar. Warna-warna terpisah karena tiap panjang gelombang dibelokkan berbeda. Banyak tetes mengirim warna ke mata pengamat dan membentuk busur di sisi langit yang berlawanan dengan Matahari.",
+  "references": [
+    {
+      "id": "nws-how-rainbows-form",
+      "title": "How Do Rainbows Form?",
+      "publisher": "National Weather Service, Flagstaff",
+      "url": "https://www.weather.gov/fgz/Rainbow",
+      "checkedAt": "2026-10-27"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "rainbow-01-ingredients",
+      "order": 1,
+      "startSec": 0,
+      "endSec": 6.4,
+      "narrationText": "Pelangi adalah cahaya Matahari yang diuraikan menjadi warna-warna oleh tetes air. Matahari berada di belakang pengamat; hujan berada di depan.",
+      "onScreenText": "CAHAYA + TETES HUJAN = PELANGI",
+      "templateId": "infographic",
+      "visualDescription": "Ilustrasi manual satu komposisi langit, Matahari, pengamat, tetes hujan, dan busur warna di depan; bukan prisma atau ikon rainbow generik.",
+      "motionCues": ["fadeIn", "reveal"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "spring" },
+        { "cue": "reveal", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "#dceef7",
+        "layers": [
+          { "id": "sky", "depth": 0.05, "nodes": [{ "type": "shape", "shape": "rect", "x": 0, "y": 300, "width": 1080, "height": 1420, "fill": "#dceef7" }] },
+          { "id": "spectrum-arc", "depth": 0.28, "nodes": [
+            { "type": "path", "x": 105, "y": 565, "width": 870, "height": 650, "d": "M6 98 C12 12 88 12 94 98", "fill": "none", "stroke": "#e95050", "strokeWidth": 2.5 },
+            { "type": "path", "x": 105, "y": 590, "width": 870, "height": 610, "d": "M12 98 C18 24 82 24 88 98", "fill": "none", "stroke": "#f18a45", "strokeWidth": 2.5 },
+            { "type": "path", "x": 105, "y": 615, "width": 870, "height": 570, "d": "M18 98 C24 36 76 36 82 98", "fill": "none", "stroke": "#edc74e", "strokeWidth": 2.5 },
+            { "type": "path", "x": 105, "y": 640, "width": 870, "height": 530, "d": "M24 98 C30 48 70 48 76 98", "fill": "none", "stroke": "#56a875", "strokeWidth": 2.5 },
+            { "type": "path", "x": 105, "y": 665, "width": 870, "height": 490, "d": "M30 98 C36 60 64 60 70 98", "fill": "none", "stroke": "#428fc2", "strokeWidth": 2.5 },
+            { "type": "path", "x": 105, "y": 690, "width": 870, "height": 450, "d": "M36 98 C42 72 58 72 64 98", "fill": "none", "stroke": "#625caa", "strokeWidth": 2.5 },
+            { "type": "path", "x": 105, "y": 715, "width": 870, "height": 410, "d": "M42 98 C46 84 54 84 58 98", "fill": "none", "stroke": "#8959a5", "strokeWidth": 2.5 }
+          ] },
+          { "id": "sunlight", "depth": 0.56, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 115, "y": 1080, "width": 150, "height": 150, "fill": "#f3b94f" },
+            { "type": "path", "x": 240, "y": 1110, "width": 280, "height": 150, "d": "M0 50 L100 15 M0 50 L100 50 M0 50 L100 85", "fill": "none", "stroke": "#f3b94f", "strokeWidth": 4 }
+          ] },
+          { "id": "rain", "depth": 0.72, "nodes": [
+            { "type": "shape", "shape": "ellipse", "x": 730, "y": 1030, "width": 50, "height": 82, "fill": "#4f9ec4", "rotation": 8 },
+            { "type": "shape", "shape": "ellipse", "x": 820, "y": 1110, "width": 44, "height": 72, "fill": "#4f9ec4", "rotation": -8 },
+            { "type": "shape", "shape": "ellipse", "x": 900, "y": 1015, "width": 42, "height": 68, "fill": "#4f9ec4", "rotation": 6 }
+          ] },
+          { "id": "observer", "depth": 0.9, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 470, "y": 1260, "width": 88, "height": 88, "fill": "#304c65" },
+            { "type": "shape", "shape": "ellipse", "x": 425, "y": 1340, "width": 180, "height": 135, "fill": "#304c65" }
+          ] }
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["nws-how-rainbows-form"]
+    },
+    {
+      "id": "rainbow-02-refraction",
+      "order": 2,
+      "startSec": 6.4,
+      "endSec": 12.8,
+      "narrationText": "Saat cahaya putih masuk ke tetes hujan, pembiasan membelokkan jalurnya. Tiap panjang gelombang dibelokkan sedikit berbeda, sehingga warna mulai terpisah.",
+      "onScreenText": "CAHAYA DIBIASKAN SAAT MASUK",
+      "templateId": "infographic",
+      "visualDescription": "Close-up satu tetes air membulat dengan sinar putih masuk dan jalur yang membelok serta mulai memisah; tanpa prisma.",
+      "motionCues": ["fadeIn", "reveal"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "spring" },
+        { "cue": "reveal", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "#dceef7",
+        "layers": [
+          { "id": "sky", "depth": 0.05, "nodes": [{ "type": "shape", "shape": "rect", "x": 0, "y": 300, "width": 1080, "height": 1420, "fill": "#dceef7" }] },
+          { "id": "rain", "depth": 0.32, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 325, "y": 695, "width": 430, "height": 430, "fill": "#b8e2f0", "stroke": "#438eb2", "strokeWidth": 9, "opacity": 0.82 },
+            { "type": "shape", "shape": "ellipse", "x": 400, "y": 760, "width": 115, "height": 52, "fill": "#ffffff", "opacity": 0.55 }
+          ] },
+          { "id": "sunlight", "depth": 0.68, "nodes": [
+            { "type": "path", "x": 95, "y": 875, "width": 265, "height": 175, "d": "M0 50 L100 50", "fill": "none", "stroke": "#ffffff", "strokeWidth": 5 },
+            { "type": "shape", "shape": "circle", "x": 322, "y": 945, "width": 28, "height": 28, "fill": "#f3b94f" },
+            { "type": "path", "x": 740, "y": 885, "width": 265, "height": 200, "d": "M100 16 L0 50 M100 28 L0 50 M100 40 L0 50 M100 52 L0 50 M100 64 L0 50 M100 76 L0 50 M100 88 L0 50", "fill": "none", "stroke": "#e95050", "strokeWidth": 2.2 }
+          ] },
+          { "id": "refraction-path", "depth": 0.86, "nodes": [
+            { "type": "path", "x": 90, "y": 820, "width": 900, "height": 470, "d": "M0 48 L28 48 L62 24 L73 65 L37 86 L0 90", "fill": "none", "stroke": "#fffdf4", "strokeWidth": 3 }
+          ] }
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["nws-how-rainbows-form"]
+    },
+    {
+      "id": "rainbow-03-internal-reflection",
+      "order": 3,
+      "startSec": 12.8,
+      "endSec": 19.2,
+      "narrationText": "Sebagian cahaya dipantulkan sekali di bagian dalam tetes, lalu dibiaskan lagi saat keluar. Jalur ini membentuk pelangi primer.",
+      "onScreenText": "DIPANTULKAN SEKALI DI DALAM TETES",
+      "templateId": "infographic",
+      "visualDescription": "Satu tetes hujan transparan menampilkan sinar masuk, satu pantulan pada sisi dalam, dan sinar berwarna yang keluar kembali ke arah pengamat.",
+      "motionCues": ["fadeIn", "reveal"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "spring" },
+        { "cue": "reveal", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "#dceef7",
+        "layers": [
+          { "id": "sky", "depth": 0.05, "nodes": [{ "type": "shape", "shape": "rect", "x": 0, "y": 300, "width": 1080, "height": 1420, "fill": "#dceef7" }] },
+          { "id": "rain", "depth": 0.3, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 330, "y": 720, "width": 420, "height": 420, "fill": "#b8e2f0", "stroke": "#438eb2", "strokeWidth": 9, "opacity": 0.78 }
+          ] },
+          { "id": "sunlight", "depth": 0.72, "nodes": [
+            { "type": "path", "x": 85, "y": 845, "width": 275, "height": 180, "d": "M0 50 L100 50", "fill": "none", "stroke": "#fffdf4", "strokeWidth": 4 },
+            { "type": "path", "x": 90, "y": 895, "width": 400, "height": 260, "d": "M100 14 L0 54 M100 28 L0 58 M100 42 L0 62 M100 56 L0 66 M100 70 L0 70 M100 84 L0 74", "fill": "none", "stroke": "#e95050", "strokeWidth": 2.1 }
+          ] },
+          { "id": "internal-reflection", "depth": 0.88, "nodes": [
+            { "type": "path", "x": 100, "y": 780, "width": 880, "height": 560, "d": "M0 34 L25 40 L70 24 L74 64 L29 82 L0 91", "fill": "none", "stroke": "#fffdf4", "strokeWidth": 0.7 },
+            { "type": "shape", "shape": "circle", "x": 690, "y": 840, "width": 30, "height": 30, "fill": "#f3b94f" },
+            { "type": "shape", "shape": "circle", "x": 340, "y": 1190, "width": 30, "height": 30, "fill": "#e95050" }
+          ] }
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["nws-how-rainbows-form"]
+    },
+    {
+      "id": "rainbow-04-colors",
+      "order": 4,
+      "startSec": 19.2,
+      "endSec": 25.6,
+      "narrationText": "Banyak tetes mengirim warna ke arah mata dari sudut tertentu. Merah tampak di sisi luar busur, sedangkan biru lebih ke dalam.",
+      "onScreenText": "PANJANG GELOMBANG TERPISAH",
+      "templateId": "infographic",
+      "visualDescription": "Busur warna terbentuk dari banyak tetes hujan; lapisan merah di luar dan biru-ungu di dalam. Tidak ada prisma.",
+      "motionCues": ["fadeIn", "reveal"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "spring" },
+        { "cue": "reveal", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "#dceef7",
+        "layers": [
+          { "id": "sky", "depth": 0.05, "nodes": [{ "type": "shape", "shape": "rect", "x": 0, "y": 300, "width": 1080, "height": 1420, "fill": "#dceef7" }] },
+          { "id": "spectrum-arc", "depth": 0.28, "nodes": [
+            { "type": "path", "x": 95, "y": 560, "width": 890, "height": 650, "d": "M5 98 C12 12 88 12 95 98", "fill": "none", "stroke": "#e95050", "strokeWidth": 2.8 },
+            { "type": "path", "x": 95, "y": 585, "width": 890, "height": 610, "d": "M12 98 C19 24 81 24 88 98", "fill": "none", "stroke": "#f18a45", "strokeWidth": 2.8 },
+            { "type": "path", "x": 95, "y": 610, "width": 890, "height": 570, "d": "M19 98 C26 36 74 36 81 98", "fill": "none", "stroke": "#edc74e", "strokeWidth": 2.8 },
+            { "type": "path", "x": 95, "y": 635, "width": 890, "height": 530, "d": "M26 98 C33 48 67 48 74 98", "fill": "none", "stroke": "#56a875", "strokeWidth": 2.8 },
+            { "type": "path", "x": 95, "y": 660, "width": 890, "height": 490, "d": "M33 98 C40 60 60 60 67 98", "fill": "none", "stroke": "#428fc2", "strokeWidth": 2.8 },
+            { "type": "path", "x": 95, "y": 685, "width": 890, "height": 450, "d": "M40 98 C46 72 54 72 60 98", "fill": "none", "stroke": "#625caa", "strokeWidth": 2.8 }
+          ] },
+          { "id": "sunlight", "depth": 0.6, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 105, "y": 1050, "width": 125, "height": 125, "fill": "#f3b94f" },
+            { "type": "path", "x": 210, "y": 1085, "width": 180, "height": 110, "d": "M0 50 L100 15 M0 50 L100 50 M0 50 L100 85", "fill": "none", "stroke": "#f3b94f", "strokeWidth": 3.5 }
+          ] },
+          { "id": "rain", "depth": 0.72, "nodes": [
+            { "type": "shape", "shape": "ellipse", "x": 280, "y": 1080, "width": 40, "height": 68, "fill": "#4f9ec4" },
+            { "type": "shape", "shape": "ellipse", "x": 410, "y": 1010, "width": 38, "height": 64, "fill": "#4f9ec4" },
+            { "type": "shape", "shape": "ellipse", "x": 540, "y": 980, "width": 42, "height": 70, "fill": "#4f9ec4" },
+            { "type": "shape", "shape": "ellipse", "x": 670, "y": 1010, "width": 38, "height": 64, "fill": "#4f9ec4" },
+            { "type": "shape", "shape": "ellipse", "x": 800, "y": 1080, "width": 40, "height": 68, "fill": "#4f9ec4" }
+          ] }
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["nws-how-rainbows-form"]
+    },
+    {
+      "id": "rainbow-05-viewing-conditions",
+      "order": 5,
+      "startSec": 25.6,
+      "endSec": 32,
+      "narrationText": "Untuk melihat busur, letakkan Matahari di belakang dan hujan di depan. Matahari harus kurang dari 42 derajat di atas horizon; semakin rendah Matahari, busur yang terlihat makin tinggi.",
+      "onScreenText": "MATAHARI DI BELAKANG · HUJAN DI DEPAN",
+      "templateId": "infographic",
+      "visualDescription": "Diagram pandangan dari pengamat: Matahari rendah di belakang, hujan di depan, dan pelangi di sisi langit yang berlawanan dengan Matahari.",
+      "motionCues": ["fadeIn", "reveal"],
+      "motionPlan": [
+        { "cue": "fadeIn", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "spring" },
+        { "cue": "reveal", "targetLayer": "all", "delayFrames": 0, "durationFrames": 24, "easing": "easeInOut" }
+      ],
+      "visualComposition": {
+        "background": "#dceef7",
+        "layers": [
+          { "id": "sky", "depth": 0.05, "nodes": [{ "type": "shape", "shape": "rect", "x": 0, "y": 300, "width": 1080, "height": 1420, "fill": "#dceef7" }] },
+          { "id": "horizon", "depth": 0.2, "nodes": [
+            { "type": "path", "x": 40, "y": 1190, "width": 1000, "height": 190, "d": "M0 45 Q18 30 36 45 T72 45 T100 45 L100 100 L0 100 Z", "fill": "#7db58a" }
+          ] },
+          { "id": "spectrum-arc", "depth": 0.34, "nodes": [
+            { "type": "path", "x": 220, "y": 610, "width": 720, "height": 570, "d": "M8 98 C14 12 86 12 92 98", "fill": "none", "stroke": "#e95050", "strokeWidth": 3 },
+            { "type": "path", "x": 220, "y": 640, "width": 720, "height": 530, "d": "M18 98 C24 30 76 30 82 98", "fill": "none", "stroke": "#edc74e", "strokeWidth": 3 },
+            { "type": "path", "x": 220, "y": 670, "width": 720, "height": 490, "d": "M28 98 C34 48 66 48 72 98", "fill": "none", "stroke": "#428fc2", "strokeWidth": 3 }
+          ] },
+          { "id": "sunlight", "depth": 0.62, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 140, "y": 1025, "width": 150, "height": 150, "fill": "#f3b94f" },
+            { "type": "path", "x": 270, "y": 1080, "width": 310, "height": 125, "d": "M0 50 L100 20 M0 50 L100 50 M0 50 L100 80", "fill": "none", "stroke": "#f3b94f", "strokeWidth": 4 }
+          ] },
+          { "id": "rain", "depth": 0.72, "nodes": [
+            { "type": "shape", "shape": "ellipse", "x": 740, "y": 1000, "width": 46, "height": 76, "fill": "#4f9ec4" },
+            { "type": "shape", "shape": "ellipse", "x": 830, "y": 1080, "width": 42, "height": 70, "fill": "#4f9ec4" },
+            { "type": "shape", "shape": "ellipse", "x": 920, "y": 990, "width": 44, "height": 74, "fill": "#4f9ec4" }
+          ] },
+          { "id": "observer", "depth": 0.9, "nodes": [
+            { "type": "shape", "shape": "circle", "x": 470, "y": 1300, "width": 86, "height": 86, "fill": "#304c65" },
+            { "type": "shape", "shape": "ellipse", "x": 425, "y": 1375, "width": 176, "height": 125, "fill": "#304c65" }
+          ] }
+        ]
+      },
+      "sfxCues": [],
+      "referenceIds": ["nws-how-rainbows-form"]
+    }
+  ]
+}

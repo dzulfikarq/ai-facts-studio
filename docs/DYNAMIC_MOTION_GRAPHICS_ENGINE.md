@@ -1,4 +1,4 @@
-# Dynamic Motion Graphics Engine V1.0.4
+# Dynamic Motion Graphics Engine — Renderer V5
 
 ## Goal
 
@@ -12,7 +12,7 @@ Render reusable, deterministic 2D graphics from validated, authored Research Pac
 - `src/video/visual-primitives.tsx`: SVG Shape, Path, Text, Icon, Image, Diagram, Group/layer rendering.
 - `src/video/style-config.ts`: palette, typography, spacing, safe-area, and backdrop tokens for each visual preset.
 - `src/video/motion.ts`: frame-index cue evaluation and deterministic transform composition.
-- `src/video/video.tsx`: V2 scene selection, transitions, captions, progress, and audio.
+- `src/video/video.tsx`: current scene selection, transitions, captions, progress, and audio.
 - `src/video/legacy-video.tsx` / `legacy-artwork.tsx`: frozen V1 renderer compatibility.
 
 ## Composition data
@@ -49,15 +49,15 @@ V1.0 packages pass strict old-schema validation, then upgrade to v1.1 in memory:
 
 Color tokens (`canvas`, `surface`, `primary`, `accent`, `text`, `muted`, `snow`, `danger`) resolve through selected preset; explicit `#RRGGBB` remains fixed.
 
-`motionPlan` has one entry per ordered `motionCue`: `{cue,targetLayer,delayFrames,durationFrames,easing}`. Targets are `all`, `scene`, or a layer ID. Motion uses Remotion frame, `interpolate`, and bounded `spring`; plans execute in array order, translations sum, scale factors multiply/clamp, alpha multiplies, and reveal clips its layer. Pan/zoom/parallax/slide/pulse now use larger bounded trajectories; presets add camera drift and zoom. `cut` is immediate and takes precedence over `dissolve`; `dissolve` cross-fades prior artwork for configured frames. Repeated compatible cues compound deterministically.
+`motionPlan` has one entry per ordered `motionCue`: `{cue,targetLayer,delayFrames,durationFrames,easing}`. Targets are `all`, `scene`, or a layer ID. Motion uses Remotion frame, `interpolate`, and bounded `spring`; plans execute in array order, translations sum, scale factors multiply/clamp, alpha multiplies, and reveal clips its layer. Pan/zoom/parallax/slide/pulse use bounded trajectories; presets add camera drift and zoom. New scenes default to no effects and Cut. Choose one transition: `cut`, `dissolve` (Crossfade), `slide-transition`, or `wipe`. Repeated compatible effects compound deterministically.
 
-The scene editor exposes checkboxes for cue selection and JSON editors for composition/cue timing. `visualDescription` remains editorial text and can guide local deterministic Art Director mappings; it is never rendered as SVG/markup.
+`ResearchPackage.scenes[].motionPlan` is canonical Motion Direction; Motion Beats remain separate Visual Storyboard actions. Visual Storyboard handles artwork/import/review/approval. Edit Video owns scene duration/timing, effects/transitions, overlays, subtitle settings, and Remotion preview. Scene duration changes preserve visual scene IDs and data. TTS duration changes require an explicit retime, keep-timeline, or cancel choice. `visualDescription` remains editorial text and can guide local deterministic Art Director mappings; it is never rendered as SVG/markup.
 
-V2 captions show one phrase at a time, wrap to at most two lines, use preset contrast/stroke, and gently fade/translate at phrase boundaries. Auto phrases split on punctuation, 6-word/48-character bounds, then merge up to 72 characters; common connectors move off phrase endings. Duration uses word/punctuation weights inside scene progress. Matching `onScreenText` terms receive accent emphasis. Authors can manually edit v1.1 `captionSegments` text, emphasis, and contiguous 0–1 progress ranges per scene. No word timestamps are inferred.
+Current captions show one phrase at a time, wrap to at most two lines, use preset contrast/stroke, and gently fade/translate at phrase boundaries. Auto phrases split on punctuation, 6-word/48-character bounds, then merge up to 72 characters; common connectors move off phrase endings. Duration uses word/punctuation weights inside scene progress. Matching `onScreenText` terms receive accent emphasis. Authors can manually edit v1.1 `captionSegments` text, emphasis, and contiguous 0–1 progress ranges per scene. No word timestamps are inferred.
 
 ## Versioning and tests
 
-New V2 jobs store `rendererVersion: 2` in immutable snapshot, SQLite job row, and manifest. Old snapshots without version default to V1 and still render via the preserved legacy component. V2 preview and render share `VersionedVideo`. Audio path/hash stays immutable; daily quota policy is unchanged.
+New jobs store `rendererVersion: 5` in immutable snapshot, SQLite job row, and manifest. Renderer versions 1–4 remain supported; older snapshots keep prior timeline-duration behavior. Snapshots without a version default to V1 and use the frozen legacy component. Preview and render share `VersionedVideo`. Audio path/hash stays immutable; daily quota policy is unchanged.
 
 Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run test:visual`. Visual test renders 86 PNG frames at 270×480 and compares hashes to `scripts/visual-goldens.json`. It includes all templates, presets, cue behavior, staggered entrance, lightning, seven mountain scenes, five salt scenes, five Earth scenes, and transitions. Before/after/contact sheets were inspected before golden refresh. Hash baseline is local Windows/Chrome-specific and may differ on another platform/font rasterizer.
 

@@ -32,7 +32,7 @@ Research Package v1.0 is accepted and upgraded on parse to v1.1. Migration prese
 | `title`, `category`, `onScreenText`, `narrationText` | Video title/category/scene title/caption and TTS script fields. V2 captions split into short phrases; top-level `narration` remains unused by TTS. |
 | `captionSegments` | Optional manual phrase text/highlights and contiguous 0–1 scene timing; absent field gets bounded deterministic phrase estimates. |
 | reusable diagrams | `process-flow` (2–4 authored steps) and `water-cycle`; visual content remains package-authored. |
-| `startSec`, `endSec`, `targetDurationSec` | Scene sequence/timing. Attached audio duration overrides total; estimated TTS timings remain editable. |
+| `startSec`, `endSec`, `targetDurationSec` | Scene sequence/timing. Edit Video supports manual scene durations. Narration timing can scale scene spans or preserve authored boundaries; TTS duration changes offer retime, keep timeline, or cancel. |
 | `language` | Package metadata; TTS locale remains separately selected in Voice UI. |
 | `references` | Validation/review metadata; not drawn into video. |
 
@@ -42,7 +42,7 @@ All IDs have explicit defaults and registry entries: `mountain-reveal`, `plate-c
 
 ### Motion cue contract
 
-Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `scale` 24f/spring, `pan` 24f/linear, `zoom` 24f/ease-in-out, `parallax` 24f/ease-in-out, `reveal` 24f/spring, `pulse` 36f/linear, `cut` immediate, `dissolve` 18f/ease-in-out. V1.1 `motionPlan` can target `all`, `scene`, or a named layer. Plans run in array order: translations sum, scales multiply/clamp, opacity multiplies, reveal takes the most restrictive clip. If both transition cues exist, `cut` wins; `dissolve` cross-fades previous artwork. Same package + renderer version + frame yields deterministic motion.
+Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `scale` 24f/spring, `pan` 24f/linear, `zoom` 24f/ease-in-out, `parallax` 24f/ease-in-out, `reveal` 24f/spring, `pulse` 36f/linear. New scenes have no effects and use `cut`. Choose one transition: Cut, Crossfade (`dissolve`), Slide, or Wipe. V1.1 `motionPlan` can target `all`, `scene`, or a named layer. Plans run in array order: translations sum, scales multiply/clamp, opacity multiplies, reveal takes the most restrictive clip. Same package + renderer version + frame yields deterministic motion.
 
 ### Trusted visual assets
 
@@ -50,7 +50,7 @@ Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `sca
 
 ## Renderer version and old jobs
 
-New snapshots store `rendererVersion: 2`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2 to motion registry. A V1 snapshot without version metadata defaults to renderer 1 and remains renderable; when content is unchanged, project UI can render that V1 snapshot or explicitly create a V2 snapshot. Changed content marks it stale. Immutable audio file references remain unchanged. V1.0.4 does not silently reinterpret old snapshots as V2.
+New snapshots store `rendererVersion: 5`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2–V5 to the motion registry. Snapshots from renderer versions 1–4 remain renderable with their prior timeline-duration behavior. Missing version metadata defaults to V1. Changed content marks a snapshot stale; immutable audio references remain unchanged.
 
 ## Validation and visual regression
 

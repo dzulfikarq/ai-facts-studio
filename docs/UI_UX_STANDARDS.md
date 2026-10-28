@@ -14,7 +14,7 @@
 
 - URL identifies top-level page, project, workspace step, and selected scene. Parse/serialize routes in `src/client/routes.ts`; use `main.tsx` navigation helpers rather than direct history changes.
 - Browser Back/Forward must preserve existing save/discard confirmations and `workflow.ts` reachability guards.
-- Invalid steps/scenes/projects must resolve safely. URL state must not bypass approvals, quality gates, render checks, or project persistence.
+- Invalid steps/scenes/projects must resolve safely. Edit Video remains reachable from saved Visual Storyboard even with quality issues/pending approval; approval and quality gates still block Review, Preview, and Render.
 - Protect unsaved workspace/Create drafts on app navigation and page unload.
 
 ## Responsive and accessible behavior
@@ -23,7 +23,7 @@
 - Keep keyboard access, visible `:focus-visible` rings, accessible names, semantic status, native control behavior, and reduced-motion support.
 - Preserve Light, Dark, and System appearance on every page and dialog. Theme changes must not affect project or renderer data.
 - Video scene controls must keep trim, fit/crop, loop/freeze, and opt-in audio keyboard-accessible; clip audio stays off by default and separate from narration approval.
-- Motion Direction controls belong in Video Editor V2 and must preview through Remotion; Storyboard shows read-only summary/link. Keep Motion Beat separate, layer/media limits explicit, and Cut/Dissolve mutually exclusive.
+- Motion Direction, scene timing, transitions, overlays, and preview controls belong in Edit Video; Visual Storyboard owns visual authoring/approval. New scenes default to no effects and Cut. Keep Motion Beat separate and layer/media limits explicit.
 
 ## Verification
 

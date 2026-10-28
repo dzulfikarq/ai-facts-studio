@@ -4,7 +4,7 @@ Importer remains strict. Existing v1.0 files are validated using their original 
 
 ## Root fields (both versions)
 
-`schemaVersion`, `id`, `title`, `category`, `visualPreset`, `language`, `targetDurationSec`, `aspectRatio` (`9:16`), `narration`, `references`, `scenes`.
+`schemaVersion`, `id`, `title`, `category`, `visualPreset`, `language`, `targetDurationSec`, `aspectRatio` (`9:16`), `narration`, `references`, `scenes`. Optional `videoOverlaySettings` controls category/title/scene label/subtitles/progress/branding visibility and brand name; defaults preserve current overlays.
 
 Reference: unique `id`, `title`, `publisher`, HTTP(S) `url`, ISO `checkedAt`, optional ISO `publishedAt`.
 
@@ -26,7 +26,9 @@ Scene: unique `id`, increasing positive `order`, non-overlapping `startSec`/`end
 
 Frames include x/y/width/height, optional rotation/opacity/z-index. Schema bounds rotated node frames to 1080×1920 and validates path, color, layer ID, node count, and asset IDs. Group children use canonical canvas coordinates scaled into the group frame. Renderer clips to canvas; no `eval`, JS, imported JSX, arbitrary SVG markup, remote image fetch, or user-selected file path.
 
-`motionPlan` stores `{cue,targetLayer,delayFrames,durationFrames,easing}`. It must align one-to-one and in order with `motionCues`. Target is `all`, `scene`, or an existing layer ID; easing allowlist: `linear`, `easeIn`, `easeOut`, `easeInOut`, `spring`.
+`motionPlan` stores `{cue,targetLayer,delayFrames,durationFrames,easing}` plus cue-specific direction/intensity fields. It must align one-to-one and in order with `motionCues`. Target is `all`, `scene`, or an existing layer ID; easing allowlist: `linear`, `easeIn`, `easeOut`, `easeInOut`, `spring`. Transition cues are mutually exclusive: `cut`, `dissolve` (Crossfade), `slide-transition`, or `wipe`; new scenes default to Cut with no motion effects.
+
+Optional `motionActions` stores scene-relative Motion Beats; optional `sceneMedia` stores imported clip/poster metadata and trim/audio settings. Project-level narration mode, active audio timing mode, and approval history live in persisted project metadata, not the imported Research Package. Retiming narration updates scene spans while preserving stable IDs and visual storyboard state.
 
 `process-flow` diagrams require 2–4 step labels. Renderer auto-frames foreground composition nodes into illustration area; depth ≤0.1 remains backdrop. This is layout support, not automatic topic-to-art generation.
 
@@ -36,6 +38,6 @@ Optional `captionSegments` stores `{text,startProgress,endProgress,emphasis?}` (
 
 1–120 sec; 1–30 scenes; up to 50 references; 2,000 chars per narration segment; 120 chars on-screen text; up to 12 composition layers, 32 nodes/layer, 8 cues/scene. Templates: `mountain-reveal`, `plate-collision`, `folding-uplift`, `himalaya`, `volcano`, `infographic`, `space-orbit`, `animal-habitat`.
 
-V1.0 migration uses `templateId` to add authored default compositions and derives default cue plans. Existing `visualDescription`, claims, references, timing, and scene text remain unchanged. DB projects normalize on read; they persist v1.1 on next save. Old immutable V1 render snapshots have their own V1 renderer compatibility path.
+V1.0 migration uses `templateId` to add authored default compositions and derives default cue plans. Existing `visualDescription`, claims, references, timing, and scene text remain unchanged. DB projects normalize on read; they persist v1.1 on next save. Renderer V5 is current; immutable renderer versions 1–4 remain supported, with legacy timeline-duration behavior preserved.
 
 Examples: [`mountain-formation.json`](../samples/mountain-formation.json), [`lightning-charge.json`](../samples/lightning-charge.json), and [`kenapa-air-laut-asin.json`](../samples/kenapa-air-laut-asin.json). V1.0 samples remain supported. No URL fetch/factual verification occurs; author review remains required. Renderer wiring and known nonvisual metadata fields: [`VIDEO_PIPELINE.md`](VIDEO_PIPELINE.md).

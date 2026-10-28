@@ -1,6 +1,6 @@
 # 2D Visual Storyboard
 
-Pipeline: Research → Storyboard → Visual Review → Preview → Render. Local deterministic composer remains automatic path; it uses curated vector/shape scenes and no image-generation API. Scene illustration source is independent of Development/Production mode.
+Workflow: Materi → Narasi → Visual Storyboard → Edit Video → Review & Subtitle → Preview Video → Render & Download. Visual Storyboard handles artwork, Flow media, and scene approval; Edit Video handles timing, motion, transitions, overlays, and preview. Edit Video remains accessible while visual quality issues or approvals are pending; Review/Preview/Render remain guarded. Local deterministic composer remains automatic path; it uses curated vector/shape scenes and no image-generation API. Scene illustration source is independent of Development/Production mode.
 
 ## Composer and review
 
@@ -19,7 +19,7 @@ Approval fingerprints cover artwork, copy, object/relation plan, source/status, 
 - Motion plans are deterministic local rules over scene narration, visible object relationships, duration, and actual composition nodes. Preview, batch preparation, and Remotion rendering make no AI/provider request.
 - V1 supports Subtle/Balanced/Expressive intensity, typed transform/path/draw/particle/reveal actions, bounded keyframes/particles, safe-canvas node references, and scene-duration validation. Scene timing is approximate because word-level audio alignment is unavailable.
 - Each scene can be prepared or reviewed separately; persisted all-scene jobs report progress, preserve approved/existing plans, stop on cancel, and retry selected failed/cancelled scenes. Motion changes invalidate approval fingerprints. Historical pre-Motion approvals migrate without false invalidation; immutable snapshots keep old plans and renderer versions.
-- Remotion renderer V3 applies declarative actions to SVG layers. Renderer V1/V2 snapshots keep compatible render paths. Preview seek uses native keyboard-accessible range input; no autoplay or external generation.
+- Remotion renderer V5 applies declarative actions to SVG layers. Renderer V1–V4 snapshots keep compatible render paths. Preview seek uses native keyboard-accessible range input; no autoplay or external generation.
 - Rain falls onto land, mineral particles follow existing river paths, and evaporation animates water vapor only—salt ions stay still. UV shows approach to ozone plus one partial-transmission path; artwork has no wavelength-specific ray identity, so UV-B/UV-C proportions are not simulated. Magnetosphere curves charged particles, never UV. Raster artwork moves only as a whole image; internal objects cannot be separated.
 - Automated checks cover target/timing/bounds, deterministic frame positions, raster constraints, stale approval, legacy renderer compatibility, API persistence/idempotency/cancel/retry, immutable motion snapshots, keyboard seeking, and mobile dialog bounds.
 - Render evidence (silent H.264/AAC review MP4, manifests, action plans, sampled frame sequences/contact sheets, limitations): `artifacts/motion-director-poc/2026-10-27T07-33-06-248Z/`. Browser Motion Preview screenshots: `artifacts/motion-director-poc/ui-2026-10-27T07-30-00/motion-director-preview.png` and `motion-director-preview-mobile.png`. Renders use reduced review scale (378×672), not production resolution.

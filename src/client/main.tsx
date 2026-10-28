@@ -120,6 +120,7 @@ function apiWithUploadProgress<T>(url: string, body: FormData, onProgress: (prog
     const xhr = new XMLHttpRequest();
     let lastPercent = -1;
     xhr.open("POST", url);
+    xhr.timeout = 120_000;
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable && event.total > 0) {
         const percent = Math.round(event.loaded / event.total * 100);
@@ -138,6 +139,7 @@ function apiWithUploadProgress<T>(url: string, body: FormData, onProgress: (prog
     });
     xhr.addEventListener("error", () => reject(new Error("Koneksi terputus saat mengimpor batch.")));
     xhr.addEventListener("abort", () => reject(new Error("Impor batch dibatalkan.")));
+    xhr.addEventListener("timeout", () => reject(new Error("Request batch melewati batas 120 detik. Periksa koneksi/server, lalu coba ulang file yang gagal.")));
     xhr.send(body);
   });
 }

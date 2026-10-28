@@ -97,7 +97,7 @@ const [theme, setTheme] = useThemePreference();
 ## 5. Layout and navigation
 
 - **Horizontal top navigation:** AI Facts Studio brand, Beranda, Buat Video, theme switcher, and Pengaturan appear on every route, including workspace. Settings stays rightmost so shared content edge aligns to its control. Labels collapse on narrow screens; accessible names remain. No sidebar or fake account avatar. Workspace save stays available in its editor/workflow context.
-- **Shared page alignment:** Every `.page.layout-container` uses one shared layout, measured against Beranda's left edge and Pengaturan's right edge. The editor may use wider viewport space while retaining the same edges and spacing; no page-specific guessed margins.
+- **Shared page alignment:** Every `.page.layout-container` uses equal horizontal gutters (`clamp(18px, 4vw, 56px)`), matching topbar's outer padding. Editor panels and workflow steps share those edges; no control-measured asymmetric insets.
 - **Project Saya:** dashboard and project library are one page. Project search filters local project data. Cards use actual title, category, scene count, update date, job status, and available duration. Missing thumbnails use a neutral surface/icon placeholder, not gradient artwork or fabricated project data. Initial project loading uses non-animated skeleton cards until the API responds.
 - **Create Video:** Generate with AI is selected and first; JSON import and sample flow remain available. Generation stays click-triggered; drafts can be reviewed before project creation.
 - **Workspace:** the same global navigation remains visible. Editable project title, save state/action, and all six workflow steps remain available. Visual Editor uses a compact horizontally scrollable stepper above the scene rail, 9:16 canvas, inspector, toolbar, and timeline. Scene list/editor stays contextual to Storyboard. No global sidebar.
@@ -220,7 +220,7 @@ Known V2 limits: no scene reorder/duplicate/delete (timeline/audio migration req
 ## 9. Responsive guidelines
 
 - Base layout supports 320px minimum; target mobile range includes 360–430px.
-- Main redesign breakpoints: 1050px (project grid 3→2 columns; settings stack), 700px (compact topbar and scrollable workflow), 520px (single-column project cards, icon-only top actions, compact editor/dialog). Page content follows measured Beranda/Pengaturan control edges on every route. The Visual Editor stepper and scene rail scroll internally; toolbar/transport wrap on mobile.
+- Main redesign breakpoints: 1050px (project grid 3→2 columns; settings stack), 700px (compact topbar and scrollable workflow), 520px (single-column project cards, icon-only top actions, compact editor/dialog). Page content uses equal gutters matching topbar on every route. The Visual Editor stepper and scene rail scroll internally; toolbar/transport wrap on mobile.
 - Existing feature breakpoints also apply: 950px workflow stepper becomes horizontally scrollable; 820px workspace/editor columns collapse; 560px tight form and stepper refinements.
 - Project cards use 3 columns on wide desktop, 2 on tablet, 1 on narrow mobile.
 - Workspace stepper scrolls horizontally instead of compressing labels. Editor and preview stack vertically at tablet widths; 9:16 preview ratio stays fixed.

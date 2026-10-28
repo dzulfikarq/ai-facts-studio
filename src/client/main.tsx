@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CircleAlert, Clock3, Film, House, Info, Save as SaveIcon, Search, Settings as SettingsIcon, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
@@ -207,7 +207,6 @@ function App() {
   const restorePopNavigation = useRef(false);
   const routeHistoryIndex = useRef(0);
   const previewPlayer = useRef<PlayerRef>(null);
-  const layoutRef = useRef<HTMLDivElement>(null);
   const setCreateDraftUnsaved = useCallback((value: boolean) => { createDraftUnsaved.current = value; setCreateDraftUnsavedState(value); }, []);
 
   const selectedSceneId = route.view === "workspace" ? route.sceneId : null;
@@ -310,30 +309,6 @@ function App() {
       return next;
     } finally { setBusy(false); }
   }
-
-  useLayoutEffect(() => {
-    const shell = layoutRef.current;
-    if (!shell) return;
-    const syncPageBounds = () => {
-      const leftControl = shell.querySelector<HTMLElement>(".nav-home");
-      const rightControl = shell.querySelector<HTMLElement>('.topbar-icon[aria-label="Pengaturan"]');
-      if (!leftControl || !rightControl) return;
-      const shellBounds = shell.getBoundingClientRect();
-      shell.style.setProperty("--page-inset-start", `${Math.max(0, leftControl.getBoundingClientRect().left - shellBounds.left)}px`);
-      shell.style.setProperty("--page-inset-end", `${Math.max(0, shellBounds.right - rightControl.getBoundingClientRect().right)}px`);
-    };
-    syncPageBounds();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", syncPageBounds);
-      return () => window.removeEventListener("resize", syncPageBounds);
-    }
-    const observer = new ResizeObserver(syncPageBounds);
-    [".topbar", ".topbar-left", ".topbar-nav", ".topbar-actions"].forEach((selector) => {
-      const element = shell.querySelector(selector);
-      if (element) observer.observe(element);
-    });
-    return () => observer.disconnect();
-  }, [view]);
 
   async function refresh() {
     try {
@@ -1751,7 +1726,7 @@ function App() {
   const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
 
-  return <div className={`app-shell ${view === "workspace" && activeStep === "visual" ? "editor-active" : ""}`} ref={layoutRef}>
+  return <div className={`app-shell ${view === "workspace" && activeStep === "visual" ? "editor-active" : ""}`}>
     <main className="main-area">
       <header className="topbar">
         <div className="topbar-left">

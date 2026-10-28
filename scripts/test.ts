@@ -378,6 +378,9 @@ assert.deepEqual(sixSceneImportBoard.scenes.map((scene) => scene.motionActions),
 assert.ok(sixSceneImportBoard.scenes.every((scene) => compositionForVisualScene(sixSceneImportBoard, scene).layers[0]?.nodes[0]?.type === "image"), "all six scenes render their imported scene overrides");
 const sixSceneGate = visualStoryboardQualityGate(volcano, sixSceneImportBoard, [aiImportAsset]);
 assert.ok(sixSceneGate.issues.some((issue) => issue.includes("Motion Beat memiliki target layer/node yang hilang")), "missing Motion Beat targets stay visible as quality issues after import");
+const staleTargetResearch = parseResearchPackage(applyVisualStoryboard(volcano, sixSceneImportBoard));
+assert.equal(staleTargetResearch.success, true, "stale Motion Beat targets remain saveable so they can be repaired in the editor");
+if (staleTargetResearch.success) assert.deepEqual(staleTargetResearch.data.scenes.map((scene) => scene.motionActions), motionBeforeImport, "saving stale targets preserves Motion Beats for repair");
 assert.ok(visualStoryboardQualityGate(seaSalt, rasterStoryboard, [aiImportAsset]).scenes[rasterScene.sceneId]?.some((issue) => issue.includes("Tinjau semantik")), "raster illustration requires explicit semantic/provenance review before approval");
 rasterScene.authoringConfirmed = true;
 const rasterGate = visualStoryboardQualityGate(seaSalt, rasterStoryboard, [aiImportAsset]);

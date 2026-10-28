@@ -2,7 +2,7 @@ import { z } from "zod";
 import { captionSegmentsSchema } from "./captions";
 import { defaultMotionPlan, defaultVisualComposition } from "./visual-defaults";
 import { motionCuePlanSchema, motionCueIds, visualCompositionSchema } from "./visual-composition";
-import { motionActionsSchema, motionTargetExists } from "./motion-director";
+import { motionActionsSchema } from "./motion-director";
 
 export const categories = [
   "Fakta Unik", "Sains & Antariksa", "Sejarah & Misteri", "Tubuh Manusia", "Hewan & Alam", "Teknologi", "Geografi",
@@ -58,8 +58,8 @@ const sceneV11Schema = z.object({
     }
   });
   const durationFrames = Math.floor((scene.endSec - scene.startSec) * 30);
+  // ponytail: keep stale targets repairable; storyboard quality gate blocks approval/render.
   scene.motionActions.forEach((action, index) => {
-    if (!motionTargetExists(scene.visualComposition, action.targetNode)) ctx.addIssue({ code: "custom", message: `Node motion '${action.targetNode}' tidak ditemukan`, path: ["motionActions", index, "targetNode"] });
     if (action.startFrame + action.durationFrames > durationFrames) ctx.addIssue({ code: "custom", message: "Motion action melewati durasi scene", path: ["motionActions", index, "durationFrames"] });
   });
 }).refine((scene) => scene.endSec > scene.startSec, {

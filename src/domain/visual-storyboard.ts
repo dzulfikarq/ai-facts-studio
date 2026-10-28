@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { ResearchPackage } from "./research";
-import { defaultMotionPlan } from "./visual-defaults";
 import { visualCompositionSchema, type VisualComposition } from "./visual-composition";
 import { renderedVisualBounds } from "./visual-geometry";
 import { layerMotion } from "../video/motion";
@@ -493,22 +492,13 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
     scenes: research.scenes.map((scene) => {
       const visual = storyboard.scenes.find((item) => item.sceneId === scene.id);
       if (!visual) return scene;
-      const cues: ResearchPackage["scenes"][number]["motionCues"] = visual.motionIntent === "particle-flow" ? ["fadeIn", "reveal"]
-        : visual.motionIntent === "path-animation" ? ["fadeIn", "reveal"]
-          : visual.motionIntent === "keyword-highlight" ? ["fadeIn", "pulse"]
-            : visual.motionIntent === "focus-shift" ? ["fadeIn", "zoom"] : ["fadeIn", "reveal"];
-      const durationFrames = Math.max(1, Math.min(300, Math.round(Math.min(5, visual.durationSec) * 30)));
-      const layerPreference = visual.motionIntent === "particle-flow" ? ["river", "mineral", "charged-particles", "magnetic-field", "salt-ions"]
-        : visual.motionIntent === "path-animation" ? ["rain", "runoff", "river", "water-vapor", "uv-rays", "volcano", "tectonic-plates"]
-          : visual.motionIntent === "keyword-highlight" ? ["ozone", "salt-ions", "ocean"] : [];
       const composition = compositionForVisualScene(storyboard, visual);
-      const targetLayer = layerPreference.find((id) => composition.layers.some((layer) => layer.id === id)) ?? "all";
-      const motionPlan = defaultMotionPlan(cues).map((plan, index) => ({
-        ...plan,
-        targetLayer: plan.cue === "fadeIn" || plan.cue === "zoom" ? "all" : targetLayer,
-        delayFrames: index * 6,
-        durationFrames,
-      }));
+      const layerIds = new Set(composition.layers.map((layer) => layer.id));
+      // Research Package motionPlan is canonical; retarget removed layers without losing authored timing/effects.
+      const motionPlan = scene.motionPlan.map((plan) => !["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer)
+        ? { ...plan, targetLayer: "all" }
+        : plan);
+      const cues: ResearchPackage["scenes"][number]["motionCues"] = motionPlan.map((plan) => plan.cue);
       return {
         ...scene,
         onScreenText: visual.headline,

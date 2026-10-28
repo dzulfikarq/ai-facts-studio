@@ -19,7 +19,7 @@ import { registeredTemplateIds } from "../src/video/renderer-registry";
 import { visualStyles } from "../src/video/style-config";
 import { renderedVisualBounds, visualCompositionFrame } from "../src/domain/visual-geometry";
 import { aiVectorIllustrationSchema, parseAiVectorIllustration, vectorIllustrationNodeCount } from "../src/domain/ai-vector-illustration";
-import { updateVisualImageNode, visualCompositionSchema, visualImageNodes } from "../src/domain/visual-composition";
+import { motionCuePlanSchema, updateVisualImageNode, visualCompositionSchema, visualImageNodes } from "../src/domain/visual-composition";
 import { VisualCompositionView } from "../src/video/visual-primitives";
 import { buildIllustrationPrompt } from "../src/domain/illustration-prompt";
 import { googleFlowPromptPack, matchGoogleFlowFiles, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken, validGoogleFlowAssignments } from "../src/domain/google-flow";
@@ -149,6 +149,28 @@ assert.equal(carriedMotionProgress(1, 2, reservoirBeat, reservoirBeat.startFrame
 assert.equal(carriedMotionProgress(2, 2, reservoirBeat, reservoirBeat.startFrame + reservoirBeat.durationFrames / 2), 0.5, "reservoir fill follows deterministic beat progress");
 assert.equal(carriedMotionProgress(3, 2, undefined, 0), 1, "completed reservoir state carries into later scene");
 const mountainStoryboard = buildVisualStoryboard(mountain);
+const handAuthoredMotionPlan = [
+  { cue: "slide", targetLayer: "all", delayFrames: 12, durationFrames: 45, easing: "easeOut", direction: "left", intensity: 1.5 },
+  { cue: "dissolve", targetLayer: "scene", delayFrames: 3, durationFrames: 36, easing: "easeInOut" },
+];
+const manualMotionPackage = parseResearchPackage({ ...mountain, scenes: mountain.scenes.map((scene, index) => index === 0 ? { ...scene, motionCues: handAuthoredMotionPlan.map((plan) => plan.cue), motionPlan: handAuthoredMotionPlan } : scene) });
+assert.equal(manualMotionPackage.success, true, "manual Motion Direction supports per-cue direction, intensity, and dissolve parameters");
+if (manualMotionPackage.success) {
+  const manualMotionBoard = buildVisualStoryboard(manualMotionPackage.data);
+  const changedIntentBoard = { ...manualMotionBoard, scenes: manualMotionBoard.scenes.map((scene, index) => index === 0 ? { ...scene, motionIntent: "focus-shift" as const } : scene) };
+  const appliedMotion = applyVisualStoryboard(manualMotionPackage.data, changedIntentBoard);
+  assert.deepEqual(appliedMotion.scenes[0]!.motionPlan, handAuthoredMotionPlan, "applyVisualStoryboard does not overwrite authored Motion Direction when visual intent changes");
+  assert.deepEqual(appliedMotion.scenes[0]!.motionCues, handAuthoredMotionPlan.map((plan) => plan.cue), "legacy motionCues stay synchronized with canonical motionPlan");
+  assert.deepEqual(appliedMotion.scenes[1]!.motionPlan, manualMotionPackage.data.scenes[1]!.motionPlan, "editing one scene leaves other scene Motion Direction untouched");
+  assert.equal(parseResearchPackage(appliedMotion).success, true, "authored Motion Direction survives package save/reload validation");
+}
+assert.equal(motionCuePlanSchema.safeParse({ cue: "fadeIn", targetLayer: "all", delayFrames: 0, durationFrames: 24, easing: "linear", intensity: 1 }).success, false, "unsupported intensity controls are rejected");
+const conflictingTransitions = parseResearchPackage({ ...mountain, scenes: mountain.scenes.map((scene, index) => index === 0 ? { ...scene, motionCues: ["cut", "dissolve"], motionPlan: [{ cue: "cut", targetLayer: "scene", delayFrames: 0, durationFrames: 1, easing: "linear" }, { cue: "dissolve", targetLayer: "scene", delayFrames: 0, durationFrames: 18, easing: "easeInOut" }] } : scene) });
+assert.equal(conflictingTransitions.success, true, "legacy Cut and Dissolve conflicts are normalized instead of blocking project load");
+if (conflictingTransitions.success) {
+  assert.deepEqual(conflictingTransitions.data.scenes[0]!.motionCues, ["cut"], "legacy transition normalization preserves old Cut precedence");
+  assert.deepEqual(conflictingTransitions.data.scenes[0]!.motionPlan.map((plan) => plan.cue), ["cut"], "legacy motionPlan remains synchronized after transition normalization");
+}
 assert.ok(mountainStoryboard.styleLock.illustrationStyle.includes("Premium 2D"));
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.illustrationWorkflow === "google-flow"), "new and legacy scenes default to persisted Google Flow workflow");
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.flowVisualMode === "animated-video"), "new scenes default to Google Flow animation mode");
@@ -1197,9 +1219,14 @@ assert.equal(new Set(Object.values(visualStyles).map((style) => style.palette.ca
 const motionPlan = (cue: import("../src/domain/visual-composition").MotionCuePlan["cue"]) => ({ cue, targetLayer: "all" as const, delayFrames: 0, durationFrames: 24, easing: "linear" as const });
 const still = { opacity: 1, translateX: 0, translateY: 0, scale: 1, reveal: 1 };
 const cueState = (cue: import("../src/domain/visual-composition").MotionCuePlan["cue"]) => layerMotion([motionPlan(cue)], "front", 1, 6, .25);
+assert.deepEqual(layerMotion([], "front", 1, 6, .25), still, "removing scene cues returns static layer to neutral state");
 for (const cue of ["fadeIn", "slide", "scale", "pan", "zoom", "parallax", "reveal", "pulse"] as const) {
   assert.notDeepEqual(cueState(cue), still, `${cue} must alter frame state`);
 }
+const directionPlan = { ...motionPlan("slide"), direction: "left" as const, intensity: 1.5 };
+assert.ok(layerMotion([directionPlan], "front", 1, 6, .25).translateX > 0, "Slide direction moves layer from opposite side toward requested direction");
+assert.ok(layerMotion([directionPlan], "front", 1, 6, .25).translateY === 0, "horizontal Slide does not move vertically");
+assert.ok(Math.abs(layerMotion([directionPlan], "front", 1, 6, .25).translateX) > Math.abs(layerMotion([motionPlan("slide")], "front", 1, 6, .25).translateY), "motion intensity scales effect distance");
 assert.equal(sceneTransitionOpacity([motionPlan("cut")], 0), 1, "cut stays immediate");
 assert.ok(sceneTransitionOpacity([motionPlan("dissolve")], 12) > 0 && sceneTransitionOpacity([motionPlan("dissolve")], 12) < 1, "dissolve spans its configured frames");
 assert.deepEqual(layerMotion([motionPlan("zoom")], "front", 12, 12, .5), layerMotion([motionPlan("zoom")], "front", 12, 12, .5), "motion state must be deterministic");

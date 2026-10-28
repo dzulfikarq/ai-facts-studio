@@ -387,7 +387,8 @@ function AiDraftReview({ draft, busy, onChange, onApprove, onCreate, onNewTopic,
   }
   function toggleMotion(sceneId: string, cue: typeof motionCues[number], checked: boolean) {
     updateScene(sceneId, (scene) => {
-      const motionCues = checked ? [...scene.motionCues, cue] : scene.motionCues.filter((item) => item !== cue);
+      const withoutConflict = checked && (cue === "cut" || cue === "dissolve") ? scene.motionCues.filter((item) => item !== (cue === "cut" ? "dissolve" : "cut")) : scene.motionCues;
+      const motionCues = checked ? [...withoutConflict.filter((item) => item !== cue), cue] : withoutConflict.filter((item) => item !== cue);
       return { ...scene, motionCues, motionPlan: defaultMotionPlan(motionCues) };
     });
   }

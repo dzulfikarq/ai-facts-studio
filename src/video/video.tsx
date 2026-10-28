@@ -6,6 +6,7 @@ import type { ResearchPackage, Scene } from "../domain/research";
 import type { VideoProps } from "./types";
 import type { VideoEditorInteractions } from "./types";
 import { sceneTransitionOpacity } from "./motion";
+import { layerMotion } from "./motion";
 import { rendererRegistry } from "./renderer-registry";
 import { visualStyles } from "./style-config";
 import { RENDERER_VERSION } from "./renderer-version";
@@ -52,15 +53,22 @@ function mediaPosition(position: SceneMedia["position"]) {
   return position.split("-").join(" ");
 }
 
-function SceneMediaLayer({ media, startFrame, durationFrames, opacity }: { media: SceneMedia; startFrame: number; durationFrames: number; opacity: number }) {
+function SceneMediaLayer({ media, startFrame, durationFrames, opacity, motionPlan, localFrame, progress }: { media: SceneMedia; startFrame: number; durationFrames: number; opacity: number; motionPlan: Scene["motionPlan"]; localFrame: number; progress: number }) {
   const trimIn = Math.round(media.trimInSec * 30);
   const trimOut = Math.max(trimIn + 1, Math.round(media.trimOutSec * 30));
   const mediaFrames = Math.max(1, trimOut - trimIn);
   const file = staticFile(`scene-media/${media.file}`);
   const style: React.CSSProperties = { width: "100%", height: "100%", objectFit: media.fit, objectPosition: mediaPosition(media.position) };
+  const motion = layerMotion(motionPlan.map((plan) => ({ ...plan, targetLayer: "scene" })), "scene", 0.5, localFrame, progress);
+  const motionStyle: React.CSSProperties = {
+    opacity: opacity * motion.opacity,
+    transform: `translate(${motion.translateX}px, ${motion.translateY}px) scale(${motion.scale})`,
+    transformOrigin: "center",
+    clipPath: motion.reveal < 1 ? `inset(0 ${100 * (1 - motion.reveal)}% 0 0)` : undefined,
+  };
   const video = () => <Video src={file} trimBefore={trimIn} trimAfter={trimOut} muted={!media.audioEnabled} style={style}/>;
   return <Sequence from={startFrame} durationInFrames={durationFrames} layout="none">
-    <AbsoluteFill style={{ opacity }}>
+    <AbsoluteFill style={motionStyle}>
       {media.shortClip === "loop" ? Array.from({ length: Math.ceil(durationFrames / mediaFrames) }, (_, index) => {
         const from = index * mediaFrames;
         const frames = Math.min(mediaFrames, durationFrames - from);
@@ -136,7 +144,7 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
 
   return <AbsoluteFill style={{ backgroundColor: style.palette.canvas, color: style.palette.text, fontFamily: style.bodyFont, overflow: "hidden" }}>
     {previous?.sceneMedia && previousSpan && <AbsoluteFill style={{ opacity: 1 - transition }}><Img src={staticFile(`scene-media/${previous.sceneMedia.posterFile}`)} style={{ width: "100%", height: "100%", objectFit: previous.sceneMedia.fit, objectPosition: mediaPosition(previous.sceneMedia.position) }}/></AbsoluteFill>}
-    {scene.sceneMedia && <SceneMediaLayer media={scene.sceneMedia} startFrame={Math.floor(span.startSec * fps)} durationFrames={Math.max(1, Math.floor((span.endSec - span.startSec) * fps))} opacity={transition}/>}
+    {scene.sceneMedia && <SceneMediaLayer media={scene.sceneMedia} startFrame={Math.floor(span.startSec * fps)} durationFrames={Math.max(1, Math.floor((span.endSec - span.startSec) * fps))} opacity={transition} motionPlan={scene.motionPlan} localFrame={localFrame} progress={progress}/>}
     <svg width="100%" height="100%" viewBox="0 0 1080 1920" preserveAspectRatio="xMidYMid slice" aria-label={`${research.title}, scene ${activeIndex + 1}`}>
       <defs>
         <linearGradient id="engine-sky" x1="0" y1="0" x2="0" y2="1"><stop stopColor={style.palette.canvas}/><stop offset="1" stopColor={style.palette.surface}/></linearGradient>

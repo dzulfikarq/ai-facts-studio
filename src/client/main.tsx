@@ -4,13 +4,12 @@ import { CircleAlert, Clock3, Film, House, Info, Save as SaveIcon, Search, Setti
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { categories, motionCues, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
+import { categories, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
 import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
-import { defaultMotionPlan } from "../domain/visual-defaults";
-import { motionCuePlanSchema, visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
+import { visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
 import type { VisualAsset } from "../domain/visual-assets";
 import { isAnimatedMediaFile, type SceneMedia } from "../domain/scene-media";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
@@ -968,7 +967,7 @@ function App() {
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
-  function applyMotionPreset(sceneId: string, preset: "static" | "gentle" | "pan-zoom" | "process" | "particles") {
+  function applyMotionBeatPreset(sceneId: string, preset: "static" | "gentle" | "pan-zoom" | "process" | "particles") {
     const scene = project?.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
     if (!scene) return;
     if (preset === "static") {
@@ -1957,7 +1956,7 @@ function App() {
                   <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
                 </button>)}
               </div>
-              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} />}
+              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} onEditMotion={() => { selectScene(selectedScene.id); void goToStep("visual"); }} />}
             </div>
             <aside className="materials-aside">
               <div className="project-details-card">
@@ -1993,6 +1992,7 @@ function App() {
             onExport={() => void goToStep("render")}
             onSave={() => void saveProject()}
             onChange={updateVisualScene}
+            onMotionDirectionChange={(sceneId, motionPlan) => updateScene(sceneId, (current) => ({ ...current, motionCues: motionPlan.map((plan) => plan.cue), motionPlan }))}
             onGenerate={regenerateVisualScene}
             onUseCurrentComposition={useAuthoredComposition}
             onSetSharedVisualWorld={setSharedVisualWorld}
@@ -2022,7 +2022,7 @@ function App() {
             onGenerateVector={generateVectorScene}
             onPrepareIssues={(sceneIds) => void prepareVisualScenes(sceneIds)}
             onGenerateMotion={generateSceneMotion}
-            onMotionPreset={applyMotionPreset}
+            onMotionBeatPreset={applyMotionBeatPreset}
             onPrepareMotion={(intensity) => void prepareMotionScenes(intensity)}
             onCancelMotion={() => void cancelMotionScenes()}
             onRetryMotion={(sceneIds, intensity) => void prepareMotionScenes(intensity, sceneIds)}
@@ -2460,11 +2460,9 @@ function UploadPanel({ project, busy, onUpload, onRemove }: { project: Project; 
   </div>;
 }
 
-function SceneEditor({ scene, references, onChange }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void }) {
+function SceneEditor({ scene, references, onChange, onEditMotion }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void; onEditMotion: () => void }) {
   const [compositionDraft, setCompositionDraft] = useState(JSON.stringify(scene.visualComposition, null, 2));
   const [compositionError, setCompositionError] = useState("");
-  const [motionDraft, setMotionDraft] = useState(JSON.stringify(scene.motionPlan, null, 2));
-  const [motionError, setMotionError] = useState("");
   const [captionDraft, setCaptionDraft] = useState(JSON.stringify(captionSegmentsForScene(scene), null, 2));
   const [captionError, setCaptionError] = useState("");
 
@@ -2481,25 +2479,6 @@ function SceneEditor({ scene, references, onChange }: { scene: Scene; references
       setCompositionError("");
       onChange((current) => ({ ...current, visualComposition: parsed.data }));
     } catch { setCompositionError("JSON komposisi belum lengkap/valid."); }
-  }
-
-  function editMotionPlan(value: string) {
-    setMotionDraft(value);
-    try {
-      const parsed = motionCuePlanSchema.array().max(8).safeParse(JSON.parse(value));
-      if (!parsed.success) { setMotionError(parsed.error.issues[0]?.message ?? "Motion plan tidak valid."); return; }
-      if (parsed.data.length !== scene.motionCues.length || parsed.data.some((plan, index) => plan.cue !== scene.motionCues[index])) {
-        setMotionError("Motion plan harus memuat satu entry per cue, urutan harus sama.");
-        return;
-      }
-      const layerIds = new Set(scene.visualComposition.layers.map((layer) => layer.id));
-      if (parsed.data.some((plan) => !["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer))) {
-        setMotionError("Target motion harus all, scene, atau ID layer yang ada.");
-        return;
-      }
-      setMotionError("");
-      onChange((current) => ({ ...current, motionPlan: parsed.data }));
-    } catch { setMotionError("JSON motion plan belum lengkap/valid."); }
   }
 
   function editCaptionSegments(value: string) {
@@ -2533,15 +2512,6 @@ function SceneEditor({ scene, references, onChange }: { scene: Scene; references
     onChange(() => next);
   }
 
-  function toggleCue(cue: typeof motionCues[number], checked: boolean) {
-    if (checked && scene.motionCues.length >= 8) { setMotionError("Maksimal 8 motion cues per scene."); return; }
-    const next = checked ? [...scene.motionCues, cue] : scene.motionCues.filter((item) => item !== cue);
-    const motionPlan = defaultMotionPlan(next);
-    setMotionDraft(JSON.stringify(motionPlan, null, 2));
-    setMotionError("");
-    onChange((current) => ({ ...current, motionCues: next, motionPlan }));
-  }
-
   return <div className="scene-editor">
     <div className="scene-editor-title"><div><span className="eyebrow">EDIT SCENE</span><strong>{scene.id}</strong></div><span className="template-badge">{scene.templateId}</span></div>
     <section className="scene-editor-section basic-content-section"><div className="editor-section-heading"><h3>Basic content</h3><p>Teks yang tampil dan dibacakan pada scene ini.</p></div>
@@ -2556,15 +2526,14 @@ function SceneEditor({ scene, references, onChange }: { scene: Scene; references
       <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Timing</h3><p>Atur rentang scene dalam video.</p></div>
         <div className="timing-fields"><label><span>Mulai (detik)</span><input type="number" min="0" max="120" step="0.5" value={scene.startSec} onChange={(event) => onChange((current) => ({ ...current, startSec: Number(event.target.value) }))} /></label><label><span>Akhir (detik)</span><input type="number" min="0.5" max="120" step="0.5" value={scene.endSec} onChange={(event) => onChange((current) => ({ ...current, endSec: Number(event.target.value) }))} /></label></div>
       </section>
-      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Motion cues</h3><p>Pilih animasi yang ingin dipakai.</p></div>
-        <fieldset className="motion-cue-grid"><legend className="sr-only">Motion cues</legend>{motionCues.map((cue) => <label key={cue}><input type="checkbox" checked={scene.motionCues.includes(cue)} onChange={(event) => toggleCue(cue, event.target.checked)} /><span>{cue.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase())}</span></label>)}</fieldset>
+      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Motion Direction</h3><p>Ringkasan read-only. Edit timing dan efek di Video Editor.</p></div>
+        <p>{scene.motionPlan.filter((plan) => plan.cue !== "cut" && plan.cue !== "dissolve").map((plan) => plan.cue.replace(/([A-Z])/g, " $1")).join(" · ") || "Tanpa gerakan tambahan"} · Transisi {scene.motionPlan.some((plan) => plan.cue === "dissolve") ? "Dissolve" : "Cut"}</p>
+        <button type="button" className="button button-light" onClick={onEditMotion}>Edit di Video Editor</button>
       </section>
       <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Caption phrases</h3><p>Sesuaikan frasa dan timing subtitle.</p></div>
         <details className="visual-json-editor"><summary>{scene.captionSegments ? "Edit caption phrases" : "Atur caption phrases"} · {scene.captionSegments ? "manual timing" : "estimasi otomatis"}</summary><textarea rows={7} spellCheck={false} value={captionDraft} onChange={(event) => editCaptionSegments(event.target.value)} aria-label="JSON caption phrases" /><div className="caption-editor-note">Timing frasa 0–1 dalam scene; bukan word-level sync. <button type="button" className="text-button" onClick={useAutoCaptionSegments}>Pakai segmentasi otomatis</button></div>{captionError && <span role="alert">{captionError}</span>}</details>
       </section>
-      <div className="advanced-technical-controls"><details className="visual-json-editor"><summary>Structured visual · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details>
-        <details className="visual-json-editor"><summary>Motion plan · detail teknis</summary><textarea rows={8} spellCheck={false} value={motionDraft} onChange={(event) => editMotionPlan(event.target.value)} aria-label="JSON motion plan" />{motionError && <span role="alert">{motionError}</span>}</details>
-      </div>
+      <div className="advanced-technical-controls"><details className="visual-json-editor"><summary>Structured visual · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details></div>
       <div className="cue-line">SFX metadata · belum diputar <span>{scene.sfxCues.join(" · ") || "none"}</span></div>
     </details>
   </div>;

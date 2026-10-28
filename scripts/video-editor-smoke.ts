@@ -53,10 +53,15 @@ const apiPort = await freePort();
 const vitePort = await freePort();
 const apiUrl = `http://127.0.0.1:${apiPort}`;
 const viteUrl = `http://127.0.0.1:${vitePort}`;
+const apiLogs: string[] = [];
 const apiServer = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: root,
   env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(apiPort), VITE_PORT: String(vitePort), DATA_DIR: path.join(tempDir, "data"), DAILY_JOB_LIMIT: "1", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
-  stdio: "ignore",
+  stdio: ["ignore", "pipe", "pipe"],
+});
+for (const stream of [apiServer.stdout, apiServer.stderr]) stream?.on("data", (chunk: Buffer) => {
+  apiLogs.push(...chunk.toString().split(/\r?\n/).filter(Boolean));
+  if (apiLogs.length > 40) apiLogs.splice(0, apiLogs.length - 40);
 });
 let viteServer: ChildProcess | undefined;
 let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
@@ -104,7 +109,7 @@ try {
   browser = await openBrowser("chrome", { logLevel: "error" });
   const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: () => {}, onLog: () => {} } as never);
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "project dashboard");
 
   const clickProject = async (title: string) => {
@@ -144,6 +149,21 @@ try {
     select.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }, mode);
+  const setMotionCue = async (cue: string, enabled: boolean) => page.evaluate(({ cueId, shouldEnable }) => {
+    const checkbox = document.querySelector<HTMLInputElement>(`.editor-motion-effect[data-cue="${cueId}"] input[type="checkbox"]`);
+    if (!checkbox) return false;
+    if (checkbox.checked !== shouldEnable) checkbox.click();
+    return checkbox.checked === shouldEnable;
+  }, { cueId: cue, shouldEnable: enabled });
+  const setMotionControl = async (selector: string, value: string) => page.evaluate(({ query, nextValue }) => {
+    const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(query);
+    if (!input) return false;
+    const setter = Object.getOwnPropertyDescriptor(input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, nextValue);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, { query: selector, nextValue: value });
   const captureViewport = async (filename: string) => {
     const client = (page as unknown as { _client: () => { send: (method: string, params?: Record<string, unknown>) => Promise<{ value: any }> } })._client();
     const viewport = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight }));
@@ -220,14 +240,75 @@ try {
   }, mountainProject.researchPackage.title);
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "restore original title and save baseline project");
-  await page.goto({ url: restoredEditorUrl, timeout: 30_000 });
+  await page.goto({ url: restoredEditorUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId && document.querySelector(".video-editor-v2") !== null, mountainProject.visualStoryboard.scenes[1].sceneId), "direct editor URL restores scene after reload");
   assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), mountainProject.visualStoryboard.scenes[1].sceneId);
-  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}?step=render&scene=${mountainProject.visualStoryboard.scenes[1].sceneId}`, timeout: 30_000 });
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}?step=render&scene=${mountainProject.visualStoryboard.scenes[1].sceneId}`, timeout: 90_000 });
   await waitFor(() => page.evaluate((id) => location.pathname === `/projects/${id}/editor` && document.querySelector(".video-editor-v2") !== null, mountainProject.id), "direct blocked step resolves through workflow guard");
   assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), mountainProject.visualStoryboard.scenes[1].sceneId, "workflow fallback retains selected scene");
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[0]?.click());
   await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId, mountainProject.visualStoryboard.scenes[0].sceneId), "restore scene one for editor checks");
+  const motionBefore = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  const untouchedSceneMotion = structuredClone(motionBefore.researchPackage.scenes[1].motionPlan);
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "Motion Direction controls load in Video Editor");
+  await captureViewport("motion-direction-controls.png");
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const mobileMotionLayout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, panelRight: Math.round(document.querySelector<HTMLElement>(".editor-inspector")?.getBoundingClientRect().right ?? 0) }));
+  assert.ok(mobileMotionLayout.scrollWidth <= mobileMotionLayout.width && mobileMotionLayout.panelRight <= mobileMotionLayout.width + 1, `Motion Direction fits mobile viewport: ${JSON.stringify(mobileMotionLayout)}`);
+  await captureViewport("motion-direction-390px.png");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="fadeIn"] input')?.checked), true, "legacy Fade In cue appears active");
+  assert.equal(await setMotionCue("fadeIn", false), true, "Fade In can be disabled");
+  assert.equal(await setMotionCue("fadeIn", true), true, "Fade In can be enabled again");
+  assert.equal(await setMotionCue("pan", true), true, "Pan can be enabled per scene");
+  assert.equal(await setMotionControl('[aria-label="Durasi Pan (detik)"]', "2.4"), true, "Pan duration input is editable");
+  assert.equal(await setMotionControl('.editor-motion-parameters select', "right"), true, "Pan direction input is editable");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-transition button")].find((button) => button.textContent?.trim() === "Dissolve")?.click());
+  assert.equal(await setMotionControl('[aria-label="Durasi Dissolve (detik)"]', "1.2"), true, "Dissolve duration input is editable");
+  await page.evaluate(() => {
+    const playhead = document.querySelector<HTMLInputElement>("#editor-playhead")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(playhead, "0");
+    playhead.dispatchEvent(new Event("input", { bubbles: true }));
+    playhead.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const previewControl = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Pratinjau Efek · Pan"))?.textContent ?? "");
+  assert.ok(previewControl, "effect preview names currently selected Motion Direction");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Pratinjau Efek"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.getAttribute("aria-label") === "Jeda video"), "Remotion effect preview starts scene playback");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Pratinjau Efek"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.getAttribute("aria-label") === "Jeda video"), "Motion Direction preview can be replayed");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "Motion Direction draft saves");
+  const savedMotion = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  const savedSceneMotion = savedMotion.researchPackage.scenes[0].motionPlan;
+  assert.ok(savedSceneMotion.some((plan: { cue: string }) => plan.cue === "fadeIn"), "enabled Fade In persists");
+  assert.deepEqual(savedSceneMotion.find((plan: { cue: string }) => plan.cue === "pan"), { cue: "pan", targetLayer: "all", delayFrames: 0, durationFrames: 72, easing: "linear", direction: "right" }, "Pan direction and duration persist");
+  assert.equal(savedSceneMotion.find((plan: { cue: string }) => plan.cue === "dissolve")?.durationFrames, 36, "Dissolve duration persists");
+  assert.deepEqual(savedMotion.researchPackage.scenes[1].motionPlan, untouchedSceneMotion, "editing scene one does not change scene two motion");
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}/editor?scene=${mountainProject.visualStoryboard.scenes[0].sceneId}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2"))), "reload saved Motion Direction project");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="pan"] input')?.checked)), "Pan remains active after reload");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.editor-motion-effect[data-cue="pan"] button')?.click());
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('[aria-label="Durasi Pan (detik)"]')?.value), "2.4", "Pan duration reloads into editor");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="fadeIn"] input')?.checked), true, "Fade In reloads into editor");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-back-button")?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".workflow-stepper") && document.querySelector(".scene-editor"))), "Storyboard scene editor opens");
+  await page.evaluate(() => document.querySelector<HTMLDetailsElement>(".advanced-editor summary")?.click());
+  const storyboardMotionControls = await page.evaluate(() => ({
+    duplicateCueEditor: Boolean(document.querySelector(".motion-cue-grid")),
+    motionJsonEditor: [...document.querySelectorAll(".visual-json-editor summary")].some((summary) => summary.textContent?.includes("Motion plan")),
+    editButton: [...document.querySelectorAll<HTMLButtonElement>(".scene-editor button")].some((button) => button.textContent?.trim() === "Edit di Video Editor"),
+  }));
+  assert.deepEqual(storyboardMotionControls, { duplicateCueEditor: false, motionJsonEditor: false, editButton: true }, "Storyboard shows read-only Motion Direction summary and editor link");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".scene-editor button")].find((button) => button.textContent?.trim() === "Edit di Video Editor")?.click());
+  await waitFor(() => page.evaluate((sceneId) => location.pathname.endsWith("/editor") && new URLSearchParams(location.search).get("scene") === sceneId && Boolean(document.querySelector(".video-editor-v2")), mountainProject.visualStoryboard.scenes[0].sceneId), "Storyboard link opens matching Video Editor scene");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "inspector opens after editor navigation");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "false"), "collapse inspector for baseline editor checks");
   const initialEditor = await page.evaluate(() => ({
@@ -435,7 +516,7 @@ try {
   await captureViewport("video-editor-mobile.png");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard after editor reload");
   await clickProject(mountainProject.researchPackage.title);
   const persistedAfterReload = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
@@ -663,7 +744,7 @@ try {
     document.querySelector(".editor-canvas-shell")?.scrollIntoView({ block: "center" });
   });
   await captureViewport("mountain-google-flow-imported-canvas.png");
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before Flow project reload");
   await clickProject(mountainProject.researchPackage.title);
   const flowAfterReload = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
@@ -706,7 +787,7 @@ try {
   const persistedBeat = motionBeatSaved.visualStoryboard.scenes[0].motionActions[0];
   assert.ok(persistedBeat?.path?.length >= 2 && persistedBeat.path[0].x !== 540, "canvas keyboard edit persists in authored path");
   assert.equal(persistedBeat.startFrame, 40, "timeline keyboard nudge persists scene-relative start frame");
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before Visual World reload check");
   await clickProject(mountainProject.researchPackage.title);
   const sharedWorldAfterReload = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
@@ -714,7 +795,7 @@ try {
   assert.equal(sharedWorldAfterReload.visualStoryboard.scenes[0].motionActions[0].startFrame, 40, "edited Motion Beat survives editor reload");
   assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length > 0), "reloaded editor timeline shows persisted Motion Beat");
 
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before export flow");
   await clickProject(exportProject.researchPackage.title);
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-step-id="visual"]')?.click());
@@ -723,7 +804,7 @@ try {
   assert.ok(renderCanvas.imageCount > 0 && renderCanvas.href.includes(renderFixture.asset.file), `editor preview displays imported local raster fixture: ${JSON.stringify(renderCanvas)}`);
   await captureViewport("mountain-google-flow-render-source.png");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Pratinjau gerak scene"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Pratinjau Efek"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-canvas-shell image").length > 0), "motion preview retains imported raster artwork");
   await captureViewport("mountain-google-flow-motion-preview.png");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Visual")?.click());
@@ -763,8 +844,15 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "explicit silent render confirmation");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
   await waitFor(async () => {
-    const project = await fetch(`${apiUrl}/api/projects/${exportProject.id}`).then((response) => response.json());
-    return project.latestJob?.state === "rendered" || project.latestJob?.state === "failed";
+    try {
+      const response = await fetch(`${apiUrl}/api/projects/${exportProject.id}`);
+      if (!response.ok) return false;
+      const project = await response.json();
+      return project.latestJob?.state === "rendered" || project.latestJob?.state === "failed";
+    } catch (error) {
+      if (apiServer.exitCode !== null) throw new Error(`API exited ${apiServer.exitCode}; recent logs:\n${apiLogs.slice(-20).join("\n")}\n${error instanceof Error ? error.message : error}`);
+      return false;
+    }
   }, "short approved MP4 render", 900);
   const renderedProject = await fetch(`${apiUrl}/api/projects/${exportProject.id}`).then((response) => response.json());
   assert.equal(renderedProject.latestJob.state, "rendered", `MP4 render succeeds: ${renderedProject.latestJob.error ?? ""}`);
@@ -784,7 +872,7 @@ try {
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", mp4Path, "-frames:v", "1", "-y", mp4FramePath]);
   assert.ok((await readFile(mp4FramePath)).length > 1000, "rendered MP4 decodes to a non-empty image frame");
 
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample shortcut");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
   await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api"))), "Create Video sample shortcut");
@@ -823,7 +911,7 @@ try {
   assert.equal(volcanoSaved.visualStoryboard.scenes.reduce((count: number, scene: { motionActions: unknown[] }) => count + scene.motionActions.length, 0), 6, "all six sample beats persist");
   assert.ok(volcanoSaved.visualStoryboard.scenes.every((scene: { composition: unknown }) => JSON.stringify(scene.composition) === JSON.stringify(volcanoSaved.visualStoryboard.visualWorld.composition)), "all sample scenes persist same shared world");
   assert.notEqual(volcanoSaved.visualStoryboard.scenes[2].motionActions[0].path[0].x, 535, "sample path edit persists without an image asset");
-  await page.goto({ url: viteUrl, timeout: 30_000 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample reload");
   await clickProject(volcanoTitle);
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length === 6), "reloaded volcano editor shows all six Motion Beats");

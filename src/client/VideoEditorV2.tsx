@@ -8,8 +8,10 @@ import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
 import { captionSegmentsForScene } from "../domain/captions";
 import { durationInFrames, FPS, sceneTimes, timelineDuration } from "../domain/timeline";
+import { defaultMotionPlan } from "../domain/visual-defaults";
 import { visualImageNodes, updateVisualImageNode, type VisualImageNode, type VisualImageTransform, type VisualImageUpdate } from "../domain/visual-composition";
 import type { ResearchPackage } from "../domain/research";
+import { motionCueIds, motionCuePlanSchema, type MotionCuePlan } from "../domain/visual-composition";
 import type { MotionIntensity } from "../domain/motion-director";
 import { motionActionSchema } from "../domain/motion-director";
 import { motionBeatFromAction, updateMotionBeat, type MotionBeat } from "../domain/motion-beats";
@@ -37,11 +39,19 @@ type AiImageProviderCatalog = {
 };
 type EditorAudio = { file: string; name: string; durationSec: number; timingMode: "scaled" | "estimated"; source: "upload" | "tts"; tts?: { voiceName: string; locale: string } } | null;
 type InspectorTab = "visual" | "text" | "motion" | "audio";
-type MotionPreset = "static" | "gentle" | "pan-zoom" | "process" | "particles";
+type MotionBeatPreset = "static" | "gentle" | "pan-zoom" | "process" | "particles";
+type MotionEffectCue = Exclude<MotionCuePlan["cue"], "cut" | "dissolve">;
 type IllustrationWorkflow = VisualStoryboardScene["illustrationWorkflow"];
 type ImageBaseline = VisualImageTransform & Pick<VisualImageNode, "fit" | "position">;
 
-export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
+const motionEffects: Array<{ cue: MotionEffectCue; label: string }> = [
+  { cue: "fadeIn", label: "Fade In" }, { cue: "slide", label: "Slide" }, { cue: "scale", label: "Scale" }, { cue: "pan", label: "Pan" },
+  { cue: "zoom", label: "Zoom" }, { cue: "parallax", label: "Parallax" }, { cue: "reveal", label: "Reveal" }, { cue: "pulse", label: "Pulse" },
+];
+const motionEasingLabels: Record<MotionCuePlan["easing"], string> = { linear: "Linear", easeIn: "Masuk perlahan", easeOut: "Keluar perlahan", easeInOut: "Masuk-keluar", spring: "Spring" };
+const isMotionEffect = (cue: MotionCuePlan["cue"]): cue is MotionEffectCue => cue !== "cut" && cue !== "dissolve";
+
+export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onMotionDirectionChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionBeatPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
   gate: VisualQualityGate;
@@ -65,6 +75,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   librarySceneId: string | null;
   libraryInitialTab: "mine" | "scenes";
   onChange: (sceneId: string, change: Partial<VisualStoryboardScene>) => void;
+  onMotionDirectionChange: (sceneId: string, motionPlan: MotionCuePlan[]) => void;
   onTitleChange: (title: string) => void;
   onSelectScene: (sceneId: string) => void;
   onBack: () => void;
@@ -89,7 +100,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onGenerateVector: (sceneId: string) => void;
   onPrepareIssues: (sceneIds: string[]) => void;
   onGenerateMotion: (sceneId: string, intensity: MotionIntensity) => void;
-  onMotionPreset: (sceneId: string, preset: MotionPreset) => void;
+  onMotionBeatPreset: (sceneId: string, preset: MotionBeatPreset) => void;
   onPrepareMotion: (intensity: MotionIntensity) => void;
   onCancelMotion: () => void;
   onRetryMotion: (sceneIds: string[], intensity: MotionIntensity) => void;
@@ -115,7 +126,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const [imageBaseline, setImageBaseline] = useState<ImageBaseline | null>(null);
   const [safeGuides, setSafeGuides] = useState(false);
   const [sourceSceneId, setSourceSceneId] = useState<string | null>(null);
-  const [motionPreset, setMotionPreset] = useState<MotionPreset>("gentle");
+  const [selectedMotionCue, setSelectedMotionCue] = useState<MotionEffectCue>("fadeIn");
+  const [motionBeatPreset, setMotionBeatPreset] = useState<MotionBeatPreset>("gentle");
   const [prompts, setPrompts] = useState<Record<string, string>>({});
   const [providers, setProviders] = useState<Record<string, string>>({});
   const [modelsByScene, setModelsByScene] = useState<Record<string, string>>({});
@@ -172,6 +184,30 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const libraryScene = storyboard.scenes.find((scene) => scene.sceneId === librarySceneId);
   const safe = visualStyles[research.visualPreset].safeArea;
   const captionsAvailable = research.scenes.some((scene) => Boolean(scene.narrationText.trim()));
+  const sceneMotionPlan = sourceResearchScene.motionPlan;
+  const selectedMotionPlan = sceneMotionPlan.find((plan) => plan.cue === selectedMotionCue && isMotionEffect(plan.cue));
+  const activeMotionEffects = sceneMotionPlan.filter((plan) => isMotionEffect(plan.cue));
+  const transitionCue = sceneMotionPlan.some((plan) => plan.cue === "dissolve") ? "dissolve" : "cut";
+  const emitMotionPlan = (plans: MotionCuePlan[]) => onMotionDirectionChange(selectedScene.sceneId, [...plans].sort((left, right) => motionCueIds.indexOf(left.cue) - motionCueIds.indexOf(right.cue)));
+  const toggleMotionEffect = (cue: MotionEffectCue, enabled: boolean) => {
+    if (enabled) {
+      if (sceneMotionPlan.some((plan) => plan.cue === cue)) return;
+      const plan = defaultMotionPlan([cue])[0]!;
+      emitMotionPlan([...sceneMotionPlan, { ...plan, targetLayer: selectedScene.sceneMedia ? "all" : plan.targetLayer }]);
+      setSelectedMotionCue(cue);
+      return;
+    }
+    emitMotionPlan(sceneMotionPlan.filter((plan) => plan.cue !== cue));
+  };
+  const editMotionEffect = (cue: MotionCuePlan["cue"], change: Partial<MotionCuePlan>) => {
+    const current = sceneMotionPlan.find((plan) => plan.cue === cue);
+    if (!current) return;
+    const updated = motionCuePlanSchema.parse({ ...current, ...change });
+    emitMotionPlan(sceneMotionPlan.map((plan) => plan.cue === cue ? updated : plan));
+  };
+  const changeTransition = (cue: "cut" | "dissolve") => {
+    emitMotionPlan([...sceneMotionPlan.filter((plan) => plan.cue !== "cut" && plan.cue !== "dissolve"), ...defaultMotionPlan([cue])]);
+  };
 
   useEffect(() => { selectedSceneRef.current = selectedSceneId; }, [selectedSceneId]);
   useEffect(() => {
@@ -185,11 +221,10 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     setImageBaseline({ x: selectedImage.node.x, y: selectedImage.node.y, width: selectedImage.node.width, height: selectedImage.node.height, fit: selectedImage.node.fit, position: selectedImage.node.position });
   }, [selectedImage?.id, selectedScene.sceneId]);
   useEffect(() => {
-    const preset: MotionPreset = selectedScene.motionIntent === "focus-shift" ? "pan-zoom"
+    setMotionBeatPreset(selectedScene.motionStatus === "static" && !selectedScene.motionActions.length ? "static"
+      : selectedScene.motionIntent === "focus-shift" ? "pan-zoom"
       : selectedScene.motionIntent === "path-animation" ? "process"
-        : selectedScene.motionIntent === "particle-flow" ? "particles"
-          : selectedScene.motionStatus === "static" && !selectedScene.motionActions.length ? "static" : "gentle";
-    setMotionPreset(preset);
+        : selectedScene.motionIntent === "particle-flow" ? "particles" : "gentle");
   }, [selectedScene.sceneId, selectedScene.motionActions.length, selectedScene.motionIntent, selectedScene.motionStatus]);
   useEffect(() => {
     const player = playerRef.current;
@@ -235,6 +270,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const selectScene = (sceneId: string) => {
     const scene = research.scenes.find((item) => item.id === sceneId);
     if (!scene) return;
+    setScenePreviewEnd(null);
     onSelectScene(sceneId);
     setInspectorOpen(true);
     selectedSceneRef.current = sceneId;
@@ -354,7 +390,6 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     const y = Math.max(0, Math.min(1920 - height, imageBaseline.y + imageBaseline.height / 2 - height / 2));
     setImage({ x, y, width, height });
   };
-  const applyMotion = () => { onMotionPreset(selectedScene.sceneId, motionPreset); };
   const updateSceneMedia = (change: Partial<SceneMedia>) => {
     if (selectedScene.sceneMedia) onChange(selectedScene.sceneId, { sceneMedia: { ...selectedScene.sceneMedia, ...change } });
   };
@@ -561,10 +596,58 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
           </>}
 
           {tab === "motion" && <>
-             <section className="editor-motion-beats" aria-label="Motion Beats scene">
+            <section className="editor-motion-direction" aria-labelledby="editor-motion-direction-title">
+              <div className="editor-section-heading"><h3 id="editor-motion-direction-title">Motion Direction</h3><p>Gerakkan layer visual atau seluruh klip. Efek scene dapat digabung; Cut dan Dissolve saling eksklusif.</p></div>
+              <fieldset className="editor-motion-transition"><legend>Transisi Antar Scene</legend><div>
+                {([ ["cut", "Cut"], ["dissolve", "Dissolve"] ] as const).map(([cue, label]) => <button type="button" key={cue} className={`button ${transitionCue === cue ? "button-primary" : "button-light"}`} aria-pressed={transitionCue === cue} onClick={() => changeTransition(cue)} disabled={busy}>{label}</button>)}
+              </div>{transitionCue === "dissolve" && (() => {
+                const dissolvePlan = sceneMotionPlan.find((plan) => plan.cue === "dissolve")!;
+                return <div className="editor-motion-timing-fields">
+                  <label className="editor-field">Durasi Dissolve · detik<input type="number" aria-label="Durasi Dissolve (detik)" min="0.1" max="10" step="0.1" value={(dissolvePlan.durationFrames / FPS).toFixed(1)} disabled={busy} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editMotionEffect("dissolve", { durationFrames: Math.max(1, Math.min(300, Math.round(value * FPS))) }); }}/></label>
+                  <label className="editor-field">Delay · detik<input type="number" aria-label="Delay Dissolve (detik)" min="0" max="30" step="0.1" value={(dissolvePlan.delayFrames / FPS).toFixed(1)} disabled={busy} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editMotionEffect("dissolve", { delayFrames: Math.max(0, Math.min(900, Math.round(value * FPS))) }); }}/></label>
+                  <label className="editor-field">Easing Dissolve<select value={dissolvePlan.easing} disabled={busy} onChange={(event) => editMotionEffect("dissolve", { easing: event.target.value as MotionCuePlan["easing"] })}>{Object.entries(motionEasingLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                </div>;
+              })()}</fieldset>
+              <div className="editor-motion-effects" aria-label="Animasi Scene">
+                <strong>Animasi Scene</strong>
+                {motionEffects.map(({ cue, label }) => {
+                  const active = sceneMotionPlan.some((plan) => plan.cue === cue);
+                  return <div className={`editor-motion-effect ${selectedMotionCue === cue ? "selected" : ""}`} data-cue={cue} key={cue}>
+                    <label><input type="checkbox" checked={active} aria-label={`Aktifkan ${label}`} disabled={busy} onChange={(event) => toggleMotionEffect(cue, event.target.checked)}/><span>{label}</span></label>
+                    <button type="button" className="button button-light" aria-pressed={selectedMotionCue === cue} onClick={() => setSelectedMotionCue(cue)}>{active ? "Edit" : "Pilih"}</button>
+                  </div>;
+                })}
+              </div>
+              {selectedMotionPlan ? <div className="editor-motion-parameters" aria-label={`Parameter ${motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label}`}>
+                <strong>Edit {motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label}</strong>
+                {selectedMotionCue === "slide" || selectedMotionCue === "pan" || selectedMotionCue === "zoom" || selectedMotionCue === "parallax" ? <label className="editor-field">Arah<select value={selectedMotionPlan.direction ?? (selectedMotionCue === "slide" ? "up" : selectedMotionCue === "pan" ? "left" : selectedMotionCue === "zoom" ? "in" : "both")} disabled={busy} onChange={(event) => editMotionEffect(selectedMotionCue, { direction: event.target.value as MotionCuePlan["direction"] })}>
+                  {(selectedMotionCue === "zoom" ? [["in", "Zoom In"], ["out", "Zoom Out"]] : selectedMotionCue === "parallax" ? [["both", "Dua arah"], ["left", "Kiri"], ["right", "Kanan"], ["up", "Atas"], ["down", "Bawah"]] : [["left", "Kiri"], ["right", "Kanan"], ["up", "Atas"], ["down", "Bawah"]]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select></label> : null}
+                <div className="editor-motion-timing-fields">
+                  <label className="editor-field">Durasi · detik<input type="number" aria-label={`Durasi ${motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label} (detik)`} min="0.1" max="10" step="0.1" value={(selectedMotionPlan.durationFrames / FPS).toFixed(1)} disabled={busy} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editMotionEffect(selectedMotionCue, { durationFrames: Math.max(1, Math.min(300, Math.round(value * FPS))) }); }}/></label>
+                  <label className="editor-field">Delay · detik<input type="number" aria-label={`Delay ${motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label} (detik)`} min="0" max="30" step="0.1" value={(selectedMotionPlan.delayFrames / FPS).toFixed(1)} disabled={busy} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editMotionEffect(selectedMotionCue, { delayFrames: Math.max(0, Math.min(900, Math.round(value * FPS))) }); }}/></label>
+                </div>
+                <label className="editor-field">Easing<select value={selectedMotionPlan.easing} disabled={busy} onChange={(event) => editMotionEffect(selectedMotionCue, { easing: event.target.value as MotionCuePlan["easing"] })}>{Object.entries(motionEasingLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                {["slide", "scale", "pan", "zoom", "parallax", "pulse"].includes(selectedMotionCue) && <label className="editor-range-field">Intensitas · {Math.round((selectedMotionPlan.intensity ?? 1) * 100)}%<input type="range" min="0.25" max="2" step="0.05" value={selectedMotionPlan.intensity ?? 1} disabled={busy} aria-label={`Intensitas ${motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label}`} onChange={(event) => editMotionEffect(selectedMotionCue, { intensity: Number(event.target.value) })}/></label>}
+                <label className="editor-field">Target<select value={selectedScene.sceneMedia ? "all" : selectedMotionPlan.targetLayer} disabled={busy || Boolean(selectedScene.sceneMedia)} onChange={(event) => editMotionEffect(selectedMotionCue, { targetLayer: event.target.value })}>
+                  {selectedScene.sceneMedia ? <option value="all">Seluruh klip</option> : <><option value="all">Semua layer scene</option>{selectedComposition.layers.map((layer) => <option key={layer.id} value={layer.id}>{layer.id}</option>)}</>}
+                </select></label>
+                <button type="button" className="button button-light full-button editor-motion-delete" onClick={() => toggleMotionEffect(selectedMotionCue, false)} disabled={busy}><Trash2 size={14} aria-hidden="true"/> Hapus efek {motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label}</button>
+              </div> : <div className="editor-info-box"><strong>Pilih efek untuk mengedit</strong><span>Aktifkan checkbox, lalu atur timing, easing, arah, intensitas, dan target.</span></div>}
+              <div className="editor-motion-direction-actions">
+                <button type="button" className="button button-primary full-button" onClick={previewSingleScene}>Pratinjau Efek{selectedMotionPlan ? ` · ${motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label}` : " Scene"}</button>
+                <button type="button" className="button button-light" onClick={() => emitMotionPlan([])} disabled={busy}>Tanpa gerakan tambahan</button>
+                <button type="button" className="button button-light" onClick={() => { setSelectedMotionCue("fadeIn"); emitMotionPlan(defaultMotionPlan(["fadeIn"])); }} disabled={busy}><RotateCcw size={14} aria-hidden="true"/> Reset default</button>
+              </div>
+              <div className="editor-info-box"><strong>{activeMotionEffects.length ? activeMotionEffects.map((plan) => motionEffects.find((effect) => effect.cue === plan.cue)?.label).join(" · ") : "Tanpa gerakan tambahan"}</strong><span>{selectedScene.sceneMedia ? "GIF/MP4 bergerak sebagai satu klip; efek tidak mengubah objek di dalam raster/video." : "Raster bergerak sebagai satu layer; vector/layer terpisah dapat ditargetkan."} Preview dan MP4 memakai renderer Remotion yang sama.</span></div>
+            </section>
+            <section className="editor-motion-beats" aria-label="Motion Beats scene">
                {selectedScene.sceneMedia && <div className="editor-info-box"><strong>Klip Flow bergerak sendiri</strong><span>Motion Beat lama tetap tersimpan, tetapi tidak ditumpuk otomatis di atas video.</span></div>}
-              <div className="editor-info-box"><strong>{selectedScene.motionActions.length} Motion Beat</strong><span>Beat memakai target/layer stabil dan waktu relatif scene. Timing narasi tetap perkiraan kecuali ada alignment kata.</span></div>
-              <button type="button" className="button button-light full-button" onClick={addMotionBeat} disabled={!selectedImage || Boolean(selectedScene.sceneMedia) || selectedScene.motionActions.length >= 12}><Plus size={14} aria-hidden="true"/> Tambah beat jalur magma</button>
+               <div className="editor-info-box"><strong>{selectedScene.motionActions.length} Motion Beat</strong><span>Beat memakai target/layer stabil dan waktu relatif scene. Timing narasi tetap perkiraan kecuali ada alignment kata.</span></div>
+               <div className="editor-info-box"><strong>Preset Motion Beat · overlay/proses</strong><span>Terpisah dari Motion Direction. Preset membuat Motion Beat baru pada scene ini.</span></div>
+               <label className="editor-field">Preset Motion Beat<select value={motionBeatPreset} onChange={(event) => setMotionBeatPreset(event.target.value as MotionBeatPreset)}><option value="static">Statis · tanpa Motion Beat</option><option value="gentle">Gerak lembut</option><option value="pan-zoom">Pan & zoom objek</option><option value="process">Animasi proses</option><option value="particles">Aliran partikel</option></select></label>
+               <button type="button" className="button button-light full-button" onClick={() => onMotionBeatPreset(selectedScene.sceneId, motionBeatPreset)} disabled={busy || Boolean(selectedScene.sceneMedia)}>Terapkan preset Motion Beat</button>
+               <button type="button" className="button button-light full-button" onClick={addMotionBeat} disabled={!selectedImage || Boolean(selectedScene.sceneMedia) || selectedScene.motionActions.length >= 12}><Plus size={14} aria-hidden="true"/> Tambah beat jalur magma</button>
               {!selectedMotionAction && <small>Impor ilustrasi dasar untuk menambah overlay jalur yang bisa dikoreksi di canvas.</small>}
               {selectedMotionAction && selectedBeat && <>
                 <label className="editor-field">Kejadian<input maxLength={180} value={selectedMotionAction.description ?? selectedBeat.description} onChange={(event) => editMotionBeat(selectedMotionAction.id, { description: event.target.value })}/></label>
@@ -589,11 +672,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
                 }}><Trash2 size={14} aria-hidden="true"/> Hapus beat</button>
               </>}
             </section>
-            <label className="editor-field">Preset gerak<select value={motionPreset} onChange={(event) => setMotionPreset(event.target.value as MotionPreset)}><option value="static">Statis</option><option value="gentle">Gerak lembut</option><option value="pan-zoom">Pan & zoom</option><option value="process">Animasi proses</option><option value="particles">Aliran partikel</option></select></label>
-             <button type="button" className="button button-primary full-button" onClick={applyMotion} disabled={busy || Boolean(selectedScene.sceneMedia)}>Terapkan gerak</button>
-            <div className="editor-info-box"><strong>{selectedScene.motionActions.length ? selectedScene.motionSummary : "Tidak ada gerak tambahan"}</strong><span>{selectedScene.motionActions.length} animasi · {selectedScene.motionTiming === "approximate" ? "waktu perkiraan" : "selaras narasi"}. Raster bergerak sebagai satu gambar.</span></div>
-            <button type="button" className="button button-light full-button" onClick={previewSingleScene}>Pratinjau gerak scene</button>
-            <label className="editor-field">Intensitas<select id="editor-motion-intensity" value={selectedScene.motionIntensity} onChange={(event) => onGenerateMotion(selectedScene.sceneId, event.target.value as MotionIntensity)} disabled={busy}><option value="subtle">Subtle</option><option value="balanced">Balanced</option><option value="expressive">Expressive</option></select></label>
+            <label className="editor-field">Intensitas Motion Beat<select id="editor-motion-intensity" value={selectedScene.motionIntensity} onChange={(event) => onGenerateMotion(selectedScene.sceneId, event.target.value as MotionIntensity)} disabled={busy}><option value="subtle">Subtle</option><option value="balanced">Balanced</option><option value="expressive">Expressive</option></select></label>
             <button type="button" className="button button-light full-button" onClick={() => onPrepareMotion(selectedScene.motionIntensity)} disabled={!saved || busy || motionPreparation?.status === "running"}>Siapkan gerak semua scene</button>
             {motionPreparation?.status === "running" && <button type="button" className="button button-light full-button" onClick={onCancelMotion}>Batalkan persiapan gerak</button>}
             {motionPreparation && ["failed", "partial_failure", "cancelled"].includes(motionPreparation.status) && <button type="button" className="button button-light full-button" onClick={() => onRetryMotion(motionPreparation.scenes.filter((item) => ["failed", "cancelled"].includes(item.status)).map((item) => item.sceneId), motionPreparation.intensity)} disabled={!saved || busy}>Coba ulang scene gagal</button>}

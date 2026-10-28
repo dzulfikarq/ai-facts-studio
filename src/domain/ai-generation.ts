@@ -30,7 +30,7 @@ const aiSceneSchema = z.object({
   onScreenText: z.string().trim().min(1).max(120),
   visualDescription: z.string().trim().min(1).max(500),
   templateId: z.enum(templateIds),
-  motionCues: z.array(z.enum(motionCues)).max(8),
+  motionCues: z.array(z.enum(motionCues)).max(9),
   sourceUrls: z.array(z.string().max(2048)).max(10),
 }).strict();
 

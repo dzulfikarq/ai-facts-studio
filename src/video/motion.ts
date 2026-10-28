@@ -23,24 +23,39 @@ export function layerMotion(plans: MotionCuePlan[], layerId: string, depth: numb
   for (const plan of plans) {
     if (!["all", "scene", layerId].includes(plan.targetLayer) || plan.cue === "cut" || plan.cue === "dissolve") continue;
     const t = cueProgress(plan, localFrame);
+    const intensity = plan.intensity ?? 1;
+    const direction = plan.direction ?? (plan.cue === "slide" ? "up" : plan.cue === "pan" ? "left" : plan.cue === "zoom" ? "in" : "both");
     switch (plan.cue) {
       case "fadeIn": state.opacity *= t; break;
-      case "slide": state.translateY += (1 - t) * 108; break;
-      case "scale": state.scale *= 0.82 + 0.18 * t; break;
-      case "pan": state.translateX += interpolate(progress, [0, 1], [42, -42]) * t; break;
-      case "zoom": state.scale *= 1 + 0.18 * progress * t; break;
+      case "slide": {
+        const distance = (1 - t) * 108 * intensity;
+        if (direction === "left") state.translateX += distance;
+        else if (direction === "right") state.translateX -= distance;
+        else if (direction === "down") state.translateY -= distance;
+        else state.translateY += distance;
+        break;
+      }
+      case "scale": state.scale *= 1 - 0.18 * intensity * (1 - t); break;
+      case "pan": {
+        const reverse = direction === "right" || direction === "down";
+        const offset = interpolate(progress, [0, 1], reverse ? [-42, 42] : [42, -42]) * intensity * t;
+        if (direction === "up" || direction === "down") state.translateY += offset;
+        else state.translateX += offset;
+        break;
+      }
+      case "zoom": state.scale *= direction === "out" ? 1 - 0.18 * progress * t * intensity : 1 + 0.18 * progress * t * intensity; break;
       case "parallax":
-        state.translateX += (0.5 - depth) * 88 * progress * t;
-        state.translateY += (0.5 - depth) * 34 * progress * t;
+        if (direction === "left" || direction === "right" || direction === "both") state.translateX += (0.5 - depth) * 88 * progress * t * intensity * (direction === "left" ? -1 : 1);
+        if (direction === "up" || direction === "down" || direction === "both") state.translateY += (0.5 - depth) * 34 * progress * t * intensity * (direction === "up" ? -1 : 1);
         break;
       case "reveal": state.reveal = Math.min(state.reveal, t); break;
-      case "pulse": state.scale *= 1 + Math.sin(t * Math.PI) * 0.06; break;
+      case "pulse": state.scale *= 1 + Math.sin(t * Math.PI) * 0.06 * intensity; break;
     }
   }
   state.opacity = clamp01(state.opacity);
   state.scale = Math.max(0.75, Math.min(1.25, state.scale));
-  state.translateX = Math.max(-80, Math.min(80, state.translateX));
-  state.translateY = Math.max(-80, Math.min(80, state.translateY));
+  state.translateX = Math.max(-220, Math.min(220, state.translateX));
+  state.translateY = Math.max(-220, Math.min(220, state.translateY));
   return state;
 }
 

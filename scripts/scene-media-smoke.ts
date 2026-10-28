@@ -216,6 +216,52 @@ try {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, String(value));
     input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true })); return true;
   }, frame);
+  const setMotionCue = async (cue: string, enabled: boolean) => page.evaluate(({ cueId, shouldEnable }) => {
+    const input = document.querySelector<HTMLInputElement>(`.editor-motion-effect[data-cue="${cueId}"] input`);
+    if (!input) return false;
+    if (input.checked !== shouldEnable) input.click();
+    return input.checked === shouldEnable;
+  }, { cueId: cue, shouldEnable: enabled });
+  const setMotionControl = async (selector: string, value: string) => page.evaluate(({ query, nextValue }) => {
+    const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(query);
+    if (!input) return false;
+    const setter = Object.getOwnPropertyDescriptor(input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, nextValue);
+    input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, { query: selector, nextValue: value });
+
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "animated clip Motion Direction controls");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Tanpa gerakan tambahan"))?.click());
+  assert.ok(await seekEditor(15), "motion-free clip can be scrubbed");
+  const staticClipMotion = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLElement>(".editor-canvas-shell");
+    let element = document.querySelector<HTMLVideoElement>(".editor-canvas-shell video")?.parentElement ?? null;
+    while (element && element !== canvas) {
+      if (element.style.transform.startsWith("translate(")) return { transform: element.style.transform, opacity: element.style.opacity };
+      element = element.parentElement;
+    }
+    return null;
+  });
+  assert.ok(staticClipMotion?.transform.includes("translate(0px, 0px)"), `no additional motion leaves MP4 layer static: ${JSON.stringify(staticClipMotion)}`);
+  assert.ok(await setMotionCue("pan", true), "Pan can animate entire imported clip");
+  assert.ok(await setMotionControl('.editor-motion-parameters select', "right"), "whole-clip Pan direction can be set");
+  assert.ok(await setMotionControl('[aria-label="Durasi Pan (detik)"]', "1.0"), "whole-clip Pan duration can be set");
+  assert.ok(await seekEditor(15), "animated clip can be scrubbed to effect frame");
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const animatedClipMotion = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLElement>(".editor-canvas-shell");
+    let element = document.querySelector<HTMLVideoElement>(".editor-canvas-shell video")?.parentElement ?? null;
+    while (element && element !== canvas) {
+      if (element.style.transform.startsWith("translate(")) return { transform: element.style.transform, opacity: element.style.opacity };
+      element = element.parentElement;
+    }
+    return null;
+  });
+  assert.ok(animatedClipMotion && animatedClipMotion.transform !== staticClipMotion?.transform, `Remotion preview transforms whole MP4 layer with Pan: ${JSON.stringify(animatedClipMotion)}`);
+  await saveEditor();
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Visual")?.click());
 
   assert.ok(await setNumber(0, 0.1) && await setNumber(1, Math.max(0.4, mp4Media.durationSec - 0.1)), "trim controls accept a valid range");
   assert.ok(await setSelect(2, "freeze-last-frame"), "freeze-last-frame control exists");
@@ -272,6 +318,17 @@ try {
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[2]?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-inspector-scene")?.textContent?.includes("SCENE 03") ?? false), "static image scene selection");
   assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-canvas-shell image").length > 0), "static imported image remains separate from video scene media");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Tanpa gerakan tambahan"))?.click());
+  await seekEditor(135);
+  const staticImageTransform = await page.evaluate(() => document.querySelector<SVGGElement>('.editor-canvas-shell svg g[transform*="translate(540 960)"]')?.getAttribute("transform") ?? "");
+  assert.ok(await setMotionCue("pan", true) && await setMotionControl('.editor-motion-parameters select', "right"), "static raster image accepts targeted Pan effect");
+  await seekEditor(135);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const animatedImageTransform = await page.evaluate(() => document.querySelector<SVGGElement>('.editor-canvas-shell svg g[transform*="translate(540 960)"]')?.getAttribute("transform") ?? "");
+  assert.ok(staticImageTransform && animatedImageTransform !== staticImageTransform, `Remotion preview transforms imported static image layer: ${staticImageTransform} → ${animatedImageTransform}`);
+  await saveEditor();
+  latest = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
 
   const approvalBoard = structuredClone(latest.visualStoryboard);
   approvalBoard.scenes = approvalBoard.scenes.map((scene: any) => {
@@ -306,6 +363,7 @@ try {
   }
   const renderSnapshot = JSON.parse(await readFile(path.join(tempDir, "data", "jobs", generated.job.id, "snapshot.json"), "utf8"));
   assert.deepEqual(renderSnapshot.research.scenes.map((scene: any) => Boolean(scene.sceneMedia)), [true, true, false], "immutable render snapshot keeps animated media separate from static composition");
+  assert.deepEqual(renderSnapshot.research.scenes[0].motionPlan, latest.researchPackage.scenes[0].motionPlan, "MP4 snapshot uses exact Motion Direction plan preview used");
   assert.equal(renderSnapshot.research.scenes[0].sceneMedia.shortClip, "loop", "render snapshot captures loop selection");
   const deleted = await fetch(`${apiUrl}/api/projects/${created.id}`, { method: "DELETE" });
   assert.equal(deleted.status, 200, "project deletion succeeds after completed render");

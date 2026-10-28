@@ -349,7 +349,7 @@ export function VisualCompositionView({ scene, composition, style, preset, frame
   const lavaProgress = volcanoWorld ? carried(5, "lava-and-deposits") : 0;
   const depositProgress = Math.max(0, Math.min(1, (lavaProgress - 0.32) / 0.68));
   const renderLayer = (layer: VisualComposition["layers"][number]) => {
-    const motion = layerMotion(volcanoWorld ? [] : scene.motionPlan, layer.id, layer.depth, frame, progress);
+    const motion = layerMotion(scene.motionPlan, layer.id, layer.depth, frame, progress);
     const backdropOffset = visualBackdropLayerOffset(preset, layer.depth, cameraProgress);
     motion.translateX += backdropOffset.x;
     motion.translateY += backdropOffset.y;

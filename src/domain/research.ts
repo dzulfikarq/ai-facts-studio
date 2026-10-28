@@ -34,7 +34,7 @@ const sceneFields = {
   onScreenText: z.string().max(120),
   templateId: z.enum(templateIds),
   visualDescription: z.string().max(500),
-  motionCues: z.array(z.enum(motionCues)).max(8),
+  motionCues: z.array(z.enum(motionCues)).max(9),
   sfxCues: z.array(z.enum(sfxCues)).max(4),
   referenceIds: z.array(boundedText(100)).max(20),
 };
@@ -45,7 +45,7 @@ const sceneV10Schema = z.object(sceneFields).strict().refine((scene) => scene.en
 const sceneV11Schema = z.object({
   ...sceneFields,
   visualComposition: visualCompositionSchema,
-  motionPlan: z.array(motionCuePlanSchema).max(8),
+  motionPlan: z.array(motionCuePlanSchema).max(9),
   motionActions: motionActionsSchema.default([]),
   captionSegments: captionSegmentsSchema.optional(),
   sceneMedia: sceneMediaSchema.optional(),
@@ -53,6 +53,8 @@ const sceneV11Schema = z.object({
   if (scene.motionCues.length !== scene.motionPlan.length || scene.motionCues.some((cue, index) => cue !== scene.motionPlan[index]?.cue)) {
     ctx.addIssue({ code: "custom", message: "motionPlan harus memiliki satu konfigurasi untuk setiap motionCue dan urutan yang sama", path: ["motionPlan"] });
   }
+  if (new Set(scene.motionCues).size !== scene.motionCues.length) ctx.addIssue({ code: "custom", message: "Motion cue tidak boleh berulang", path: ["motionCues"] });
+  if (scene.motionCues.includes("cut") && scene.motionCues.includes("dissolve")) ctx.addIssue({ code: "custom", message: "Pilih Cut atau Dissolve; keduanya tidak dapat dipakai bersamaan", path: ["motionCues"] });
   const layerIds = new Set(scene.visualComposition.layers.map((layer) => layer.id));
   scene.motionPlan.forEach((plan, index) => {
     if (!["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer)) {
@@ -113,9 +115,30 @@ export type ResearchPackage = z.infer<typeof packageV11Schema>;
 export type Scene = ResearchPackage["scenes"][number];
 type ParseResult = ReturnType<typeof packageV11Schema.safeParse>;
 
+function preserveLegacyTransitionBehavior(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const packageData = value as { scenes?: unknown };
+  if (!Array.isArray(packageData.scenes)) return value;
+  return {
+    ...packageData,
+    scenes: packageData.scenes.map((entry) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return entry;
+      const scene = entry as { motionCues?: unknown; motionPlan?: unknown };
+      if (!Array.isArray(scene.motionCues) || !scene.motionCues.includes("cut") || !scene.motionCues.includes("dissolve")) return entry;
+      // Legacy renderer treated Cut as winner when both transitions were stored.
+      return {
+        ...scene,
+        motionCues: scene.motionCues.filter((cue) => cue !== "dissolve"),
+        ...(Array.isArray(scene.motionPlan) ? { motionPlan: scene.motionPlan.filter((plan) => typeof plan !== "object" || plan === null || !("cue" in plan) || (plan as { cue?: unknown }).cue !== "dissolve") } : {}),
+      };
+    }),
+  };
+}
+
 export function parseResearchPackage(value: unknown): ParseResult {
-  if (typeof value === "object" && value !== null && !Array.isArray(value) && (value as { schemaVersion?: unknown }).schemaVersion === "1.0") {
-    const old = packageV10Schema.safeParse(value);
+  const compatibleValue = preserveLegacyTransitionBehavior(value);
+  if (typeof compatibleValue === "object" && compatibleValue !== null && !Array.isArray(compatibleValue) && (compatibleValue as { schemaVersion?: unknown }).schemaVersion === "1.0") {
+    const old = packageV10Schema.safeParse(compatibleValue);
     if (!old.success) return old as unknown as ParseResult;
     const upgraded = {
       ...old.data,
@@ -128,7 +151,7 @@ export function parseResearchPackage(value: unknown): ParseResult {
     };
     return packageV11Schema.safeParse(upgraded);
   }
-  return packageV11Schema.safeParse(value);
+  return packageV11Schema.safeParse(compatibleValue);
 }
 
 export function researchWarnings(research: ResearchPackage) {

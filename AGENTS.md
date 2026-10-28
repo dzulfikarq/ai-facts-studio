@@ -5,7 +5,7 @@
 Before modifying frontend code:
 
 1. Read `design.md` and follow its current tokens and interaction standards.
-2. Reuse existing global UI patterns before adding components or dependencies.
+2. Follow the Tabler Purple Design System in `design.md`; reuse existing global UI patterns before adding components or dependencies.
 3. Support Light, Dark, and System themes; keep theme state separate from video data/rendering.
 4. Verify responsive behavior and accessibility, including keyboard focus and reduced motion.
 5. Preserve existing business logic, API contracts, workflow guards, approvals, quality gates, and renderer behavior.
@@ -14,6 +14,7 @@ Before modifying frontend code:
 8. Use `docs/UI_UX_STANDARDS.md` as the implementation checklist; keep `design.md` canonical.
 9. Keep page, project, workspace step, and selected scene URL-backed through `src/client/routes.ts`; preserve history confirmations and `src/client/workflow.ts` guards.
 10. Use shared Purple/theme/typography/control tokens from `src/client/redesign.css`; verify documented desktop/mobile widths and report any unavailable visual verification.
+11. New UI must support Light, Dark, and System themes and use available global controls. Do not create one-off button, input, or dialog designs without a clear product reason.
 
 ## Git, commit, and push rules (repository-wide)
 

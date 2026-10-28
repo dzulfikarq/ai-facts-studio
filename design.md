@@ -1,10 +1,10 @@
-# AI Facts Studio UI/UX Design System
+# AI Facts Studio — Tabler Purple Design System
 
 Single source of truth for frontend appearance and interaction standards. This document describes shipped behavior; update it with UI standards changes.
 
 ## 1. Design philosophy
 
-AI Facts Studio is a Modern AI Creative Studio: quiet, minimal, cinematic, and focused on creating or continuing a video. Purple identifies primary actions; neutral surfaces carry most content; semantic colors communicate status. Project data and workflow state stay more prominent than decorative metrics. Shared tokens and interaction patterns keep pages coherent.
+AI Facts Studio adapts the clean hierarchy, compact controls, horizontal navigation, and restrained surfaces of the [Tabler Admin Template](https://tabler.io/admin-template/preview) for a video-creation workflow. References: [Tabler repository](https://github.com/tabler/tabler) and [Tabler documentation](https://docs.tabler.io). Purple marks primary actions and active navigation; neutral surfaces carry content; semantic colors communicate real status. No Bootstrap/Tabler CSS or JavaScript is imported. Project data and workflow state outrank decoration.
 
 ## 2. Design tokens
 
@@ -96,11 +96,11 @@ const [theme, setTheme] = useThemePreference();
 
 ## 5. Layout and navigation
 
-- **Top navigation:** AI Facts Studio brand, Beranda, theme switcher, Settings, and primary Buat Video action. No fake account avatar. On narrow screens labels collapse but accessible names remain.
-- **Shared page alignment:** Every top-level `.page` uses `.layout-container`, bounded by Beranda's left edge and Pengaturan's right edge. Workspace keeps invisible brand and primary-action slots so Project Saya back and Settings occupy same anchors. No guessed content `max-width`; compact header keeps controls and content from overflowing.
-- **Project Saya:** dashboard and project library are one page. Project search filters local project data. Cards use actual title, category, scene count, update date, job status, and available duration. Missing thumbnails use a neutral branded placeholder, not fabricated project art.
+- **Horizontal top navigation:** AI Facts Studio brand, Beranda, Buat Video, theme switcher, and Pengaturan appear on every route, including workspace. Settings stays rightmost so shared content edge aligns to its control. Labels collapse on narrow screens; accessible names remain. No sidebar or fake account avatar. Workspace save stays available in its editor/workflow context.
+- **Shared page alignment:** Every `.page.layout-container` uses one shared layout, measured against Beranda's left edge and Pengaturan's right edge. The editor may use wider viewport space while retaining the same edges and spacing; no page-specific guessed margins.
+- **Project Saya:** dashboard and project library are one page. Project search filters local project data. Cards use actual title, category, scene count, update date, job status, and available duration. Missing thumbnails use a neutral surface/icon placeholder, not gradient artwork or fabricated project data. Initial project loading uses non-animated skeleton cards until the API responds.
 - **Create Video:** Generate with AI is selected and first; JSON import and sample flow remain available. Generation stays click-triggered; drafts can be reviewed before project creation.
-- **Workspace:** contextual back button, editable project title, save state/action, and workflow stepper. Scene list/editor stays contextual to Storyboard. No global sidebar.
+- **Workspace:** the same global navigation remains visible. Editable project title, save state/action, and all six workflow steps remain available. Visual Editor uses a compact horizontally scrollable stepper above the scene rail, 9:16 canvas, inspector, toolbar, and timeline. Scene list/editor stays contextual to Storyboard. No global sidebar.
 - **Settings:** appearance preference plus existing AI provider configuration. Theme and AI Generation mode remain separate.
 - **URL state:** `/`, `/create`, and `/settings` identify top-level pages. `/projects/:id` identifies workspace; `/projects/:id/editor` identifies Visual Storyboard; other workspace steps use `?step=...`, and `?scene=...` restores selected scene. Invalid steps fall back to Materials; invalid scene IDs fall back to first scene. Direct project URLs load persisted project data and apply existing workflow guards.
 - **History and unsaved work:** app navigation writes browser history. Back/Forward uses guarded route transitions; canceling a guarded transition restores the prior history position without adding duplicate entries. Workspace drafts prompt to save before leaving, Create AI drafts prompt before discard, and browser unload uses native unsaved-change protection.
@@ -111,28 +111,29 @@ Reusable visual patterns are CSS-backed and shared in `src/client/redesign.css`,
 
 | Pattern | Current implementation | Standard |
 |---|---|---|
-| Button | `.button`, `.button-primary`, `.button-light` | Primary for main action; light for secondary; native `disabled`; visible focus; 42px default minimum |
-| Icon button | `.topbar-icon`, `.project-card-delete` | 44px hit area; accessible label; destructive color only for destructive action |
+| Button | `.button` with `.button-primary`, `.button-light`/`.button-secondary`, `.button-outline`, `.button-ghost`, `.button-destructive` | Primary for main action; light for secondary; small/default/large sizes use existing classes/tokens; native `disabled`; visible focus; 42px default minimum |
+| Icon button | `.topbar-icon`, `.project-card-delete`, `.icon-button` | 44px hit area; accessible label; destructive color only for destructive action |
 | Input / textarea / select | Native controls with global app styles | Visible label, helper/error text, 42px default minimum where feature layout allows, focus ring |
 | Checkbox / range | Native inputs | Accent uses primary token; keep native keyboard behavior |
 | Tabs | `.create-mode-switch`, `.audio-source-tabs` | Selected state clear; retain existing role/pressed semantics |
 | Card | `.project-card`, `.workspace-step-panel`, `.ai-provider-card`, etc. | Surface token, subtle border, consistent radius, low shadow |
 | Badge | `.status-chip`, `.settings-status-pill`, workflow status | Status derives from actual app state; use semantic status color |
-| Dropdown | Native `select`; theme switch uses native `<details>` | Prefer platform keyboard behavior; no custom menu without need |
+| Dropdown / tooltip | Native `select`, theme `<details>`, native `title` | Prefer platform keyboard behavior; no custom menu or tooltip wrapper without need |
 | Toast | `.toast[role="status"]` | Shared app message, dismissible, concise result/error feedback |
 | Alert | `.workflow-alert` and feature-specific alert classes | `role="alert"` for urgent errors; do not hide validation or gate warnings |
-| Loading / progress | Existing busy labels, `.visual-spinner`, `.confirm-spinner`, `.progress-track` | Reflect real async state/backend progress; never invent progress |
+| Loading / skeleton | `.confirm-spinner`, `.project-card-skeleton` | Use only for a real pending operation; skeleton is static and replaced by API data |
+| Progress | Native `<progress>`, `.progress-track`, Google Flow batch progress | Reflect actual backend/request progress; never invent progress |
 | Empty state | `.project-empty` | Explain current state and offer relevant next action |
 
-No global tooltip, skeleton, or standalone dropdown-menu component exists yet. Do not document or depend on one; add only when a shipped interaction needs it. Existing feature-specific forms and review panels remain in their current components.
+Visual patterns are shared through CSS tokens/classes rather than wrapper components. Native `title` is the only tooltip pattern; there is no custom tooltip or standalone dropdown-menu component. Add one only when a shipped interaction needs more than native behavior. Existing feature-specific forms and review panels remain in their current components.
 
 ## 7. Dialog and confirmation standards
 
-`ConfirmationDialog` in `src/client/main.tsx` is the shared confirmation overlay.
+`ConfirmationDialog` in `src/client/main.tsx` is the shared confirmation overlay; native feature `<dialog>` elements use the same surface, border, backdrop, focus, and responsive tokens from `src/client/redesign.css`.
 
-- Anatomy: context icon, title, risk description, optional async error, cancel, confirm; tones are primary, warning, and destructive.
+- Anatomy: contextual Lucide icon, title, description, optional content/error, cancel, confirm; tones are primary, warning, and destructive.
 - Warning/destructive confirmations use `role="alertdialog"`; destructive action is red. Normal confirmations use `role="dialog"` and purple action.
-- Trap Tab/Shift+Tab within enabled controls; focus returns to trigger on close; Escape and backdrop cancel when safe.
+- Trap Tab/Shift+Tab within visible enabled controls; focus returns to trigger on close; Escape and backdrop cancel when safe.
 - Async `onConfirm` keeps dialog open, sets `aria-busy`, prevents duplicate submit/cancel/dismiss, shows pending feedback, and surfaces failure for retry.
 - Use async confirmation for operations such as saving or deleting when user should see pending/failure in dialog. Keep important risk wording intact.
 - Never use `window.confirm()` or `window.alert()` for application actions.
@@ -153,7 +154,7 @@ await askConfirmation({
 Current source of truth `src/client/workflow.ts` exposes **six guarded steps**, because this branch has a separate Visual Storyboard approval stage. Preserve all six status calculations and guards; do not silently fold away the visual quality gate.
 
 1. **Materi & Storyboard:** edit research, scenes, sources, copy, timing, and metadata; save state remains explicit.
-2. **Video Editor (Visual Storyboard step):** edit scene art, text, transforms, motion, preview, and per-scene approval. Editor remains accessible when Quality Gate has issues.
+2. **Visual Storyboard / Video Editor:** edit scene art, text, transforms, motion, preview, and per-scene approval. Editor remains accessible when Quality Gate has issues. Its compact stepper keeps all six stages visible and scrollable without compressing labels.
 3. **Narasi:** AI voice candidate remains separate from active audio until approval; upload and preview controls remain available.
 4. **Review & Subtitle:** show source and scene warnings, timing, phrase segments, and manual fact-review state.
 5. **Preview Motion:** interactive 9:16 preview; playback/review state is required before render and does not create a production render job.
@@ -219,12 +220,12 @@ Known V2 limits: no scene reorder/duplicate/delete (timeline/audio migration req
 ## 9. Responsive guidelines
 
 - Base layout supports 320px minimum; target mobile range includes 360–430px.
-- Main redesign breakpoints: 1050px (project grid 3→2 columns; settings stack), 700px (compact topbar and scrollable workflow), 520px (single-column project cards, icon-only top actions, compact editor/dialog). Page content follows measured header control edges; topbar reserves brand and primary-action slots across routes, with primary action before Settings on narrow screens.
+- Main redesign breakpoints: 1050px (project grid 3→2 columns; settings stack), 700px (compact topbar and scrollable workflow), 520px (single-column project cards, icon-only top actions, compact editor/dialog). Page content follows measured Beranda/Pengaturan control edges on every route. The Visual Editor stepper and scene rail scroll internally; toolbar/transport wrap on mobile.
 - Existing feature breakpoints also apply: 950px workflow stepper becomes horizontally scrollable; 820px workspace/editor columns collapse; 560px tight form and stepper refinements.
 - Project cards use 3 columns on wide desktop, 2 on tablet, 1 on narrow mobile.
 - Workspace stepper scrolls horizontally instead of compressing labels. Editor and preview stack vertically at tablet widths; 9:16 preview ratio stays fixed.
 - Dialog is viewport-bounded, wraps actions on mobile, and keeps touch-sized buttons.
-- Check 1440px, 1280px, 1024px, 768px, 390px, and 360px after layout changes. At 320px, preserve minimum supported shell width and prevent page-level horizontal overflow.
+- Check 1440px, 1280px, 1024px, 768px, 390px, 360px, and 320px after layout changes; prevent page-level horizontal overflow. The 320px pass is a narrow-shell check, not the primary target viewport.
 
 ## 10. Accessibility guidelines
 
@@ -237,7 +238,7 @@ Known V2 limits: no scene reorder/duplicate/delete (timeline/audio migration req
 
 ## 11. Developer implementation guidelines
 
-- Theme tokens and theme-specific overrides: `src/client/redesign.css`.
+- Tabler Purple tokens, shared navigation/component patterns, and theme-specific overrides: `src/client/redesign.css`.
 - Theme hook, switcher, and appearance control: `src/client/theme-system.tsx`.
 - Pre-paint theme bootstrap and font metadata: `index.html`.
 - App shell, pages, shared toast/dialog, workspace content: `src/client/main.tsx`.

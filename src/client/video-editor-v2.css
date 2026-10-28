@@ -1,8 +1,6 @@
-.editor-active .topbar-brand-placeholder,.editor-active .topbar-project,.editor-active .topbar-primary-slot { display: none; }
-.editor-active .context-topbar { justify-content: space-between; }
 .editor-active .main-area { height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.editor-active .context-topbar { position: relative; flex: none; }
-.video-editor-workspace { min-height: 0; flex: 1; display: flex; overflow: hidden; padding-top: 8px !important; padding-bottom: 8px !important; }
+.editor-active .topbar { position: relative; flex: none; }
+.video-editor-workspace { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; padding-top: 8px !important; padding-bottom: 8px !important; }
 .video-editor-step-panel { min-height: 0; flex: 1; display: flex; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
 .video-editor-v2 { width: 100%; min-width: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 12px; color: var(--text-primary); }
 .video-editor-toolbar { min-height: 58px; display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 13px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
@@ -153,7 +151,7 @@
 }
 @media (max-width: 820px) {
   .editor-active .main-area { height: auto; min-height: 100dvh; overflow: visible; }
-  .editor-active .context-topbar { position: sticky; }
+  .editor-active .topbar { position: sticky; }
   .video-editor-step-panel { display: block; }
   .video-editor-workspace { flex: none; display: block; overflow: visible; padding-inline: 12px !important; }
   .video-editor-v2 { height: auto; min-height: 0; }
@@ -186,7 +184,7 @@
   .editor-inspector-toggle { min-width: 44px; }
   .editor-back-button { padding-inline: 8px; font-size: 12px; }
   .editor-canvas-shell { height: min(64vh,540px); }
-  .editor-transport { gap: 5px; }
+  .editor-transport { flex-wrap: wrap; gap: 5px; }
   .editor-transport>.button:last-child { padding-inline: 7px; font-size: 12px; }
   .editor-time-readout { min-width: 78px; font-size: 12px; }
 }

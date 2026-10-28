@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, Clock3, Film, House, Save as SaveIcon, Search, Settings as SettingsIcon, Sparkles, Trash2 } from "lucide-react";
+import { CircleAlert, Clock3, Film, House, Info, Save as SaveIcon, Search, Settings as SettingsIcon, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -97,7 +97,7 @@ type TtsVoice = { id: string; name: string; locale: string; localeName: string; 
 type TtsVoices = { provider: string; providerName?: string; model?: string; freeTierOnly?: boolean; configured: boolean; disabledReason?: string; dailyLimit?: number; requestsUsed?: number; requestsRemaining?: number; locales: Array<{ locale: string; localeName: string }>; voices: TtsVoice[]; catalogSource?: "api" | "fallback"; catalogWarning?: string; message?: string };
 type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string; text?: string };
 type Failure = Error & { code?: string; issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null; retryAt?: string | null; quotaType?: string | null };
-type ConfirmationOptions = { title: string; message: string; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "warning" | "danger"; onConfirm?: () => Promise<void> };
+type ConfirmationOptions = { title: string; message: string; content?: React.ReactNode; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "warning" | "danger"; onConfirm?: () => Promise<void> };
 type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void; pending?: boolean; error?: string };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -168,6 +168,7 @@ function App() {
   const [theme, setTheme] = useThemePreference();
   const [createMode, setCreateMode] = useState<"import" | "ai">("ai");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
   const [research, setResearch] = useState<ResearchPackage | null>(null);
   const [jsonDraft, setJsonDraft] = useState("");
@@ -314,7 +315,7 @@ function App() {
     const shell = layoutRef.current;
     if (!shell) return;
     const syncPageBounds = () => {
-      const leftControl = shell.querySelector<HTMLElement>(".nav-home, .topbar-back");
+      const leftControl = shell.querySelector<HTMLElement>(".nav-home");
       const rightControl = shell.querySelector<HTMLElement>('.topbar-icon[aria-label="Pengaturan"]');
       if (!leftControl || !rightControl) return;
       const shellBounds = shell.getBoundingClientRect();
@@ -327,7 +328,7 @@ function App() {
       return () => window.removeEventListener("resize", syncPageBounds);
     }
     const observer = new ResizeObserver(syncPageBounds);
-    [".topbar", ".topbar-left", ".topbar-context", ".topbar-actions"].forEach((selector) => {
+    [".topbar", ".topbar-left", ".topbar-nav", ".topbar-actions"].forEach((selector) => {
       const element = shell.querySelector(selector);
       if (element) observer.observe(element);
     });
@@ -335,12 +336,14 @@ function App() {
   }, [view]);
 
   async function refresh() {
-    const [list, serverStatus] = await Promise.all([
-      api<Project[]>("/api/projects"),
-      api<Status>("/api/status"),
-    ]);
-    setProjects(list);
-    setStatus(serverStatus);
+    try {
+      const [list, serverStatus] = await Promise.all([
+        api<Project[]>("/api/projects"),
+        api<Status>("/api/status"),
+      ]);
+      setProjects(list);
+      setStatus(serverStatus);
+    } finally { setProjectsLoaded(true); }
   }
 
   async function refreshAiGenerationSettings() {
@@ -1750,35 +1753,26 @@ function App() {
 
   return <div className={`app-shell ${view === "workspace" && activeStep === "visual" ? "editor-active" : ""}`} ref={layoutRef}>
     <main className="main-area">
-      <header className={`topbar ${view === "workspace" ? "context-topbar" : ""}`}>
-        {view === "workspace" && project ? <div className="topbar-left context-topbar-left">
-          <button type="button" className="brand topbar-brand-placeholder" disabled aria-hidden="true" tabIndex={-1}>
-            <span className="brand-mark"><Sparkles aria-hidden="true" size={17} /></span><span><strong>AI Facts</strong><small>STUDIO</small></span>
-          </button>
-          <div className="topbar-context">
-            <button type="button" className="topbar-back" onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-label="Kembali ke Project Saya"><ArrowLeft aria-hidden="true" size={17} /><span>Project Saya</span></button>
-            <div className="topbar-project"><strong>{research?.title ?? project.researchPackage.title}</strong><span className={saved ? "is-saved" : "is-unsaved"}><i />{saved ? "Tersimpan" : "Perubahan belum disimpan"}</span></div>
-          </div>
-        </div> : <div className="topbar-left">
+      <header className="topbar">
+        <div className="topbar-left">
           <button className="brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Beranda" disabled={busy || ttsBusy || ttsLoading}>
             <span className="brand-mark"><Sparkles aria-hidden="true" size={17} /></span><span><strong>AI Facts</strong><small>STUDIO</small></span>
           </button>
-          <button className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
-        </div>}
+          <nav className="topbar-nav" aria-label="Navigasi utama">
+            <button type="button" className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
+          </nav>
+        </div>
         <div className="topbar-actions">
+          {view === "workspace" && activeStep !== "visual" && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
+          <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "create" ? "page" : undefined} aria-label="Buat video" title="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>
           <ThemeSwitcher preference={theme} onChange={setTheme} />
           <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>
-          <div className="topbar-primary-slot">
-            <button type="button" className="button button-primary topbar-create topbar-primary-anchor" disabled aria-hidden="true" tabIndex={-1}><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>
-            {view === "workspace" ? !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan" title="Simpan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>
-              : view !== "create" && <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-label="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>}
-          </div>
         </div>
       </header>
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
-      {view === "dashboard" && <Dashboard projects={projects} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
+      {view === "dashboard" && <Dashboard projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
         <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Generate draft dari topik bebas, impor Research Package v1.0/v1.1, atau gunakan sample. Versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung api</button>
@@ -1826,7 +1820,7 @@ function App() {
           </div>
         </div>}
 
-        {activeStep !== "visual" && <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />}
+        <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />
         <div className={`workspace-step-panel ${activeStep === "visual" ? "video-editor-step-panel" : ""}`}>
           {activeStep !== "visual" && <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>}
 
@@ -2164,18 +2158,19 @@ function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmati
   const onResolveRef = useRef(onResolve);
   optionsRef.current = options;
   onResolveRef.current = onResolve;
+  const ConfirmationIcon = options.tone === "danger" ? CircleAlert : options.tone === "warning" ? TriangleAlert : Info;
 
   useEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     cancelButton.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (optionsRef.current.pending) return;
         event.preventDefault();
+        if (optionsRef.current.pending) return;
         void onResolveRef.current(false);
       } else if (event.key === "Tab") {
         const active = document.activeElement;
-        const focusable = [...(dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+        const focusable = [...(dialog.current?.querySelectorAll<HTMLElement>('a[href],button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])') ?? [])].filter((element) => !element.closest("[hidden],[inert]") && element.getClientRects().length > 0);
         const first = focusable[0];
         const last = focusable.at(-1);
         if (!first) { event.preventDefault(); dialog.current?.focus(); return; }
@@ -2196,8 +2191,9 @@ function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmati
 
   return <div className="confirm-backdrop" onMouseDown={(event) => { if (!options.pending && event.target === event.currentTarget) void onResolve(false); }}>
     <section ref={dialog} tabIndex={-1} className="confirm-dialog" role={options.tone === "primary" || !options.tone ? "dialog" : "alertdialog"} aria-modal="true" aria-busy={options.pending || undefined} aria-labelledby="confirm-title" aria-describedby="confirm-message">
-      <div className={`confirm-symbol ${options.tone === "danger" ? "danger" : options.tone === "warning" ? "warning" : ""}`} aria-hidden="true">{options.tone === "primary" || !options.tone ? "?" : "!"}</div>
+      <div className={`confirm-symbol ${options.tone === "danger" ? "danger" : options.tone === "warning" ? "warning" : ""}`} aria-hidden="true"><ConfirmationIcon size={20} strokeWidth={2} /></div>
       <div className="confirm-copy"><span className="confirm-eyebrow">KONFIRMASI</span><h2 id="confirm-title">{options.title}</h2><p id="confirm-message">{options.message}</p></div>
+      {options.content && <div className="confirm-content">{options.content}</div>}
       {options.error && <p className="confirm-error" role="alert">{options.error}</p>}
       <div className="confirm-actions">
         <button ref={cancelButton} className="confirm-cancel" onClick={() => void onResolve(false)} disabled={options.pending}>{options.cancelLabel ?? "Batal"}</button>
@@ -2220,19 +2216,20 @@ function renderQuotaNote(status: Status | null, mode: AiGenerationMode | null) {
     : "Kuota 24 jam bergulir; job Development tetap dihitung.";
 }
 
-function Dashboard({ projects, busy, onSample, onOpen, onDelete }: { projects: Project[]; busy: boolean; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+function Dashboard({ projects, loading, busy, onSample, onOpen, onDelete }: { projects: Project[]; loading: boolean; busy: boolean; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
   const [search, setSearch] = useState("");
   const visibleProjects = projects.filter((item) => item.researchPackage.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   return <section className="page layout-container dashboard-page">
-    <div className="dashboard-heading"><div><div className="eyebrow">AI FACTS STUDIO · CREATIVE WORKSPACE</div><h1>Project Saya</h1><p>Buat video baru atau lanjutkan storyboard yang tersimpan.</p></div><span className="project-total">{projects.length} {projects.length === 1 ? "project" : "projects"}</span></div>
+    <div className="dashboard-heading"><div><div className="eyebrow">AI FACTS STUDIO · CREATIVE WORKSPACE</div><h1>Project Saya</h1><p>Buat video baru atau lanjutkan storyboard yang tersimpan.</p></div><span className="project-total">{loading ? "Memuat project…" : `${projects.length} ${projects.length === 1 ? "project" : "projects"}`}</span></div>
     <div className="project-toolbar">
       <label className="project-search"><Search aria-hidden="true" size={17} /><input type="search" aria-label="Cari project" placeholder="Cari project…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      {!projects.length && <button type="button" className="button button-light" onClick={onSample} disabled={busy}><Film aria-hidden="true" size={16} />Coba sample</button>}
+      {!loading && !projects.length && <button type="button" className="button button-light" onClick={onSample} disabled={busy}><Film aria-hidden="true" size={16} />Coba sample</button>}
     </div>
-    {visibleProjects.length ? <div className="project-grid">
+    {loading ? <div className="project-grid project-grid-loading" role="status" aria-label="Memuat project"><span className="sr-only">Memuat daftar project…</span>{[0, 1, 2].map((key) => <div className="project-card-skeleton" key={key} aria-hidden="true"><span className="project-skeleton-art" /><span className="project-skeleton-info"><i /><b /><b /><small /></span></div>)}</div>
+      : visibleProjects.length ? <div className="project-grid">
       {visibleProjects.map((item) => <article className="project-card" key={item.id}>
         <button type="button" className="project-card-open" onClick={() => onOpen(item.id)} disabled={busy} aria-label={`Buka project ${item.researchPackage.title}`}>
-          <span className="project-card-art" aria-hidden="true"><span className="project-art-orbit" /><Film size={27} strokeWidth={1.5} /><small>9:16 · VIDEO</small></span>
+          <span className="project-card-art" aria-hidden="true"><Film size={26} strokeWidth={1.7} /><small>9:16 · VIDEO</small></span>
           <span className="project-card-info">
             <span className="project-card-status"><span className={`status-chip ${item.latestJob && !item.latestJobContentCurrent ? "failed" : item.latestJob?.state ?? "idle"}`}>{item.latestJob && !item.latestJobContentCurrent ? "SNAPSHOT LAMA" : jobLabel(item.latestJob?.state)}</span><span>{item.researchPackage.category}</span></span>
             <strong>{item.researchPackage.title}</strong>

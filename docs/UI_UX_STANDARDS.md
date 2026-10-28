@@ -4,10 +4,10 @@
 
 ## Visual system
 
-- Keep Plus Jakarta Sans, Purple primary actions, semantic status colors, and Light/Dark/System themes.
+- Adapt Tabler's restrained hierarchy and horizontal navigation; keep Plus Jakarta Sans, Purple primary actions, semantic status colors, and Light/Dark/System themes.
 - Use tokens in `src/client/redesign.css`; do not add page-specific brand colors or parallel theme state.
 - Typography: page titles 28–32px, section headings 19px, card headings 16px, body and controls 14px, labels 13px, metadata 12px. Dense editor timeline ticks may use 10px.
-- Use shared `.button`, `.button-primary`, `.button-light`, surface, alert, and focus patterns. Standard controls are at least 42px; icon-only targets are 44px.
+- Use shared `.button` variants/sizes, form, card, alert, dialog, and focus patterns. Standard controls are at least 42px; icon-only targets are 44px.
 - Keep Plus Jakarta Sans for UI; reserve monospace for code/JSON and numeric editor data.
 
 ## Navigation and workflow
@@ -19,7 +19,7 @@
 
 ## Responsive and accessible behavior
 
-- Verify 1440, 1280, 1024, 768, 390, and 360px; support 320px shell minimum without page-level horizontal overflow.
+- Keep page edges aligned to Beranda/Pengaturan controls. Verify 1440, 1280, 1024, 768, 390, 360, and 320px without page-level horizontal overflow; keep editor steps and timelines internally scrollable.
 - Keep keyboard access, visible `:focus-visible` rings, accessible names, semantic status, native control behavior, and reduced-motion support.
 - Preserve Light, Dark, and System appearance on every page and dialog. Theme changes must not affect project or renderer data.
 

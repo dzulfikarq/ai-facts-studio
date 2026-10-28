@@ -1215,29 +1215,49 @@ function App() {
     const uploaded: Array<{ item: FlowBatchItem; scene: VisualStoryboardScene; asset: VisualAsset }> = [];
     let storedAssets = project.visualAssets;
     try {
-      const form = new FormData();
-      const metadata = items.map((item) => {
-        const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
-        form.append("illustrations", item.file, item.file.name);
-        return {
-          name: item.file.name.replace(/\.[^.]+$/, "").slice(0, 120) || scene.headline,
-          source: "ai-generated", license: "User-provided; Google Flow output imported manually", style: project.visualStoryboard.styleId,
-          provider: "Google Flow (manual import)", model: "Google Flow", prompt: item.prompt,
-          semanticTags: scene.objects.map((object) => object.label),
-          supportedConcepts: [scene.semanticPlan?.primaryVisualConcept, scene.visualSummary].filter(Boolean),
-        };
-      });
-      form.append("metadata", JSON.stringify(metadata));
-      const result = await apiWithUploadProgress<{ project: Project; results: Array<{ index: number; asset: VisualAsset }>; failures: Array<{ index: number; fileName: string; message: string }> }>(`/api/projects/${project.id}/visual-assets/batch`, form, onProgress);
-      storedAssets = result.project.visualAssets;
-      for (const entry of result.results) {
-        const item = items[entry.index]!;
-        const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
-        uploaded.push({ item, scene, asset: entry.asset });
-      }
-      for (const failure of result.failures) {
-        const item = items[failure.index];
-        failures.push({ id: item?.id ?? failure.fileName, fileName: failure.fileName, message: failure.message });
+      // ponytail: match server's 3-image validation concurrency; raise both limits together if throughput needs it.
+      const filesPerRequest = 3;
+      const batchCount = Math.ceil(items.length / filesPerRequest);
+      onProgress({ stage: "uploading", percent: 0, completedFiles: 0, totalFiles: items.length, batchNumber: 1, batchCount });
+      for (let offset = 0; offset < items.length; offset += filesPerRequest) {
+        const batch = items.slice(offset, offset + filesPerRequest);
+        const batchNumber = Math.floor(offset / filesPerRequest) + 1;
+        const form = new FormData();
+        const metadata = batch.map((item) => {
+          const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
+          form.append("illustrations", item.file, item.file.name);
+          return {
+            name: item.file.name.replace(/\.[^.]+$/, "").slice(0, 120) || scene.headline,
+            source: "ai-generated", license: "User-provided; Google Flow output imported manually", style: project.visualStoryboard.styleId,
+            provider: "Google Flow (manual import)", model: "Google Flow", prompt: item.prompt,
+            semanticTags: scene.objects.map((object) => object.label),
+            supportedConcepts: [scene.semanticPlan?.primaryVisualConcept, scene.visualSummary].filter(Boolean),
+          };
+        });
+        form.append("metadata", JSON.stringify(metadata));
+        let result: { project: Project; results: Array<{ index: number; asset: VisualAsset }>; failures: Array<{ index: number; fileName: string; message: string }> };
+        try {
+          result = await apiWithUploadProgress<{ project: Project; results: Array<{ index: number; asset: VisualAsset }>; failures: Array<{ index: number; fileName: string; message: string }> }>(
+            `/api/projects/${project.id}/visual-assets/batch`, form,
+            (progress) => onProgress({ ...progress, completedFiles: offset, totalFiles: items.length, batchNumber, batchCount }),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Batch import gagal.";
+          failures.push(...batch.map((item) => ({ id: item.id, fileName: item.file.name, message })));
+          onProgress({ stage: "processing", completedFiles: offset + batch.length, totalFiles: items.length, batchNumber, batchCount });
+          continue;
+        }
+        storedAssets = result.project.visualAssets;
+        onProgress({ stage: "processing", completedFiles: offset + batch.length, totalFiles: items.length, batchNumber, batchCount });
+        for (const entry of result.results) {
+          const item = batch[entry.index]!;
+          const scene = project.visualStoryboard.scenes.find((candidate) => candidate.sceneId === item.sceneId)!;
+          uploaded.push({ item, scene, asset: entry.asset });
+        }
+        for (const failure of result.failures) {
+          const item = batch[failure.index];
+          failures.push({ id: item?.id ?? failure.fileName, fileName: failure.fileName, message: failure.message });
+        }
       }
       if (uploaded.length) {
         const importedByScene = new Map(uploaded.map((entry) => [entry.scene.sceneId, entry]));

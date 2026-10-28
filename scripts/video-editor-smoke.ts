@@ -438,6 +438,25 @@ try {
 
   await setIllustrationWorkflow("google-flow");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-panel"))), "Google Flow workflow panel");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].some((button) => button.textContent?.trim() === "Gerak" && button.getAttribute("aria-selected") === "true")), "switch away from Visual tab before batch modal test");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "false"), "close inspector before testing batch modal");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLButtonElement>(".editor-batch-launch") && !document.querySelector<HTMLButtonElement>(".editor-batch-launch")!.disabled)), "batch launcher remains available with inspector closed");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-batch-launch")?.click());
+  await waitFor(() => page.evaluate(() => {
+    const dialog = document.querySelector<HTMLDialogElement>(".google-flow-batch-dialog");
+    const bounds = dialog?.getBoundingClientRect();
+    return Boolean(dialog?.open && bounds && bounds.width > 0 && bounds.height > 0);
+  }), "batch modal renders outside collapsed inspector");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded")), "false", "batch modal does not require opening inspector");
+  await captureViewport("batch-modal-inspector-closed.png");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[aria-label="Tutup batch import"]')?.click());
+  await waitFor(() => page.evaluate(() => !(document.querySelector<HTMLDialogElement>(".google-flow-batch-dialog")?.open ?? false)), "close batch modal while inspector stays closed");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "reopen inspector for Flow authoring checks");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].find((button) => button.textContent?.trim() === "Visual")?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].some((button) => button.textContent?.trim() === "Visual" && button.getAttribute("aria-selected") === "true")), "return to Visual tab for Flow authoring checks");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-panel button")].find((button) => button.textContent?.includes("Buat Prompt Ilustrasi"))?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-prompt-details"))), "per-scene prompt generation and collapsible prompt editor");
   const panelPrompt = await page.evaluate(() => document.querySelector<HTMLTextAreaElement>(".google-flow-prompt")?.value ?? "");
@@ -572,10 +591,13 @@ try {
   await captureViewport("mountain-google-flow-batch-review.png");
   const batchApplyButton = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.textContent ?? "");
   assert.match(batchApplyButton, /\(4\)/, "three scene mappings and one server-validated candidate have unique assignments");
+  const batchRequestsBefore = await page.evaluate((path) => performance.getEntriesByType("resource").filter((entry) => new URL(entry.name).pathname === path).length, `/api/projects/${mountainProject.id}/visual-assets/batch`);
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "confirm batch replacement for existing artwork");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-batch-error")?.textContent?.trim())), "batch keeps per-file failure visible after successful files apply", 180);
+  const batchRequestsAfter = await page.evaluate((path) => performance.getEntriesByType("resource").filter((entry) => new URL(entry.name).pathname === path).length, `/api/projects/${mountainProject.id}/visual-assets/batch`);
+  assert.equal(batchRequestsAfter - batchRequestsBefore, 2, "four eligible files upload as bounded requests of at most three files");
   const batchProgress = await page.evaluate(() => ({
     text: document.querySelector(".google-flow-batch-progress")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     value: document.querySelector<HTMLElement>('.google-flow-batch-progress [role="progressbar"]')?.getAttribute("aria-valuenow") ?? "",

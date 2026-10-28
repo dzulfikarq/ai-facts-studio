@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Copy, Download, ExternalLink, FileImage, RefreshCw, Upload, X } from "lucide-react";
 import type { ResearchPackage } from "../domain/research";
 import type { GoogleFlowStyleLock, GoogleFlowMatchScene } from "../domain/google-flow";
@@ -11,7 +12,9 @@ import { compositionForVisualScene } from "../domain/visual-storyboard";
 const GOOGLE_FLOW_URL = "https://flow.google.com/";
 type BatchRow = { id: string; file: File; previewUrl: string; sceneId: string | null; reason: string; matchStatus: string; skipped: boolean; manual: boolean; validationError?: string; duplicateOf?: string; serverError?: string };
 export type FlowBatchItem = { id: string; file: File; sceneId: string; prompt: string };
-export type FlowBatchProgress = { stage: "uploading"; percent: number } | { stage: "processing" };
+export type FlowBatchProgress =
+  | { stage: "uploading"; percent: number; completedFiles?: number; totalFiles?: number; batchNumber?: number; batchCount?: number }
+  | { stage: "processing"; completedFiles?: number; totalFiles?: number; batchNumber?: number; batchCount?: number };
 
 export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, showPanel, onFlowPromptChange, onStyleLockChange, onPreparePrompts, onApplyStyleLock, onUploadReference, onUploadIllustration, onApplyBatch, onRegisterBatchLauncher }: {
   research: ResearchPackage;
@@ -165,7 +168,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
     if (!items.length) return;
     setBatchApplying(true);
     setBatchError("");
-    setBatchProgress({ stage: "uploading", percent: 0 });
+    setBatchProgress({ stage: "uploading", percent: 0, completedFiles: 0, totalFiles: items.length, batchNumber: 1, batchCount: Math.ceil(items.length / 3) });
     try {
       const result = await onApplyBatch(items, setBatchProgress);
       setBatchProgress({ stage: "complete", total: items.length, successful: result.appliedIds.length, failed: result.failures.length });
@@ -199,7 +202,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
   };
   const styleField = (key: keyof Omit<GoogleFlowStyleLock, "referenceAssetIds">, label: string, rows = 2) => <label className="editor-field" key={key}>{label}<textarea rows={rows} value={storyboard.styleLock[key]} onChange={(event) => onStyleLockChange({ ...storyboard.styleLock, [key]: event.target.value })}/></label>;
 
-  return <section className={`google-flow-panel ${showPanel ? "" : "google-flow-panel-hidden"}`} aria-label="Google Flow illustration workflow">
+  return <><section className={`google-flow-panel ${showPanel ? "" : "google-flow-panel-hidden"}`} aria-label="Google Flow illustration workflow">
     <header className="google-flow-heading"><div><span className="status-chip">WORKFLOW MANUAL</span><h3>Google Flow</h3><p>Buat ilustrasi dengan Google Flow, lalu impor hasilnya ke scene ini.</p></div></header>
     <div className="google-flow-identity"><strong>Scene {String(scene.sceneNumber).padStart(2, "0")} · {scene.headline}</strong><span>Status: {flowStatusLabel(scene.flowStatus)}</span><small>Nama file: {scene.recommendedFilename ?? recommendedGoogleFlowFilename(scene)}</small></div>
     {!promptReady ? <button type="button" className="button button-primary full-button" onClick={preparePrompt} disabled={busy}><FileImage size={15} aria-hidden="true"/> Buat Prompt Ilustrasi</button> : <div className="google-flow-actions">
@@ -252,8 +255,8 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
     </details>
     {flowNotice && <p className="google-flow-live" role="status">{flowNotice}</p>}{copied && <span className="sr-only" role="status">Disalin</span>}
 
-    {batchOpen && <GoogleFlowBatchDialog ref={batchDialogRef} rows={batchRows} scenes={sceneIdentities} missingScenes={missingScenes} error={batchError} progress={batchProgress} applying={batchApplying || busy} inputRef={batchInput} onFiles={addBatchFiles} onRowChange={updateBatchRow} onApply={() => void applyBatch()} onClose={() => { if (!batchApplying) { setBatchOpen(false); setBatchError(""); } }} validAssignments={assignments}/>}
-  </section>;
+  </section>{batchOpen && createPortal(<GoogleFlowBatchDialog ref={batchDialogRef} rows={batchRows} scenes={sceneIdentities} missingScenes={missingScenes} error={batchError} progress={batchProgress} applying={batchApplying || busy} inputRef={batchInput} onFiles={addBatchFiles} onRowChange={updateBatchRow} onApply={() => void applyBatch()} onClose={() => { if (!batchApplying) { setBatchOpen(false); setBatchError(""); } }} validAssignments={assignments}/>, document.body)}
+  </>;
 }
 
 const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
@@ -271,7 +274,11 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
   validAssignments: boolean[];
 }>(function GoogleFlowBatchDialog({ rows, scenes, missingScenes, error, progress, applying, inputRef, onFiles, onRowChange, onApply, onClose, validAssignments }, ref) {
   const validCount = validAssignments.filter(Boolean).length;
-  const progressLabel = progress?.stage === "uploading" ? `Mengirim file · ${progress.percent}%` : progress?.stage === "processing" ? "File terkirim · memvalidasi dan mengoptimasi gambar…" : progress?.stage === "complete" ? `Selesai · ${progress.successful} berhasil · ${progress.failed} gagal dari ${progress.total}` : "";
+  const progressLabel = progress?.stage === "uploading"
+    ? `Mengirim bagian ${progress.batchNumber ?? 1}/${progress.batchCount ?? 1} · ${progress.completedFiles ?? 0}/${progress.totalFiles ?? 0} file selesai · ${progress.percent}%`
+    : progress?.stage === "processing"
+      ? `Validasi/optimasi bagian ${progress.batchNumber ?? 1}/${progress.batchCount ?? 1} · ${progress.completedFiles ?? 0}/${progress.totalFiles ?? 0} file selesai`
+      : progress?.stage === "complete" ? `Selesai · ${progress.successful} berhasil · ${progress.failed} gagal dari ${progress.total}` : "";
   return <dialog ref={ref} className="google-flow-batch-dialog" aria-labelledby="google-flow-batch-title" aria-busy={applying} onClose={onClose} onCancel={(event) => { if (applying) event.preventDefault(); }}>
       <header><div><span className="google-flow-batch-eyebrow">GOOGLE FLOW · BATCH</span><h3 id="google-flow-batch-title">Tinjau impor ilustrasi</h3><p>{rows.length} file dipilih <span aria-hidden="true">·</span> {validCount} siap diterapkan <span aria-hidden="true">·</span> {missingScenes.length} scene belum dipasangkan</p></div><button type="button" className="button button-light icon-button" onClick={onClose} disabled={applying} aria-label="Tutup batch import"><X size={16} aria-hidden="true"/></button></header>
       <div className={`google-flow-batch-drop ${applying ? "is-disabled" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!applying) onFiles([...event.dataTransfer.files]); }}>

@@ -1,40 +1,33 @@
-.app-shell,
-.app-shell :not(svg):not(svg *) {
-  font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif !important;
-}
-
 .interactive-preview-player .player-wrap svg { font-family: "Segoe UI", Arial, sans-serif !important; }
 
-.app-shell { font-size: 15px; }
-.page { font-size: 15px; line-height: 1.6; }
+.app-shell { font-size: var(--font-size-body); }
+.page { font-size: var(--font-size-body); line-height: 1.6; }
 .page-heading h1,
 .dashboard-heading h1,
 .workspace-heading .title-input {
-  font-size: 36px !important;
-  font-weight: 700 !important;
+  font-size: clamp(28px, 2.2vw, 32px);
+  font-weight: 700;
   line-height: 1.2;
-  letter-spacing: -1.25px;
+  letter-spacing: -1px;
 }
 .section-title h2,
 .workspace-step-heading h2 {
-  font-size: 22px !important;
-  font-weight: 600 !important;
+  font-size: var(--font-size-section);
+  font-weight: 650;
   line-height: 1.35;
-  letter-spacing: -.45px;
+  letter-spacing: -.3px;
 }
 .page h3,
-.scene-row-copy strong,
-.scene-editor-title strong,
 .project-details-card h2,
 .references-card h3,
 .review-summary-card h2,
 .render-card-head strong,
 .tts-panel-heading strong {
-  font-size: 16px !important;
-  font-weight: 600 !important;
+  font-size: var(--font-size-card);
+  font-weight: 600;
   line-height: 1.45;
 }
-.page p { font-size: 15px; line-height: 1.65; }
+.page p { font-size: var(--font-size-body); line-height: 1.6; }
 .workspace-step-heading p,
 .section-title p,
 .meta-line,
@@ -79,8 +72,8 @@
 .workflow-step-index { width: 29px; height: 29px; font-size: 13px; }
 .workflow-step-copy { flex: 1; grid-template-rows: auto 1fr auto; gap: 5px; }
 .workflow-step-copy strong { font-size: 13px; line-height: 1.35; }
-.workflow-step-copy small { font-size: 11px !important; }
-.workflow-step-copy em { font-size: 11px !important; }
+.workflow-step-copy small { font-size: 12px; }
+.workflow-step-copy em { font-size: 12px; }
 .workspace-step-panel { padding: 28px; border-radius: 15px; }
 .workspace-step-heading { margin-bottom: 24px; }
 .workspace-step-heading .step-duration { font-size: 12px; }
@@ -99,8 +92,8 @@
 .scene-row { min-height: 66px; padding: 13px 15px; border-radius: 10px; }
 .scene-number { width: 34px; height: 34px; font-size: 12px; }
 .scene-row-copy { gap: 4px; }
-.scene-row-copy strong { font-size: 16px !important; text-transform: none; }
-.scene-row-copy small { font-size: 12px !important; }
+.scene-row-copy strong { font-size: 14px; text-transform: none; }
+.scene-row-copy small { font-size: 12px; }
 .project-details-card,
 .references-card { padding: 20px; border-radius: 12px; }
 .project-details-card .section-title { margin-bottom: 16px; }
@@ -284,7 +277,7 @@
   .workspace-step-panel { padding: 23px; }
   .workflow-step { padding: 12px 10px; }
   .workflow-step-copy strong { font-size: 12px; }
-  .workflow-step-copy small,.workflow-step-copy em { font-size: 10px !important; }
+  .workflow-step-copy small,.workflow-step-copy em { font-size: 12px; }
 }
 @media (max-width: 820px) {
   .sidebar { width: 64px; padding: 19px 9px; }
@@ -293,7 +286,7 @@
   .nav-item { width: 46px; min-height: 46px; padding: 0; justify-content: center; font-size: 0 !important; }
   .nav-glyph { font-size: 19px !important; }
   .main-area { margin-left: 64px; }
-  .workspace-heading .title-input,.page-heading h1,.dashboard-heading h1 { font-size: 31px !important; }
+  .workspace-heading .title-input,.page-heading h1,.dashboard-heading h1 { font-size: 28px; }
   .workspace-step-panel { padding: 20px; }
   .workspace-stepper ol { min-width: max-content; }
   .materials-aside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -301,7 +294,7 @@
 }
 @media (max-width: 560px) {
   body { min-width: 320px; }
-  .page-heading h1,.dashboard-heading h1,.workspace-heading .title-input { font-size: 27px !important; letter-spacing: -.8px; }
+  .page-heading h1,.dashboard-heading h1,.workspace-heading .title-input { font-size: 28px; letter-spacing: -.8px; }
   .workspace-step-panel { padding: 15px; }
   .scene-editor { padding: 17px; }
   .materials-aside { grid-template-columns: minmax(0, 1fr); }
@@ -313,8 +306,8 @@
   .scene-reference-picker > label strong { font-size: 12px; }
   .advanced-editor { padding-right: 13px; padding-left: 13px; }
   .workflow-stepper li { width: 176px; }
-  .workflow-step-copy small { display: block; font-size: 10px !important; }
-  .workflow-step-copy em { font-size: 10px !important; }
+  .workflow-step-copy small { display: block; font-size: 12px; }
+  .workflow-step-copy em { font-size: 12px; }
   .workflow-step { min-height: 84px; }
   .tts-panel,.upload-panel { padding: 15px; }
   .tts-field-row { grid-template-columns: 1fr 1.5fr; }

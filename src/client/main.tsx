@@ -34,6 +34,7 @@ import { VideoEditorV2 } from "./VideoEditorV2";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
+import { appRouteHref, parseAppRoute, type AppRoute } from "./routes";
 import "./styles.css";
 import "./tts.css";
 import "./workflow.css";
@@ -157,13 +158,16 @@ function friendlyError(error: unknown) {
 }
 
 function App() {
-  const [view, setView] = useState<"dashboard" | "create" | "workspace" | "settings">("dashboard");
+  const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.href));
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  const view = route.view;
+  const activeStep: WorkspaceStep = route.view === "workspace" ? route.step : "materials";
   const [theme, setTheme] = useThemePreference();
   const [createMode, setCreateMode] = useState<"import" | "ai">("ai");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [research, setResearch] = useState<ResearchPackage | null>(null);
-  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [jsonDraft, setJsonDraft] = useState("");
   const [status, setStatus] = useState<Status | null>(null);
   const [aiGenerationSettings, setAiGenerationSettings] = useState<AiGenerationSettings | null>(null);
@@ -179,7 +183,6 @@ function App() {
   const [libraryInitialTab, setLibraryInitialTab] = useState<"mine" | "scenes">("mine");
   const [visualPlannerModel, setVisualPlannerModel] = useState("");
   const [saved, setSaved] = useState(true);
-  const [activeStep, setActiveStep] = useState<WorkspaceStep>("materials");
   const [previewStarted, setPreviewStarted] = useState(false);
   const [previewReviewed, setPreviewReviewed] = useState(false);
   const [audioMode, setAudioMode] = useState<"ai" | "upload">("upload");
@@ -196,10 +199,15 @@ function App() {
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
   const confirmationRef = useRef<PendingConfirmation | null>(null);
   const createDraftUnsaved = useRef(false);
+  const [createDraftUnsavedState, setCreateDraftUnsavedState] = useState(false);
+  const popNavigationPending = useRef(false);
+  const restorePopNavigation = useRef(false);
+  const routeHistoryIndex = useRef(0);
   const previewPlayer = useRef<PlayerRef>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
-  const setCreateDraftUnsaved = useCallback((value: boolean) => { createDraftUnsaved.current = value; }, []);
+  const setCreateDraftUnsaved = useCallback((value: boolean) => { createDraftUnsaved.current = value; setCreateDraftUnsavedState(value); }, []);
 
+  const selectedSceneId = route.view === "workspace" ? route.sceneId : null;
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
   const visualResearch = useMemo(() => project && research ? applyVisualStoryboard(research, project.visualStoryboard) : research, [project?.visualStoryboard, project?.id, research]);
   const visualGate = useMemo(() => project && visualResearch ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets) : null, [project?.visualStoryboard, project?.visualAssets, visualResearch]);
@@ -223,6 +231,82 @@ function App() {
   };
   const stepStatuses = workflowStatuses(workflowSignals);
   const renderMode = aiGenerationSettings?.mode ?? status?.generationMode ?? null;
+
+  function commitRoute(next: AppRoute, mode: "push" | "replace" = "push") {
+    const href = appRouteHref(next);
+    const currentHref = `${window.location.pathname}${window.location.search}`;
+    if (href !== currentHref) {
+      if (mode === "push") {
+        routeHistoryIndex.current += 1;
+        window.history.pushState({ aiFactsStudioIndex: routeHistoryIndex.current }, "", href);
+      } else window.history.replaceState({ aiFactsStudioIndex: routeHistoryIndex.current }, "", href);
+    }
+    routeRef.current = next;
+    setRoute(next);
+  }
+
+  function navigateWorkspaceStep(step: WorkspaceStep, mode: "push" | "replace" = "push") {
+    if (routeRef.current.view !== "workspace") return;
+    commitRoute({ ...routeRef.current, step }, mode);
+  }
+
+  function selectScene(sceneId: string | null) {
+    if (routeRef.current.view !== "workspace") return;
+    commitRoute({ ...routeRef.current, sceneId }, "replace");
+  }
+
+  function hydrateProject(loaded: Project, requestedStep?: WorkspaceStep, requestedSceneId?: string | null): AppRoute {
+    setProject(loaded);
+    setResearch(loaded.researchPackage);
+    setAudioMode(loaded.audio?.source === "tts" ? "ai" : "upload");
+    setTtsLocale(loaded.audio?.tts?.locale ?? "id-ID");
+    setTtsGender(loaded.audio?.tts?.gender ?? "All");
+    setTtsVoiceId(loaded.audio?.tts?.voiceId ?? "");
+    setTtsStyle(loaded.audio?.tts?.style ?? "documentary");
+    setTtsRate(loaded.audio?.tts?.speakingRate ?? 1);
+    setTtsVoices(null);
+    setTtsLoading(false);
+    const loadedVisualResearch = applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
+    const loadedVisualGate = visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets);
+    const loadedVisualApproved = loadedVisualGate.ready && loaded.visualStoryboard.scenes.every((scene) => scene.approved);
+    const savedPreviewReview = storedPreviewReviewed(loaded.id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION));
+    const savedStep = requestedStep ?? storedWorkspaceStep(loaded.id);
+    const reachableStep = reachableWorkspaceStep(savedStep, {
+      activeStep: savedStep,
+      hasResearch: true,
+      saved: true,
+      visualStoryboardReady: loadedVisualGate.ready,
+      visualStoryboardApproved: loadedVisualApproved,
+      hasAudio: Boolean(loaded.audio),
+      audioMatchesNarration: loaded.audio?.source !== "tts" || loaded.audioMatchesNarration,
+      hasPendingAudio: Boolean(loaded.pendingTts),
+      reviewVerified: loaded.researchReviewStatus === "verified-by-author",
+      hasWarnings: researchWarnings(loaded.researchPackage).length > 0,
+      previewReviewed: savedPreviewReview,
+      latestJobState: loaded.latestJob?.state,
+      latestJobContentCurrent: loaded.latestJobContentCurrent,
+    });
+    const sceneId = loaded.researchPackage.scenes.some((scene) => scene.id === requestedSceneId)
+      ? requestedSceneId!
+      : loaded.researchPackage.scenes[0]?.id ?? null;
+    setPreviewReviewed(savedPreviewReview);
+    setPreviewStarted(false);
+    setTestVoicePreview(null);
+    setSaved(true);
+    setMessage("");
+    setCreateDraftUnsaved(false);
+    return { view: "workspace", projectId: loaded.id, step: reachableStep, sceneId };
+  }
+
+  async function loadProjectRoute(projectId: string, step: WorkspaceStep | undefined, sceneId: string | null, mode: "push" | "replace") {
+    setBusy(true);
+    try {
+      const loaded = await api<Project>(`/api/projects/${encodeURIComponent(projectId)}`);
+      const next = hydrateProject(loaded, step, sceneId);
+      commitRoute(next, mode);
+      return next;
+    } finally { setBusy(false); }
+  }
 
   useLayoutEffect(() => {
     const shell = layoutRef.current;
@@ -297,7 +381,107 @@ function App() {
     void refresh().catch((error) => setMessage(friendlyError(error)));
     void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
     void api<AiImageProviderCatalog>("/api/ai-image/providers").then(setAiImageProviders).catch(() => setAiImageProviders({ status: "Failed", configured: false, providers: [], message: "Provider gambar tidak tersedia; gunakan Prompt Builder + import manual.", retryAt: null }));
+    const currentIndex = (window.history.state as { aiFactsStudioIndex?: unknown } | null)?.aiFactsStudioIndex;
+    routeHistoryIndex.current = Number.isSafeInteger(currentIndex) ? currentIndex as number : 0;
+    window.history.replaceState({ aiFactsStudioIndex: routeHistoryIndex.current }, "", window.location.href);
+    const canonicalHref = appRouteHref(routeRef.current);
+    if (canonicalHref !== `${window.location.pathname}${window.location.search}`) window.history.replaceState({ aiFactsStudioIndex: routeHistoryIndex.current }, "", canonicalHref);
+    if (routeRef.current.view === "workspace") {
+      const initialRoute = routeRef.current;
+      void loadProjectRoute(initialRoute.projectId, initialRoute.step, initialRoute.sceneId, "replace").catch(() => {
+        commitRoute({ view: "dashboard" }, "replace");
+        setMessage("Project tidak ditemukan atau sudah dihapus. Pilih project lain dari Project Saya.");
+      });
+    }
   }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const targetIndexValue = (window.history.state as { aiFactsStudioIndex?: unknown } | null)?.aiFactsStudioIndex;
+      const targetIndex = Number.isSafeInteger(targetIndexValue) ? targetIndexValue as number : routeHistoryIndex.current - 1;
+      if (restorePopNavigation.current) {
+        routeHistoryIndex.current = targetIndex;
+        restorePopNavigation.current = false;
+        popNavigationPending.current = false;
+        return;
+      }
+      if (popNavigationPending.current) {
+        return;
+      }
+      popNavigationPending.current = true;
+      const currentIndex = routeHistoryIndex.current;
+      const target = parseAppRoute(window.location.href);
+      const restoreCurrentRoute = () => {
+        const delta = currentIndex - targetIndex;
+        if (!delta) { popNavigationPending.current = false; return; }
+        restorePopNavigation.current = true;
+        window.history.go(delta);
+      };
+      let accepted = false;
+      void (async () => {
+        try {
+          if (busy || ttsBusy || ttsLoading || aiSettingsBusy) {
+            setMessage("Tunggu proses aktif selesai sebelum berpindah halaman.");
+            restoreCurrentRoute();
+            return;
+          }
+          if (route.view === "create" && target.view !== "create" && !await confirmLeaveCreate()) {
+            restoreCurrentRoute();
+            return;
+          }
+          if (route.view === "create" && target.view !== "create") setCreateDraftUnsaved(false);
+          if (route.view === "workspace" && (target.view !== "workspace" || target.projectId !== route.projectId) && !await saveBeforeLeavingWorkspace()) {
+            restoreCurrentRoute();
+            return;
+          }
+          if (target.view === "workspace") {
+            if (project?.id === target.projectId) {
+              const reachableStep = reachableWorkspaceStep(target.step, { ...workflowSignals, activeStep: target.step });
+              const sceneId = research?.scenes.some((scene) => scene.id === target.sceneId)
+                ? target.sceneId
+                : research?.scenes[0]?.id ?? null;
+              routeHistoryIndex.current = targetIndex;
+              commitRoute({ ...target, step: reachableStep, sceneId }, "replace");
+              accepted = true;
+              if (reachableStep !== target.step) setMessage("Langkah tersebut masih terkunci. Selesaikan langkah sebelumnya terlebih dahulu.");
+              return;
+            }
+            try {
+              routeHistoryIndex.current = targetIndex;
+              await loadProjectRoute(target.projectId, target.step, target.sceneId, "replace");
+              accepted = true;
+            } catch {
+              routeHistoryIndex.current = targetIndex;
+              commitRoute({ view: "dashboard" }, "replace");
+              accepted = true;
+              setMessage("Project tidak ditemukan atau sudah dihapus. Pilih project lain dari Project Saya.");
+            }
+            return;
+          }
+          routeHistoryIndex.current = targetIndex;
+          commitRoute(target, "replace");
+          accepted = true;
+          if (target.view === "settings") void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
+        } finally {
+          if (accepted) popNavigationPending.current = false;
+          else if (!restorePopNavigation.current) popNavigationPending.current = false;
+        }
+      })();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [route, project?.id, research, saved, busy, ttsBusy, ttsLoading, aiSettingsBusy, workflowSignals]);
+
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if ((route.view === "workspace" && !saved) || (route.view === "create" && createDraftUnsavedState)) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [route.view, saved, createDraftUnsavedState]);
 
   useEffect(() => {
     if (!project?.id) return;
@@ -389,9 +573,9 @@ function App() {
     if (busy || ttsBusy || ttsLoading) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
-    createDraftUnsaved.current = false;
+    setCreateDraftUnsaved(false);
     setMessage("");
-    setView("dashboard");
+    commitRoute({ view: "dashboard" });
   }
 
   async function openProject(id: string, notice?: string, createAlreadyConfirmed = false, initialStep?: WorkspaceStep) {
@@ -400,45 +584,10 @@ function App() {
     if (!createAlreadyConfirmed && !await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     try {
-      const loaded = await api<Project>(`/api/projects/${id}`);
-      setProject(loaded);
-      setResearch(loaded.researchPackage);
-      setSelectedSceneId(loaded.researchPackage.scenes[0]?.id ?? null);
-      setAudioMode(loaded.audio?.source === "tts" ? "ai" : "upload");
-      setTtsLocale(loaded.audio?.tts?.locale ?? "id-ID");
-      setTtsGender(loaded.audio?.tts?.gender ?? "All");
-      setTtsVoiceId(loaded.audio?.tts?.voiceId ?? "");
-      setTtsStyle(loaded.audio?.tts?.style ?? "documentary");
-      setTtsRate(loaded.audio?.tts?.speakingRate ?? 1);
-      setTtsVoices(null);
-      setTtsLoading(false);
-      const loadedVisualResearch = applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
-      const loadedVisualGate = visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets);
-      const loadedVisualApproved = loadedVisualGate.ready && loaded.visualStoryboard.scenes.every((scene) => scene.approved);
-      const savedPreviewReview = storedPreviewReviewed(id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION));
-      const savedStep = initialStep ?? storedWorkspaceStep(id);
-      setActiveStep(reachableWorkspaceStep(savedStep, {
-        activeStep: savedStep,
-        hasResearch: true,
-        saved: true,
-        visualStoryboardReady: loadedVisualGate.ready,
-        visualStoryboardApproved: loadedVisualApproved,
-        hasAudio: Boolean(loaded.audio),
-        audioMatchesNarration: loaded.audio?.source !== "tts" || loaded.audioMatchesNarration,
-        hasPendingAudio: Boolean(loaded.pendingTts),
-        reviewVerified: loaded.researchReviewStatus === "verified-by-author",
-        hasWarnings: researchWarnings(loaded.researchPackage).length > 0,
-        previewReviewed: savedPreviewReview,
-        latestJobState: loaded.latestJob?.state,
-        latestJobContentCurrent: loaded.latestJobContentCurrent,
-      }));
-      setPreviewReviewed(savedPreviewReview);
-      setPreviewStarted(false);
-      setTestVoicePreview(null);
-      setSaved(true);
-      setMessage(notice ?? "");
-      createDraftUnsaved.current = false;
-      setView("workspace");
+      const next = await loadProjectRoute(id, initialStep, route.view === "workspace" && route.projectId === id ? route.sceneId : null, "push");
+      setCreateDraftUnsaved(false);
+      if (notice) setMessage(notice);
+      if (next.view === "workspace" && initialStep && next.step !== initialStep) setMessage("Langkah tersebut masih terkunci. Selesaikan langkah sebelumnya terlebih dahulu.");
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
@@ -447,10 +596,10 @@ function App() {
     if (view === "create") return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
-    createDraftUnsaved.current = false;
     setCreateMode("ai");
     setJsonDraft("");
-    setView("create");
+    setCreateDraftUnsaved(false);
+    commitRoute({ view: "create" });
     setMessage("");
   }
 
@@ -458,8 +607,8 @@ function App() {
     if (busy || ttsBusy || ttsLoading || aiSettingsBusy) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
-    createDraftUnsaved.current = false;
-    setView("settings");
+    setCreateDraftUnsaved(false);
+    commitRoute({ view: "settings" });
     setMessage("");
     setAiSettingsError("");
     try { await refreshAiGenerationSettings(); }
@@ -501,7 +650,7 @@ function App() {
     setBusy(true);
     try {
       const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId }));
-      createDraftUnsaved.current = false;
+      setCreateDraftUnsaved(false);
       await refresh().catch(() => undefined);
       return { id: created.id, title: created.researchPackage.title };
     } finally { setBusy(false); }
@@ -1309,7 +1458,7 @@ function App() {
     const currentIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
     const targetIndex = workspaceSteps.findIndex((step) => step.id === target);
     if (targetIndex <= currentIndex) {
-      setActiveStep(target);
+      navigateWorkspaceStep(target);
       setMessage("");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
@@ -1320,7 +1469,7 @@ function App() {
       const step = workspaceSteps[index]!.id;
       if (step === "materials" && !currentSaved) {
         const updated = await saveProject();
-        if (!updated) { setActiveStep("materials"); return; }
+        if (!updated) { navigateWorkspaceStep("materials", "replace"); return; }
         currentProject = updated;
         currentSaved = true;
       }
@@ -1331,12 +1480,12 @@ function App() {
         reviewVerified: currentProject.researchReviewStatus === "verified-by-author" && currentSaved,
       });
       if (!canAdvance) {
-        setActiveStep(step);
+        navigateWorkspaceStep(step, "replace");
         setMessage(step === "materials" ? "Simpan storyboard sebelum lanjut." : step === "visual" ? "Perbaiki quality gate, lalu approve setiap scene Visual Storyboard." : step === "narration" ? "Audio AI Voice tidak sesuai dengan naskah terbaru. Buat dan setujui preview narasi baru." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Motion sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
         return;
       }
     }
-    setActiveStep(target);
+    navigateWorkspaceStep(target);
     setMessage("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -1463,27 +1612,27 @@ function App() {
   async function renderFinal() {
     if (!project || !research || busy) return;
     if (!visualGate?.ready || !visualApproved) {
-      setActiveStep("visual");
+      navigateWorkspaceStep("visual");
       setMessage("Visual Storyboard belum lolos quality gate atau belum disetujui per scene.");
       return;
     }
     if (!saved) {
-      setActiveStep("materials");
+      navigateWorkspaceStep("materials");
       setMessage("Simpan perubahan storyboard sebelum review fakta dan Preview Video.");
       return;
     }
     if (project.audio?.source === "tts" && (!project.audioMatchesNarration || narrationScript(research) !== narrationScript(project.researchPackage))) {
-      setActiveStep("narration");
+      navigateWorkspaceStep("narration");
       setMessage("Naskah berubah setelah AI Voice disetujui. Buat dan setujui preview narasi baru sebelum render.");
       return;
     }
     if (project.researchReviewStatus !== "verified-by-author") {
-      setActiveStep("review");
+      navigateWorkspaceStep("review");
       setMessage("Tinjau dan verifikasi materi sebelum render final.");
       return;
     }
     if (!previewReviewed) {
-      setActiveStep("preview");
+      navigateWorkspaceStep("preview");
       setMessage("Putar dan tinjau Preview Video untuk draft ini sebelum render final.");
       return;
     }
@@ -1544,11 +1693,10 @@ function App() {
       if (project?.id === id) {
         setProject(null);
         setResearch(null);
-        setSelectedSceneId(null);
         setTestVoicePreview(null);
         setTtsVoices(null);
-        createDraftUnsaved.current = false;
-        setView("dashboard");
+        setCreateDraftUnsaved(false);
+        commitRoute({ view: "dashboard" }, "replace");
         setAudioMode("upload");
       }
       await refresh();
@@ -1664,7 +1812,7 @@ function App() {
             <div className="story-column">
               <div className="section-title"><div><h2>Storyboard</h2><p>Pilih scene untuk edit teks, narasi, timing, dan sumber.</p></div><span className="count-chip">{research.scenes.length} SCENES</span></div>
               <div className="scene-list">
-                {research.scenes.map((scene, index) => <button type="button" key={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => setSelectedSceneId(scene.id)}>
+                 {research.scenes.map((scene, index) => <button type="button" key={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => selectScene(scene.id)}>
                   <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
                 </button>)}
               </div>
@@ -1698,9 +1846,9 @@ function App() {
             projectId={project.id}
             audio={project.audio}
             selectedSceneId={selectedSceneId}
-            onSelectScene={setSelectedSceneId}
+            onSelectScene={selectScene}
             onTitleChange={(title) => updateResearch((current) => ({ ...current, title }))}
-            onBack={() => setActiveStep("materials")}
+            onBack={() => navigateWorkspaceStep("materials")}
             onExport={() => void goToStep("render")}
             onSave={() => void saveProject()}
             onChange={updateVisualScene}
@@ -1801,7 +1949,7 @@ function App() {
           {activeStep === "review" && <ReviewStep
             research={visualResearch!}
             project={project}
-            onEditScene={(id) => { setSelectedSceneId(id); void goToStep("materials"); }}
+            onEditScene={(id) => { selectScene(id); void goToStep("materials"); }}
             onEditReferences={() => void goToStep("materials")}
             onEditNarration={() => void goToStep("narration")}
             onReview={(value) => void setReview(value)}

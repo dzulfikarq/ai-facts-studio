@@ -1,5 +1,20 @@
 :root {
   color-scheme: light;
+  font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+  --font-size-page: 30px;
+  --font-size-section: 19px;
+  --font-size-card: 16px;
+  --font-size-body: 14px;
+  --font-size-control: 14px;
+  --font-size-label: 13px;
+  --font-size-meta: 12px;
+  --icon-compact: 16px;
+  --icon-standard: 18px;
+  --icon-prominent: 20px;
+  --control-small: 36px;
+  --control-default: 42px;
+  --control-large: 48px;
   --background: #F8F7FC;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
@@ -105,7 +120,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .brand-mark { width: 38px; height: 38px; border-radius: 13px; background: linear-gradient(145deg, #8B5CF6, #7048E8); color: #fff; box-shadow: 0 5px 15px #7048E832; }
 .brand-mark svg { color: #fff; }
 .brand strong { display: block; color: var(--text-primary); font-size: 14px; font-weight: 750; letter-spacing: -.35px; }
-.brand small { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 9px; letter-spacing: 2px; }
+.brand small { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 12px; letter-spacing: 2px; }
 .nav-home,.topbar-icon,.topbar-back { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 11px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; }
 .nav-home:hover,.topbar-icon:hover,.topbar-back:hover { border-color: var(--border); background: var(--surface-muted); color: var(--text-primary); }
 .nav-home.active,.topbar-icon.active { background: var(--primary-soft); color: var(--primary); }
@@ -117,7 +132,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .topbar-back { flex: none; border-color: var(--border); background: var(--surface); }
 .topbar-project { display: grid; gap: 3px; min-width: 0; }
 .topbar-project strong { overflow: hidden; max-width: min(38vw, 480px); color: var(--text-primary); font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.topbar-project span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; }
+.topbar-project span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
 .topbar-project span i { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
 .topbar-project span.is-unsaved i { background: var(--warning); }
 .topbar-save { min-height: 40px; padding: 0 14px; }
@@ -146,10 +161,19 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 
 .layout-container { box-sizing: border-box; width: auto; max-width: none; min-width: 0; margin-inline-start: var(--page-inset-start, clamp(18px, 4vw, 56px)); margin-inline-end: var(--page-inset-end, clamp(18px, 4vw, 56px)); }
 .page { width: auto; max-width: none; padding: 38px 0 76px; color: var(--text-primary); }
-.page-heading h1,.dashboard-heading h1 { margin: 6px 0 8px; color: var(--text-primary); font-size: clamp(30px, 3vw, 40px); font-weight: 700; line-height: 1.16; letter-spacing: -1.3px; }
-.page-heading p,.dashboard-heading p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
-.eyebrow { color: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: 1.3px; }
-.button { min-height: 44px; border-radius: 9px; font-size: 13px; font-weight: 650; transition: background-color .16s ease, border-color .16s ease, transform .16s ease; }
+.page-heading h1,.dashboard-heading h1,.workspace-heading .title-input { margin: 6px 0 8px; color: var(--text-primary); font-size: clamp(28px, 2.2vw, 32px); font-weight: 700; line-height: 1.2; letter-spacing: -1px; }
+.page-heading p,.dashboard-heading p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-body); line-height: 1.6; }
+.eyebrow { color: var(--primary-text); font-size: var(--font-size-meta); font-weight: 700; letter-spacing: .08em; }
+.button { height: auto; min-height: var(--control-default); border-radius: var(--radius-sm); font-size: 13px; font-weight: 650; transition: background-color .16s ease, border-color .16s ease, transform .16s ease; }
+.button svg { width: var(--icon-standard); height: var(--icon-standard); flex: none; }
+.button-small { min-height: var(--control-small); padding-inline: 12px; }
+.button-large { min-height: var(--control-large); padding-inline: 18px; }
+.button-secondary { border: 1px solid var(--border); background: var(--surface-muted); color: var(--text-primary); }
+.button-outline { border: 1px solid var(--border-strong); background: transparent; color: var(--text-primary); }
+.button-ghost { border: 1px solid transparent; background: transparent; color: var(--text-secondary); }
+.button-destructive { border: 1px solid var(--danger-action); background: var(--danger-action); color: var(--text-on-danger); }
+.button.icon-button { width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
+.button.icon-button svg { width: var(--icon-compact); height: var(--icon-compact); }
 .button-primary,.confirm-actions .confirm-submit { border-color: var(--primary-action); background: var(--primary-action); color: var(--text-on-primary); }
 .button-primary:hover:not(:disabled),.confirm-actions .confirm-submit:hover:not(:disabled) { border-color: var(--primary-action-hover); background: var(--primary-action-hover); }
 .button-light,.confirm-actions .confirm-cancel { border-color: var(--border-strong); background: var(--surface); color: var(--text-primary); }
@@ -160,7 +184,30 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .ai-mode-switch button.selected { border-color: var(--primary); background: var(--primary-soft); }
 .audio-source-tabs button.selected { border-bottom-color: var(--primary); color: var(--primary-text); }
 .button:focus-visible,.topbar button:focus-visible,.project-card button:focus-visible,.theme-switcher summary:focus-visible,.theme-choices button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-.app-shell input:not([type="checkbox"]):not([type="range"]),.app-shell select,.app-shell textarea { border-color: var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text-primary); }
+.app-shell input:not([type="checkbox"]):not([type="range"]),.app-shell select,.app-shell textarea { min-height: var(--control-default); border-color: var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text-primary); font-size: var(--font-size-control); }
+.app-shell label { color: var(--text-secondary); font-size: var(--font-size-label); }
+.app-shell p { font-size: var(--font-size-body); line-height: 1.6; }
+.app-shell small { font-size: var(--font-size-meta); line-height: 1.5; }
+.app-shell :where(h2) { font-size: var(--font-size-section); }
+.app-shell :where(h3) { font-size: var(--font-size-card); }
+.app-shell .status-chip,.app-shell .project-card-status>span:last-child,.app-shell .project-card-meta>span,.app-shell .project-card-info>small { font-size: var(--font-size-meta); }
+.app-shell .workflow-step-copy strong { font-size: 13px; }
+.app-shell .workflow-step-copy small,.app-shell .workflow-step-copy em { font-size: var(--font-size-meta); }
+.app-shell .scene-row-copy strong,.app-shell .editor-scene-copy strong { font-size: 14px; }
+.app-shell .scene-row-copy small,.app-shell .editor-scene-copy small { font-size: var(--font-size-meta); }
+.app-shell .video-editor-toolbar-actions .button,.app-shell .editor-canvas-toolbar .button,.app-shell .editor-batch-launch { min-height: var(--control-default); font-size: 13px; }
+.app-shell .editor-panel-heading h2 { font-size: var(--font-size-card); }
+.app-shell .editor-panel-heading span,.app-shell .editor-job-status,.app-shell .editor-approval-summary { font-size: var(--font-size-meta); }
+.app-shell .editor-canvas-toolbar span,.app-shell .editor-canvas-toolbar strong { font-size: var(--font-size-meta); }
+.app-shell .editor-field,.app-shell .editor-range-field,.app-shell .editor-hint { font-size: var(--font-size-meta); }
+.app-shell .editor-field input,.app-shell .editor-field select,.app-shell .editor-field textarea { font-size: var(--font-size-control); }
+.app-shell .tts-fields label,.app-shell .tts-fields select,.app-shell .audio-source-tabs button,.app-shell .tts-actions .button,.app-shell .upload-panel .button { min-height: var(--control-default); font-size: var(--font-size-control); }
+.app-shell .tts-config-notice,.app-shell .tts-consent-note,.app-shell .tts-stale-warning,.app-shell .tts-error,.app-shell .tts-success,.app-shell .tts-limit-note,.app-shell .upload-note { font-size: var(--font-size-meta); }
+.app-shell .visual-storyboard-review small,.app-shell .visual-storyboard-review label,.app-shell .visual-storyboard-review .visual-summary,.app-shell .visual-storyboard-review .visual-review-state,.app-shell .visual-storyboard-review .visual-gate-issues,.app-shell .visual-storyboard-review .visual-scene-warning,.app-shell .visual-storyboard-review .visual-scene-issues,.app-shell .visual-storyboard-review .visual-object-plan span,.app-shell .visual-storyboard-review .visual-approval-chip { font-size: var(--font-size-meta); }
+.app-shell .smart-asset-dialog :where(small,label,.button) { font-size: var(--font-size-meta); }
+.app-shell .editor-timeline-ruler,.app-shell .editor-track-row>span,.app-shell .editor-track-clip strong,.app-shell .editor-track-clip small,.app-shell .editor-motion-clip span,.app-shell .editor-audio-clip { font-size: 10px; }
+.app-shell .project-card-meta svg { width: var(--icon-compact); height: var(--icon-compact); }
+.app-shell :where(button,a,[role="button"],summary,input,select,textarea):focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .app-shell input::placeholder,.app-shell textarea::placeholder { color: var(--text-secondary); opacity: .75; }
 .app-shell input:focus-visible,.app-shell select:focus-visible,.app-shell textarea:focus-visible { outline: 3px solid color-mix(in srgb, var(--focus) 58%, transparent); outline-offset: 1px; border-color: var(--focus); }
 .app-shell input[type="checkbox"],.app-shell input[type="radio"],.app-shell input[type="range"] { accent-color: var(--primary); }
@@ -183,7 +230,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .project-card-open { display: grid; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
 .project-card-art { position: relative; display: grid; place-items: center; min-height: 155px; overflow: hidden; background: radial-gradient(ellipse at 75% 20%, #8B5CF633, transparent 46%), linear-gradient(135deg, #2B2140, #171522 70%); color: #E5DBFF; }
 .project-card-art svg { z-index: 1; color: #D9C8FF; }
-.project-card-art small { position: absolute; bottom: 13px; left: 15px; color: #E5DBFFB8; font-size: 9px; font-weight: 700; letter-spacing: 1.2px; }
+.project-card-art small { position: absolute; bottom: 13px; left: 15px; color: #E5DBFFB8; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; }
 .project-art-orbit { position: absolute; width: 170px; height: 170px; border: 1px solid #B99BFF40; border-radius: 50%; box-shadow: 0 0 0 24px #B99BFF0A,0 0 0 48px #B99BFF08; }
 .project-card-info { display: grid; gap: 11px; min-width: 0; padding: 16px 17px 18px; }
 .project-card-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
@@ -311,7 +358,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   .brand { gap: 7px; }
   .brand-mark { width: 32px; height: 32px; border-radius: 10px; }
   .brand strong { font-size: 12px; }
-  .brand small { font-size: 8px; }
+  .brand small { font-size: 12px; }
   .nav-home { width: 44px; min-height: 44px; padding: 0; }
   .nav-home span,.theme-switcher-label,.topbar-create span { display: none; }
   .topbar-icon,.theme-switcher summary { width: 44px; min-height: 44px; padding: 0; }
@@ -320,8 +367,8 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   .topbar-back { width: 44px; min-height: 44px; padding: 0; }
   .topbar-back span { display: none; }
   .topbar-project strong { max-width: 29vw; font-size: 12px; }
-  .topbar-project span { font-size: 10px; }
-  .topbar-save { min-height: 44px; padding: 0 9px; font-size: 11px; }
+  .topbar-project span { font-size: 12px; }
+  .topbar-save { min-height: 44px; padding: 0 9px; font-size: 13px; }
   .page { padding: 24px 14px 54px; }
   .dashboard-page { gap: 18px; }
   .dashboard-heading { align-items: flex-start; flex-direction: column; gap: 9px; }
@@ -334,7 +381,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   .appearance-card { padding: 17px; }
   .appearance-card .theme-choices { width: 100%; }
   .appearance-card .theme-choices button { flex: 1; padding: 0 7px; }
-  .appearance-card .theme-choices button span { font-size: 11px; }
+  .appearance-card .theme-choices button span { font-size: 12px; }
   .workspace-page { padding-top: 19px; }
   .workspace-stepper { margin-left: 0; margin-right: 0; }
   .workspace-stepper li { width: 172px; }
@@ -371,8 +418,8 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .workflow-step.attention .workflow-step-index { background: var(--warning-soft); color: var(--warning); }
 .workflow-step-copy { align-content: space-between; min-height: 72px; gap: 6px; }
 .workflow-step-copy strong { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.workflow-step-copy small { font-size: 10px !important; line-height: 1.45; }
-.workflow-step-copy em { width: fit-content; max-width: 100%; margin-top: 1px; padding: 3px 7px; border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--text-secondary); font-size: 10px !important; line-height: 1.35; overflow-wrap: anywhere; }
+.workflow-step-copy small { font-size: 12px; line-height: 1.45; }
+.workflow-step-copy em { width: fit-content; max-width: 100%; margin-top: 1px; padding: 3px 7px; border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
 .workflow-step.active .workflow-step-copy em,.workflow-step.selected:not(.attention) .workflow-step-copy em { background: var(--primary-soft); color: var(--primary-text); }
 .workflow-step.complete .workflow-step-copy em { background: var(--success-soft); color: var(--success); }
 .workflow-step.attention .workflow-step-copy em { background: var(--warning-soft); color: var(--warning); }
@@ -450,7 +497,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   border-radius: var(--radius-md);
   background: var(--surface-muted);
 }
-.workflow-navigation > span { font-size: 12px !important; }
+.workflow-navigation > span { font-size: 12px; }
 .workflow-navigation-actions { gap: var(--space-2); }
 .workflow-navigation .button { min-height: 46px; border-radius: var(--radius-sm); }
 
@@ -481,3 +528,83 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   .page { padding: 24px 0 54px; }
   .workspace-page { padding-top: 19px; }
 }
+
+/* Shared component standards; feature styles own layout, not control basics. */
+.app-shell :not(svg):not(svg *) { font-family: "Plus Jakarta Sans", "Segoe UI", Arial, sans-serif; }
+.app-shell :not(svg):not(svg *) :is(code,pre,.json-editor,.visual-json-editor textarea,.google-flow-prompt,.tts-script textarea) { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.app-shell .topbar button svg,.app-shell .nav-home svg { width: var(--icon-standard); height: var(--icon-standard); }
+.app-shell .button-secondary:hover:not(:disabled),.app-shell .button-outline:hover:not(:disabled),.app-shell .button-ghost:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-text); }
+.app-shell .button-destructive:hover:not(:disabled) { border-color: var(--danger); background: var(--danger); }
+.app-shell .project-search { min-height: var(--control-default); }
+.app-shell .project-search input { min-height: 40px; font-size: var(--font-size-control); }
+.app-shell .project-card-delete svg { width: var(--icon-compact); height: var(--icon-compact); }
+.app-shell .ai-form-grid label,.app-shell .ai-draft-review label,.app-shell .ai-provider-card label,.app-shell .visual-scene-fields label,.app-shell .smart-asset-toolbar label,.app-shell .smart-asset-filters label { font-size: var(--font-size-label); }
+.app-shell .ai-form-grid input,.app-shell .ai-form-grid select,.app-shell .ai-form-grid textarea,.app-shell .ai-draft-review input,.app-shell .ai-draft-review select,.app-shell .ai-draft-review textarea,.app-shell .visual-scene-fields input,.app-shell .visual-scene-fields textarea { min-height: var(--control-default); font-size: var(--font-size-control); }
+.app-shell .ai-field-help,.app-shell .ai-opencode-disclosure,.app-shell .ai-progress-copy,.app-shell .ai-generation-status-row,.app-shell .ai-review-meta,.app-shell .ai-fact-row span,.app-shell .ai-source-candidate small,.app-shell .ai-source-candidate em,.app-shell .ai-review-actions>small { font-size: var(--font-size-meta); }
+.app-shell .ai-generation-actions .button,.app-shell .ai-review-action-buttons .button,.app-shell .smart-asset-dialog .button,.app-shell .visual-storyboard-review .button { min-height: var(--control-default); font-size: 13px; }
+.app-shell .settings-panel-heading h2,.app-shell .ai-provider-card-head h2 { color: var(--text-primary); font-size: var(--font-size-section); }
+.app-shell .settings-panel-heading p,.app-shell .ai-provider-card>p,.app-shell .ai-settings-panel p,.app-shell .ai-provider-card p { color: var(--text-secondary); font-size: var(--font-size-body); }
+.app-shell .settings-mode-badge,.app-shell .settings-status-pill { font-size: var(--font-size-meta); }
+.app-shell .settings-status-pill.configured { background: var(--success-soft); color: var(--success); }
+.app-shell .settings-status-pill.unconfigured { background: var(--warning-soft); color: var(--warning); }
+.app-shell .audio-source-card,.app-shell .tts-panel,.app-shell .upload-panel { border-color: var(--border); background: var(--surface); color: var(--text-primary); }
+.app-shell .audio-source-tabs { border-color: var(--border); background: var(--surface-muted); }
+.app-shell .audio-source-tabs button { color: var(--text-secondary); }
+.app-shell .audio-source-tabs button.selected { border-color: var(--primary); background: var(--surface); color: var(--primary-text); }
+.app-shell .tts-config-notice,.app-shell .tts-consent-note,.app-shell .tts-stale-warning,.app-shell .audio-warning { border-color: color-mix(in srgb, var(--warning) 28%, var(--border)); background: var(--warning-soft); color: var(--warning); }
+.app-shell .tts-error,.app-shell .render-error { border-color: color-mix(in srgb, var(--danger) 28%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+.app-shell .tts-success { border-color: color-mix(in srgb, var(--success) 28%, var(--border)); background: var(--success-soft); color: var(--success); }
+.app-shell .visual-storyboard-review :where(small,.visual-summary,.visual-review-state,.visual-gate-issues,.visual-scene-warning,.visual-scene-issues,.visual-object-plan span,.visual-approval-chip,.visual-focus,.visual-planner-settings,.visual-user-assets) { font-size: var(--font-size-meta); }
+.app-shell .visual-storyboard-review :where(.visual-scene-fields label,.visual-planner-settings label,.visual-user-assets label) { font-size: var(--font-size-label); }
+.app-shell .visual-storyboard-review :where(.visual-art-direction,.visual-gate-issues,.visual-review-state,.visual-object-plan,.visual-motion-summary,.visual-focus,.visual-semantic-plan,.visual-relations,.visual-planner-settings,.visual-user-assets) :where(p,small,span,em,li,label) { font-size: var(--font-size-meta); }
+.app-shell .visual-storyboard-review :where(.visual-gate-issues strong,.visual-review-state strong,.visual-art-direction strong,.visual-object-plan>strong,.visual-motion-summary strong,.visual-focus strong) { font-size: var(--font-size-meta); }
+.app-shell .visual-storyboard-review :where(.visual-review-state.approved,.visual-approval-chip.approved) { border-color: color-mix(in srgb, var(--success) 32%, var(--border)); background: var(--success-soft); color: var(--success); }
+.app-shell .visual-storyboard-review :where(.visual-review-state.review,.visual-review-state.attention,.visual-review-notes,.visual-scene-warning,.visual-approval-chip.attention,.visual-approval-chip.review) { border-color: color-mix(in srgb, var(--warning) 32%, var(--border)); background: var(--warning-soft); color: var(--warning); }
+.app-shell .visual-storyboard-review :where(.visual-gate-issues,.visual-scene-missing) { border-color: color-mix(in srgb, var(--danger) 32%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+.app-shell .visual-storyboard-review :where(.visual-art-direction,.visual-scene-card,.visual-review-notes,.visual-user-assets,.visual-source-dialog,.visual-preview-dialog) { border-color: var(--border); background-color: var(--surface); color: var(--text-primary); }
+.app-shell .smart-asset-dialog { font-size: var(--font-size-body); }
+.app-shell .smart-asset-dialog :where(small,label) { font-size: var(--font-size-meta); }
+.app-shell .smart-asset-dialog .button { font-size: 13px; }
+.app-shell .smart-asset-head h2 { font-size: 20px; }
+.app-shell .smart-asset-head p,.app-shell .smart-asset-card>small,.app-shell .smart-asset-card>a,.app-shell .smart-asset-footer { font-size: var(--font-size-meta); }
+.app-shell .google-flow-actions .button,.app-shell .google-flow-project-actions .button { min-height: var(--control-default); font-size: 13px; }
+.app-shell .google-flow-batch-row,.app-shell .google-flow-batch-head,.app-shell .google-flow-batch-progress-heading { font-size: var(--font-size-meta); }
+.app-shell .editor-motion-delete { color: var(--danger); }
+.app-shell .workflow-step { border-color: var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); }
+.app-shell .workflow-step:hover { border-color: var(--primary); }
+.app-shell .workflow-step.selected { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 12%, transparent); }
+.app-shell .workflow-step.attention { border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); background: var(--warning-soft); }
+.app-shell .workflow-step-index { background: var(--surface-muted); color: var(--text-secondary); font: 700 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.app-shell .workflow-step.complete .workflow-step-index { background: var(--success-soft); color: var(--success); }
+.app-shell .workflow-step.active .workflow-step-index,.app-shell .workflow-step.selected .workflow-step-index { background: var(--primary); color: var(--text-on-primary); }
+.app-shell .workflow-step.attention .workflow-step-index { background: var(--warning-soft); color: var(--warning); }
+.app-shell .workflow-step-copy strong { color: var(--text-primary); }
+.app-shell .workflow-step-copy small,.app-shell .workflow-step-copy em,.app-shell .workflow-navigation>span { color: var(--text-secondary); }
+.app-shell .workflow-step.complete .workflow-step-copy em { color: var(--success); }
+.app-shell .workflow-step.attention .workflow-step-copy em { color: var(--warning); }
+.app-shell :where(.workspace-step-panel,.references-card,.review-summary-card,.review-timeline-card,.review-author-card,.interactive-preview-player,.interactive-preview-note,.render-card,.render-quota-card,.audio-source-card,.ai-settings-panel,.ai-provider-card,.project-details-card,.import-card) { border-color: var(--border); background-color: var(--surface); color: var(--text-primary); box-shadow: var(--shadow-sm); }
+.app-shell :where(.workflow-empty,.audio-step-intro,.review-audio-summary,.review-track,.ai-mode-switch button,.advanced-editor,.visual-json-editor,.motion-cue-grid) { border-color: var(--border); background-color: var(--surface-muted); color: var(--text-secondary); }
+.app-shell .workflow-alert { border-color: color-mix(in srgb, var(--warning) 30%, var(--border)); background: var(--warning-soft); color: var(--warning); font-size: var(--font-size-meta); }
+.app-shell .workflow-alert.danger { border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+.app-shell .workflow-alert.success { border-color: color-mix(in srgb, var(--success) 30%, var(--border)); background: var(--success-soft); color: var(--success); }
+.app-shell .workflow-alert button { color: var(--primary-text); font-size: var(--font-size-meta); }
+.app-shell .ai-settings-panel,.app-shell .ai-provider-card { box-shadow: var(--shadow-sm); }
+.app-shell .settings-mode-badge.development { background: var(--success-soft); color: var(--success); }
+.app-shell .settings-mode-badge.production { background: var(--primary-soft); color: var(--primary-text); }
+.app-shell .ai-mode-switch button { color: var(--text-primary); }
+.app-shell .ai-mode-switch button:hover:not(:disabled) { border-color: var(--primary); }
+.app-shell .ai-mode-switch button.selected { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 12%, transparent); }
+.app-shell .ai-mode-switch button strong { color: var(--text-primary); }
+.app-shell .ai-mode-switch button span,.app-shell .settings-persistence-note,.app-shell .ai-provider-card>small { color: var(--text-secondary); }
+.app-shell .confirm-dialog { border-color: var(--border); background: var(--surface-raised); color: var(--text-primary); }
+.app-shell .confirm-symbol { background: var(--primary-soft); color: var(--primary-text); }
+.app-shell .confirm-symbol.danger { background: var(--danger-soft); color: var(--danger); }
+.app-shell .confirm-eyebrow { color: var(--text-secondary); font-size: var(--font-size-meta); }
+.app-shell .confirm-copy h2 { color: var(--text-primary); }
+.app-shell .confirm-copy p { color: var(--text-secondary); }
+.app-shell .confirm-actions button { min-height: var(--control-default); border-color: var(--border-strong); background: var(--surface); color: var(--text-primary); font-size: 13px; }
+.app-shell .confirm-actions .confirm-submit { border-color: var(--primary-action); background: var(--primary-action); color: var(--text-on-primary); }
+.app-shell .confirm-actions .confirm-submit.danger { border-color: var(--danger-action); background: var(--danger-action); color: var(--text-on-danger); }
+.app-shell .confirm-error { color: var(--danger); }
+.app-shell .import-card :where(.json-editor,.visual-json-editor textarea) { background: var(--surface-muted); color: var(--text-primary); font-size: 13px; }
+:root[data-theme="dark"] .app-shell :where(.smart-asset-card,.smart-reusable-save,.smart-asset-toolbar input,.smart-asset-toolbar select,.smart-asset-filters select,.smart-asset-inline-filters select) { border-color: var(--border); background-color: var(--surface-muted); color: var(--text-primary); }

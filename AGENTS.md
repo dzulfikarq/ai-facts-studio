@@ -11,6 +11,9 @@ Before modifying frontend code:
 5. Preserve existing business logic, API contracts, workflow guards, approvals, quality gates, and renderer behavior.
 6. Update `design.md` when shipped UI standards change.
 7. Run relevant checks (`npm run typecheck`, `npm test`, `npm run build`) before declaring frontend work complete.
+8. Use `docs/UI_UX_STANDARDS.md` as the implementation checklist; keep `design.md` canonical.
+9. Keep page, project, workspace step, and selected scene URL-backed through `src/client/routes.ts`; preserve history confirmations and `src/client/workflow.ts` guards.
+10. Use shared Purple/theme/typography/control tokens from `src/client/redesign.css`; verify documented desktop/mobile widths and report any unavailable visual verification.
 
 ## Git, commit, and push rules (repository-wide)
 

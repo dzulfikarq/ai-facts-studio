@@ -142,8 +142,86 @@ try {
     const image = (await client.send("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false, clip: { ...viewport, scale: 1 } })).value;
     await writeFile(path.join(evidenceDir, filename), Buffer.from(image.data, "base64"));
   };
+  const assertResponsiveNoOverflow = async (view: string) => {
+    for (const width of [1440, 1280, 1024, 768, 390, 360]) {
+      await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      const metrics = await page.evaluate(() => ({
+        width: innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        offenders: [...document.querySelectorAll<HTMLElement>("body *")].filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.right > innerWidth + 1;
+        }).slice(0, 8).map((element) => ({ tag: element.tagName, className: typeof element.className === "string" ? element.className : "", right: Math.round(element.getBoundingClientRect().right), width: Math.round(element.getBoundingClientRect().width) })),
+      }));
+      if (view === "Settings" && width === 360) await captureViewport("settings-360px.png");
+      assert.ok(metrics.scrollWidth <= metrics.width, `${view} overflows at ${width}px: ${JSON.stringify(metrics)}`);
+    }
+  };
+
+  await captureViewport("dashboard-light-desktop.png");
+  await assertResponsiveNoOverflow("dashboard");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
+  await waitFor(() => page.evaluate(() => location.pathname === "/create" && document.querySelector(".ai-generate-panel") !== null), "Create Video route");
+  await captureViewport("create-light-desktop.png");
+  await assertResponsiveNoOverflow("Create Video");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-icon[aria-label="Pengaturan"]')?.click());
+  await waitFor(() => page.evaluate(() => location.pathname === "/settings" && document.querySelector(".ai-generation-settings") !== null), "Settings route");
+  await captureViewport("settings-light-desktop.png");
+  await assertResponsiveNoOverflow("Settings");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".nav-home")?.click());
+  await waitFor(() => page.evaluate(() => location.pathname === "/" && document.querySelectorAll(".project-card-open").length >= 2), "return to dashboard");
 
   await clickProject(mountainProject.researchPackage.title);
+  const editorRoute = await page.evaluate(() => ({ path: location.pathname, scene: new URLSearchParams(location.search).get("scene") }));
+  assert.equal(editorRoute.path, `/projects/${mountainProject.id}/editor`, "Visual Storyboard step is URL-backed");
+  assert.equal(editorRoute.scene, mountainProject.visualStoryboard.scenes[0].sceneId, "selected scene is URL-backed");
+  await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[1]?.click());
+  await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId, mountainProject.visualStoryboard.scenes[1].sceneId), "scene selection updates URL");
+  const restoredEditorUrl = await page.evaluate(() => location.href);
+  await page.evaluate(() => history.back());
+  await waitFor(() => page.evaluate((id) => location.pathname.endsWith(`/projects/${id}`) && document.querySelector(".workflow-stepper") !== null, mountainProject.id), "Back restores prior workspace step");
+  await page.evaluate(() => history.forward());
+  await waitFor(() => page.evaluate((id) => location.pathname.endsWith(`/projects/${id}/editor`) && document.querySelector(".video-editor-v2") !== null, mountainProject.id), "Forward restores editor route");
+  assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), mountainProject.visualStoryboard.scenes[1].sceneId, "Forward restores selected scene too");
+  await page.evaluate((title) => {
+    const input = document.querySelector<HTMLInputElement>(".video-editor-title input")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, `${title} · draft`);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, mountainProject.researchPackage.title);
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "draft edit marks workspace unsaved");
+  await page.evaluate(() => history.back());
+  await waitFor(() => page.evaluate(() => document.querySelector(".workflow-stepper") !== null), "Back moves to Materials without discarding workspace draft");
+  await page.evaluate(() => history.back());
+  await waitFor(() => page.evaluate(() => document.querySelector('[role="dialog"] .confirm-cancel') !== null), "Back asks before leaving unsaved workspace");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="dialog"] .confirm-cancel')?.click());
+  await waitFor(() => page.evaluate((id) => location.pathname.endsWith(`/projects/${id}`) && document.querySelector(".workflow-stepper") !== null && document.querySelector('[role="dialog"]') === null, mountainProject.id), "cancelled Back restores current history entry");
+  await page.evaluate(() => history.forward());
+  await waitFor(() => page.evaluate((id) => location.pathname.endsWith(`/projects/${id}`) && document.querySelector(".workflow-stepper") !== null, mountainProject.id), "workflow guard blocks Forward while draft remains unsaved");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".workflow-navigation-actions button")].find((button) => button.classList.contains("button-primary"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".video-editor-v2") !== null), "save draft and advance back to editor");
+  await page.evaluate((title) => {
+    const input = document.querySelector<HTMLInputElement>(".video-editor-title input")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, title);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, mountainProject.researchPackage.title);
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "restore original title and save baseline project");
+  await page.goto({ url: restoredEditorUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId && document.querySelector(".video-editor-v2") !== null, mountainProject.visualStoryboard.scenes[1].sceneId), "direct editor URL restores scene after reload");
+  assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), mountainProject.visualStoryboard.scenes[1].sceneId);
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}?step=render&scene=${mountainProject.visualStoryboard.scenes[1].sceneId}`, timeout: 30_000 });
+  await waitFor(() => page.evaluate((id) => location.pathname === `/projects/${id}/editor` && document.querySelector(".video-editor-v2") !== null, mountainProject.id), "direct blocked step resolves through workflow guard");
+  assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), mountainProject.visualStoryboard.scenes[1].sceneId, "workflow fallback retains selected scene");
+  await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[0]?.click());
+  await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId, mountainProject.visualStoryboard.scenes[0].sceneId), "restore scene one for editor checks");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "false"), "collapse inspector for baseline editor checks");
   const initialEditor = await page.evaluate(() => ({
     scenes: document.querySelectorAll(".editor-scene-item").length,
     canvas: Boolean(document.querySelector(".editor-canvas-shell svg")),
@@ -328,6 +406,12 @@ try {
   }, "fit choice persists with raster transform");
   await captureViewport("mountain-editor-scene-01-after-edit.png");
 
+  for (const width of [1280, 1024, 768, 390, 360]) {
+    await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
+    const viewport = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));
+    assert.ok(viewport.scrollWidth <= viewport.width, `editor has no page overflow at ${width}px: ${JSON.stringify(viewport)}`);
+    if (width === 390 || width === 360) await captureViewport(`video-editor-${width}px.png`);
+  }
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
   const mobileBounds = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, canvas: document.querySelector<HTMLElement>(".editor-canvas-shell")?.getBoundingClientRect().width ?? 0, scenes: document.querySelector(".video-editor-scenes")?.getBoundingClientRect().width ?? 0 }));
   assert.ok(mobileBounds.scrollWidth <= mobileBounds.width && mobileBounds.canvas > 240 && mobileBounds.scenes <= mobileBounds.width, `mobile editor panels scroll rather than overflow: ${JSON.stringify(mobileBounds)}`);

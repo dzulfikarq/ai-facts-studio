@@ -29,6 +29,7 @@ import { composeVisualScene, hasGenericIconCards, visualRelationshipIsVisible } 
 import { visualObjectIds, visualObjectLibrary } from "../src/domain/visual-objects";
 import { prepareSmartVisual, type ReusableCandidate } from "../src/server/visual-orchestrator";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, type WorkflowSignals } from "../src/client/workflow";
+import { appRouteHref, parseAppRoute } from "../src/client/routes";
 import { aiGeneratedContentSchema, aiGenerationInputSchema, buildAiGenerationDraft, buildDevelopmentPrompt, parseManualAiResult, parseManualAiResultText, researchPackageWithConfirmedSources, restoreAiGenerationDraft, type AiGeneratedContent } from "../src/domain/ai-generation";
 import { aiGenerationSchema, DEFAULT_TEXT_MODEL, FREE_TIER_TEXT_MODELS, getAiGenerationSettings, getGeminiTextQuotaMonitoring, getProductionProviderStatus, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "../src/server/ai-generation/provider";
 import { AiGenerationRequestError, reserveAiGenerationRequest } from "../src/server/ai-generation/quota";
@@ -48,6 +49,14 @@ import { motionBeatFromAction, updateMotionBeat } from "../src/domain/motion-bea
 import { seedVolcanoVisualSample } from "../src/domain/volcano-visual-sample";
 
 const samples = ["mountain-formation", "volcano-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
+assert.deepEqual(parseAppRoute("http://localhost/"), { view: "dashboard" }, "dashboard route survives direct navigation");
+assert.deepEqual(parseAppRoute("http://localhost/settings"), { view: "settings" }, "settings route survives refresh");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo"), { view: "workspace", projectId: "demo", step: "materials", sceneId: null }, "project URL opens materials by default");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo/editor?scene=scene-3"), { view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }, "editor URL restores selected scene");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=render&scene=scene-3"), { view: "workspace", projectId: "demo", step: "render", sceneId: "scene-3" }, "workspace URL restores step and scene");
+const invalidStepRoute = parseAppRoute("http://localhost/projects/demo?step=invalid");
+assert.equal(invalidStepRoute.view === "workspace" ? invalidStepRoute.step : "", "materials", "invalid workspace step falls back safely");
+assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "editor route serializes selected scene");
 assert.equal(resolveTheme("system", true), "dark", "System theme follows dark OS preference");
 assert.equal(resolveTheme("system", false), "light", "System theme follows light OS preference");
 assert.equal(resolveTheme("dark", false), "dark", "Explicit theme ignores OS preference");

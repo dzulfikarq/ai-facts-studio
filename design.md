@@ -52,6 +52,22 @@ Dark primary action fill is intentionally darker than brand token `--primary`, k
 | Shadows | `--shadow-sm`, `--shadow-md`; soft, low-contrast elevation |
 | Focus | 3px visible ring; 2px offset where applicable |
 
+### Typography and controls
+
+| Token | Value | Use |
+|---|---:|---|
+| `--font-size-page` | 30px | Page title reference; responsive titles use 28–32px |
+| `--font-size-section` | 19px | Section headings |
+| `--font-size-card` | 16px | Card and panel headings |
+| `--font-size-body` | 14px | Body copy |
+| `--font-size-control` | 14px | Form values and control labels |
+| `--font-size-label` | 13px | Form labels |
+| `--font-size-meta` | 12px | Supporting copy and status metadata |
+| `--control-small/default/large` | 36/42/48px | Button and control heights; icon-only buttons use 44px hit areas |
+| `--icon-compact/standard/prominent` | 16/18/20px | Lucide controls and emphasis |
+
+Plus Jakarta Sans is shared across app UI. Monospace is reserved for code, JSON, and numeric editor data. Dense editor timeline ticks may remain 10px where available width is constrained; never use that scale for instructions or form content.
+
 ### Contrast
 
 Core text/action pairs measured against current surfaces meet WCAG AA: light primary text on canvas 14.55:1; light secondary on white 5.11:1; light white-on-primary action 5.55:1; dark primary text on canvas 17.02:1; dark secondary on card 8.21:1; dark selected text on selected surface 5.64:1; dark white-on-primary action 5.55:1. Recheck contrast when changing tokens. These measurements do not certify every content-specific status or generated visual.
@@ -74,9 +90,9 @@ const [theme, setTheme] = useThemePreference();
 
 ## 4. Typography and icons
 
-- Font: Plus Jakarta Sans, loaded in `index.html`, with Segoe UI/Arial fallback.
-- Hierarchy: page headings 30–40px; workspace/section headings 16–22px; body 13–15px; helper/status text 11–13px. Use weight 400–750 and readable line-height; avoid dense all-caps body copy.
-- Icons: `lucide-react`; use 16–18px for controls and 22–28px for larger empty states. Decorative icons use `aria-hidden`; icon-only controls need accessible labels.
+- Font: Plus Jakarta Sans, loaded in `index.html`, with Segoe UI/Arial fallback. Use monospace only for code/JSON and numeric timeline data.
+- Hierarchy: page headings 28–32px; section headings 19px; card headings 16px; body/controls 14px; labels 13px; metadata 12px. Dense timeline ticks may use 10px; do not shrink instructions or form content.
+- Icons: `lucide-react`; use 16px compact, 18px standard, 20px prominent. Decorative icons use `aria-hidden`; icon-only controls need accessible labels and 44px hit areas.
 
 ## 5. Layout and navigation
 
@@ -86,6 +102,8 @@ const [theme, setTheme] = useThemePreference();
 - **Create Video:** Generate with AI is selected and first; JSON import and sample flow remain available. Generation stays click-triggered; drafts can be reviewed before project creation.
 - **Workspace:** contextual back button, editable project title, save state/action, and workflow stepper. Scene list/editor stays contextual to Storyboard. No global sidebar.
 - **Settings:** appearance preference plus existing AI provider configuration. Theme and AI Generation mode remain separate.
+- **URL state:** `/`, `/create`, and `/settings` identify top-level pages. `/projects/:id` identifies workspace; `/projects/:id/editor` identifies Visual Storyboard; other workspace steps use `?step=...`, and `?scene=...` restores selected scene. Invalid steps fall back to Materials; invalid scene IDs fall back to first scene. Direct project URLs load persisted project data and apply existing workflow guards.
+- **History and unsaved work:** app navigation writes browser history. Back/Forward uses guarded route transitions; canceling a guarded transition restores the prior history position without adding duplicate entries. Workspace drafts prompt to save before leaving, Create AI drafts prompt before discard, and browser unload uses native unsaved-change protection.
 
 ## 6. Global component standards
 
@@ -93,9 +111,9 @@ Reusable visual patterns are CSS-backed and shared in `src/client/redesign.css`,
 
 | Pattern | Current implementation | Standard |
 |---|---|---|
-| Button | `.button`, `.button-primary`, `.button-light` | Primary for main action; light for secondary; native `disabled`; visible focus |
-| Icon button | `.topbar-icon`, `.project-card-delete` | 38–42px hit area; accessible label; destructive color only for destructive action |
-| Input / textarea / select | Native controls with global app styles | Visible label, helper/error text, 46px target where feature layout allows, focus ring |
+| Button | `.button`, `.button-primary`, `.button-light` | Primary for main action; light for secondary; native `disabled`; visible focus; 42px default minimum |
+| Icon button | `.topbar-icon`, `.project-card-delete` | 44px hit area; accessible label; destructive color only for destructive action |
+| Input / textarea / select | Native controls with global app styles | Visible label, helper/error text, 42px default minimum where feature layout allows, focus ring |
 | Checkbox / range | Native inputs | Accent uses primary token; keep native keyboard behavior |
 | Tabs | `.create-mode-switch`, `.audio-source-tabs` | Selected state clear; retain existing role/pressed semantics |
 | Card | `.project-card`, `.workspace-step-panel`, `.ai-provider-card`, etc. | Surface token, subtle border, consistent radius, low shadow |
@@ -206,7 +224,7 @@ Known V2 limits: no scene reorder/duplicate/delete (timeline/audio migration req
 - Project cards use 3 columns on wide desktop, 2 on tablet, 1 on narrow mobile.
 - Workspace stepper scrolls horizontally instead of compressing labels. Editor and preview stack vertically at tablet widths; 9:16 preview ratio stays fixed.
 - Dialog is viewport-bounded, wraps actions on mobile, and keeps touch-sized buttons.
-- Check 360px, 390px, 430px, tablet, and desktop after layout changes.
+- Check 1440px, 1280px, 1024px, 768px, 390px, and 360px after layout changes. At 320px, preserve minimum supported shell width and prevent page-level horizontal overflow.
 
 ## 10. Accessibility guidelines
 

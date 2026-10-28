@@ -6,13 +6,13 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { parseResearchPackage } from "../src/domain/research";
-import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 import type { ResearchPackage } from "../src/domain/research";
 import { renderSnapshot } from "./render-core";
 
 const execFileAsync = promisify(execFile);
 const version = Number(process.argv[2]);
-assert.ok([RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, OLDER_RENDERER_VERSION, LEGACY_RENDERER_VERSION].includes(version));
+assert.ok([RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, LEGACY_RENDERER_VERSION].includes(version));
 const outputPath = path.resolve(process.argv[3]!);
 const audioName = process.argv[4]!;
 const audioPath = path.resolve("public/audio", audioName);
@@ -26,7 +26,7 @@ if (version === LEGACY_RENDERER_VERSION) {
   legacy.schemaVersion = "1.0";
   for (const scene of legacy.scenes) { delete scene.visualComposition; delete scene.motionPlan; }
   research = legacy as unknown as ResearchPackage;
-} else if (version === OLDER_RENDERER_VERSION) {
+} else if (version === OLDER_RENDERER_VERSION || version === OLDEST_RENDERER_VERSION) {
   const older = structuredClone(current) as unknown as { scenes: Array<Record<string, unknown>> };
   for (const scene of older.scenes) delete scene.motionActions;
   research = older as unknown as ResearchPackage;

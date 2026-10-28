@@ -82,6 +82,6 @@ export function defaultMotionPlan(cues: readonly string[]): MotionCuePlan[] {
     const durationFrames = cue === "cut" ? 1 : cue === "dissolve" ? 18 : cue === "pulse" ? 36 : 24;
     const easing: MotionCuePlan["easing"] = cue === "cut" || cue === "pan" || cue === "pulse" ? "linear" : cue === "scale" || cue === "reveal" || cue === "fadeIn" ? "spring" : "easeInOut";
     if (!motionCueIds.includes(cue as typeof motionCueIds[number])) throw new Error(`Unsupported motion cue: ${cue}`);
-    return { cue: cue as MotionCuePlan["cue"], targetLayer: cue === "cut" || cue === "dissolve" ? "scene" : "all", delayFrames: 0, durationFrames, easing };
+    return { cue: cue as MotionCuePlan["cue"], targetLayer: cue === "cut" || cue === "dissolve" || cue === "slide-transition" || cue === "wipe" ? "scene" : "all", delayFrames: 0, durationFrames, easing };
   });
 }

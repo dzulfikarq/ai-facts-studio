@@ -1,9 +1,10 @@
 export const workspaceSteps = [
-  { id: "materials", title: "Materi & Storyboard", description: "Riset, scene, teks, dan visual" },
-  { id: "visual", title: "Visual Storyboard", description: "Review thumbnail dan approve tiap scene" },
-  { id: "narration", title: "Narasi", description: "Audio aktif atau kandidat AI Voice" },
+  { id: "materials", title: "Materi & Storyboard", description: "Riset, scene, naskah, dan arahan visual" },
+  { id: "narration", title: "Narasi", description: "Generate atau upload audio; pilih durasi manual" },
+  { id: "visual", title: "Visual Storyboard", description: "Import media Flow dan approve tiap scene" },
+  { id: "editor", title: "Edit Video", description: "Timing, gerak, transisi, teks, dan preview" },
   { id: "review", title: "Review & Subtitle", description: "Timeline, frasa, dan fakta" },
-  { id: "preview", title: "Preview Motion", description: "Tinjau gerak 2D sebelum render" },
+  { id: "preview", title: "Preview Video", description: "Tinjau hasil lengkap sebelum render" },
   { id: "render", title: "Render & Download", description: "Buat MP4 final" },
 ] as const;
 
@@ -18,6 +19,7 @@ export type WorkflowSignals = {
   hasAudio: boolean;
   audioMatchesNarration: boolean;
   hasPendingAudio: boolean;
+  narrationMode: "unset" | "audio" | "manual";
   reviewVerified: boolean;
   hasWarnings: boolean;
   previewReviewed: boolean;
@@ -30,17 +32,19 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
   const completed: Record<WorkspaceStep, boolean> = {
     materials: signals.hasResearch && signals.saved,
     visual: signals.visualStoryboardReady && signals.visualStoryboardApproved,
-    narration: signals.hasAudio && signals.audioMatchesNarration && !signals.hasPendingAudio,
+    narration: signals.narrationMode === "manual" && !signals.hasAudio || signals.hasAudio && signals.audioMatchesNarration && !signals.hasPendingAudio,
     review: signals.reviewVerified,
+    editor: signals.saved && signals.visualStoryboardApproved,
     preview: signals.previewReviewed,
     render: signals.latestJobState === "rendered" && signals.latestJobContentCurrent,
   };
   const attention: Record<WorkspaceStep, boolean> = {
     materials: !signals.hasResearch || !signals.saved,
     visual: !signals.visualStoryboardReady || (!signals.visualStoryboardApproved && activeIndex > 1),
-    narration: !signals.audioMatchesNarration || signals.hasPendingAudio || (!signals.hasAudio && activeIndex > 1),
-    review: signals.hasWarnings || (!signals.reviewVerified && activeIndex > 2),
-    preview: !signals.previewReviewed && activeIndex > 3,
+    narration: signals.hasPendingAudio || (!signals.hasAudio && signals.narrationMode !== "manual" && activeIndex > 1) || (signals.hasAudio && !signals.audioMatchesNarration),
+    review: signals.hasWarnings || (!signals.reviewVerified && activeIndex > 4),
+    editor: !signals.visualStoryboardApproved || !signals.saved,
+    preview: !signals.previewReviewed && activeIndex > 5,
     render: signals.latestJobState === "failed" || Boolean(signals.latestJobState && !signals.latestJobContentCurrent),
   };
   return Object.fromEntries(workspaceSteps.map(({ id }, index) => [
@@ -53,8 +57,9 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
 
 export function canAdvanceWorkspaceStep(step: WorkspaceStep, signals: WorkflowSignals) {
   if (step === "materials") return signals.hasResearch && signals.saved;
-  if (step === "visual") return signals.visualStoryboardReady && signals.visualStoryboardApproved;
-  if (step === "narration") return signals.audioMatchesNarration;
+  if (step === "narration") return signals.narrationMode === "manual" && !signals.hasAudio || signals.hasAudio && signals.audioMatchesNarration && !signals.hasPendingAudio;
+  if (step === "visual") return signals.saved;
+  if (step === "editor") return signals.saved && signals.visualStoryboardApproved;
   if (step === "review") return signals.reviewVerified;
   if (step === "preview") return signals.previewReviewed;
   return false;

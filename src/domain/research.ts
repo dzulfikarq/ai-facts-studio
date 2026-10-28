@@ -54,9 +54,11 @@ const sceneV11Schema = z.object({
     ctx.addIssue({ code: "custom", message: "motionPlan harus memiliki satu konfigurasi untuk setiap motionCue dan urutan yang sama", path: ["motionPlan"] });
   }
   if (new Set(scene.motionCues).size !== scene.motionCues.length) ctx.addIssue({ code: "custom", message: "Motion cue tidak boleh berulang", path: ["motionCues"] });
-  if (scene.motionCues.includes("cut") && scene.motionCues.includes("dissolve")) ctx.addIssue({ code: "custom", message: "Pilih Cut atau Dissolve; keduanya tidak dapat dipakai bersamaan", path: ["motionCues"] });
+  const transitionPlans = scene.motionPlan.filter((plan) => ["cut", "dissolve", "slide-transition", "wipe"].includes(plan.cue));
+  if (transitionPlans.length > 1) ctx.addIssue({ code: "custom", message: "Pilih satu transisi scene: Cut, Crossfade, Slide, atau Wipe", path: ["motionPlan"] });
   const layerIds = new Set(scene.visualComposition.layers.map((layer) => layer.id));
   scene.motionPlan.forEach((plan, index) => {
+    if (["cut", "dissolve", "slide-transition", "wipe"].includes(plan.cue) && plan.targetLayer !== "scene") ctx.addIssue({ code: "custom", message: "Cue transisi harus menargetkan seluruh scene", path: ["motionPlan", index, "targetLayer"] });
     if (!["all", "scene"].includes(plan.targetLayer) && !layerIds.has(plan.targetLayer)) {
       ctx.addIssue({ code: "custom", message: `Layer motion '${plan.targetLayer}' tidak ditemukan`, path: ["motionPlan", index, "targetLayer"] });
     }
@@ -79,6 +81,15 @@ const packageFields = {
   targetDurationSec: z.number().int().min(1).max(120),
   aspectRatio: z.literal("9:16"),
   narration: z.string().max(5000),
+  videoOverlaySettings: z.object({
+    showCategory: z.boolean(),
+    showTitle: z.boolean(),
+    showSceneLabel: z.boolean(),
+    showSubtitles: z.boolean(),
+    showProgress: z.boolean(),
+    showBranding: z.boolean(),
+    brandName: z.string().trim().max(40),
+  }).strict().default({ showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: true, brandName: "AI FACTS STUDIO" }),
   references: z.array(referenceSchema).max(50),
 };
 

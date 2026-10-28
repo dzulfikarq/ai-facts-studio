@@ -19,7 +19,7 @@ export function parseAppRoute(input: string | URL): AppRoute {
       const projectId = decodeURIComponent(match[1]!);
       if (!projectId || projectId.includes("/")) return { view: "dashboard" };
       const requestedStep = url.searchParams.get("step");
-      const step = match[2] ? "visual" : isWorkspaceStep(requestedStep) ? requestedStep : "materials";
+      const step = match[2] ? "editor" : isWorkspaceStep(requestedStep) ? requestedStep : "materials";
       return { view: "workspace", projectId, step, sceneId: url.searchParams.get("scene") };
     } catch { return { view: "dashboard" }; }
   }
@@ -29,9 +29,9 @@ export function parseAppRoute(input: string | URL): AppRoute {
 export function appRouteHref(route: AppRoute): string {
   if (route.view === "dashboard") return "/";
   if (route.view === "create" || route.view === "settings") return `/${route.view}`;
-  const path = `/projects/${encodeURIComponent(route.projectId)}${route.step === "visual" ? "/editor" : ""}`;
+  const path = `/projects/${encodeURIComponent(route.projectId)}${route.step === "editor" ? "/editor" : ""}`;
   const query = new URLSearchParams();
-  if (route.step !== "materials" && route.step !== "visual") query.set("step", route.step);
+  if (route.step !== "materials" && route.step !== "editor") query.set("step", route.step);
   if (route.sceneId) query.set("scene", route.sceneId);
   const suffix = query.toString();
   return `${path}${suffix ? `?${suffix}` : ""}`;

@@ -12,7 +12,7 @@ import type { VisualAsset } from "../src/domain/visual-assets";
 import type { SceneMedia } from "../src/domain/scene-media";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { durationInFrames } from "../src/domain/timeline";
-import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
@@ -122,7 +122,7 @@ export async function renderSnapshot(
   scale = 1,
 ) {
   const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
-  if (![LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
+  if (![LEGACY_RENDERER_VERSION, OLDEST_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
   if (snapshot.audio) await verifySnapshotAudio(snapshot.audio);
   await verifySnapshotVisualAssets(snapshot.visualAssets);
   await verifySnapshotSceneMedia(snapshot.research);

@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { isAnimatedMediaFile, sceneMediaSchema } from "../src/domain/scene-media";
-import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
+import { canStartNewJob, durationInFrames, sceneTimes, setSceneDuration, timelineDuration } from "../src/domain/timeline";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
 import { ApiError, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai";
@@ -25,7 +25,7 @@ import { buildIllustrationPrompt } from "../src/domain/illustration-prompt";
 import { googleFlowPromptPack, matchGoogleFlowFiles, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken, validGoogleFlowAssignments } from "../src/domain/google-flow";
 import { visualAssetSchema, validateRasterImage } from "../src/domain/visual-assets";
 import { visualSemanticPlanSchema } from "../src/domain/visual-semantic-plan";
-import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, legacyMotionApprovalFingerprint, legacyVisualApprovalFingerprint, visualApprovalFingerprint, visualStoryboardQualityGate, visualStoryboardSchema, visualWorldSchema, type VisualStoryboard, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, legacyMotionApprovalFingerprint, legacyVisualApprovalFingerprint, retimeVisualStoryboard, visualApprovalFingerprint, visualStoryboardQualityGate, visualStoryboardSchema, visualWorldSchema, type VisualStoryboard, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
 import { composeVisualScene, hasGenericIconCards, visualRelationshipIsVisible } from "../src/domain/visual-composer";
 import { visualObjectIds, visualObjectLibrary } from "../src/domain/visual-objects";
 import { prepareSmartVisual, type ReusableCandidate } from "../src/server/visual-orchestrator";
@@ -53,11 +53,13 @@ const samples = ["mountain-formation", "volcano-formation", "space-orbit", "anim
 assert.deepEqual(parseAppRoute("http://localhost/"), { view: "dashboard" }, "dashboard route survives direct navigation");
 assert.deepEqual(parseAppRoute("http://localhost/settings"), { view: "settings" }, "settings route survives refresh");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo"), { view: "workspace", projectId: "demo", step: "materials", sceneId: null }, "project URL opens materials by default");
-assert.deepEqual(parseAppRoute("http://localhost/projects/demo/editor?scene=scene-3"), { view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }, "editor URL restores selected scene");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo/editor?scene=scene-3"), { view: "workspace", projectId: "demo", step: "editor", sceneId: "scene-3" }, "editor URL restores selected scene");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=visual&scene=scene-3"), { view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }, "visual storyboard has distinct URL step");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=render&scene=scene-3"), { view: "workspace", projectId: "demo", step: "render", sceneId: "scene-3" }, "workspace URL restores step and scene");
 const invalidStepRoute = parseAppRoute("http://localhost/projects/demo?step=invalid");
 assert.equal(invalidStepRoute.view === "workspace" ? invalidStepRoute.step : "", "materials", "invalid workspace step falls back safely");
-assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "editor route serializes selected scene");
+assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "editor", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "editor route serializes selected scene");
+assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }), "/projects/demo?step=visual&scene=scene-3", "visual storyboard route stays separate from editor");
 assert.equal(resolveTheme("system", true), "dark", "System theme follows dark OS preference");
 assert.equal(resolveTheme("system", false), "light", "System theme follows light OS preference");
 assert.equal(resolveTheme("dark", false), "dark", "Explicit theme ignores OS preference");
@@ -127,6 +129,8 @@ for (const name of samples) {
 }
 
 const mountain = parsedSamples[0]!;
+assert.equal(mountain.videoOverlaySettings.showTitle, true, "legacy packages receive default title overlay settings");
+assert.equal(mountain.videoOverlaySettings.brandName, "AI FACTS STUDIO", "legacy packages receive default branding settings");
 const seaSalt = parsedSamples.find((sample) => sample.id === "why-seawater-is-salty-id")!;
 const solarProtection = parsedSamples.find((sample) => sample.id === "earth-solar-protection-id")!;
 const rainbow = parsedSamples.find((sample) => sample.id === "how-rainbows-form-id")!;
@@ -165,6 +169,18 @@ if (manualMotionPackage.success) {
   assert.equal(parseResearchPackage(appliedMotion).success, true, "authored Motion Direction survives package save/reload validation");
 }
 assert.equal(motionCuePlanSchema.safeParse({ cue: "fadeIn", targetLayer: "all", delayFrames: 0, durationFrames: 24, easing: "linear", intensity: 1 }).success, false, "unsupported intensity controls are rejected");
+for (const cue of ["cut", "dissolve", "slide-transition", "wipe"] as const) {
+  const plan = { cue, targetLayer: "scene", delayFrames: 0, durationFrames: cue === "cut" ? 1 : 24, easing: cue === "cut" ? "linear" : "easeInOut", ...(cue === "slide-transition" ? { direction: "right" } : {}) };
+  const parsedTransition = parseResearchPackage({ ...mountain, scenes: mountain.scenes.map((scene, index) => index ? scene : { ...scene, motionCues: [cue], motionPlan: [plan] }) });
+  assert.equal(parsedTransition.success, true, `${cue} is valid persisted scene transition`);
+}
+const multipleTransitions = parseResearchPackage({ ...mountain, scenes: mountain.scenes.map((scene, index) => index ? scene : { ...scene,
+  motionCues: ["slide-transition", "wipe"], motionPlan: [
+    { cue: "slide-transition", targetLayer: "scene", delayFrames: 0, durationFrames: 24, easing: "easeInOut" },
+    { cue: "wipe", targetLayer: "scene", delayFrames: 0, durationFrames: 24, easing: "easeInOut" },
+  ],
+}) });
+assert.equal(multipleTransitions.success, false, "scene cannot combine two transition types");
 const conflictingTransitions = parseResearchPackage({ ...mountain, scenes: mountain.scenes.map((scene, index) => index === 0 ? { ...scene, motionCues: ["cut", "dissolve"], motionPlan: [{ cue: "cut", targetLayer: "scene", delayFrames: 0, durationFrames: 1, easing: "linear" }, { cue: "dissolve", targetLayer: "scene", delayFrames: 0, durationFrames: 18, easing: "easeInOut" }] } : scene) });
 assert.equal(conflictingTransitions.success, true, "legacy Cut and Dissolve conflicts are normalized instead of blocking project load");
 if (conflictingTransitions.success) {
@@ -679,11 +695,13 @@ assert.equal(parseResearchPackage(badUrl).success, false, "unsafe URL must fail"
 
 const workflowBase: WorkflowSignals = {
   activeStep: "materials", hasResearch: true, saved: true, visualStoryboardReady: true, visualStoryboardApproved: false, hasAudio: true, audioMatchesNarration: true,
-  hasPendingAudio: false, reviewVerified: false, hasWarnings: false, previewReviewed: false,
+  hasPendingAudio: false, narrationMode: "audio", reviewVerified: false, hasWarnings: false, previewReviewed: false,
   latestJobContentCurrent: false,
 };
 assert.equal(workflowStatuses(workflowBase).materials, "active");
-assert.equal(reachableWorkspaceStep("render", workflowBase), "visual", "resume must stop at Visual Storyboard approval gate");
+assert.equal(reachableWorkspaceStep("editor", workflowBase), "editor", "Edit Video remains reachable while Visual Storyboard has quality issues or pending approval");
+assert.equal(reachableWorkspaceStep("review", workflowBase), "editor", "review remains blocked until Visual Storyboard approval");
+assert.equal(reachableWorkspaceStep("render", workflowBase), "editor", "resume reaches Edit Video but stops before review until Visual Storyboard approval");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true }), "review", "visual approval precedes research review");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true, reviewVerified: true }), "preview");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true, reviewVerified: true, previewReviewed: true }), "render");
@@ -1201,6 +1219,10 @@ assert.equal(canStartNewJob([new Date(now - 24 * 60 * 60 * 1000).toISOString()],
 assert.equal(durationInFrames(mountain), 56 * 30);
 assert.equal(durationInFrames(mountain, 43.5), 43.5 * 30);
 assert.equal(sceneTimes(mountain, mountain.scenes[1]!, 43.5).endSec, 15 * (43.5 / 56));
+const manualTimeline = setSceneDuration(mountain, mountain.scenes[0]!.id, mountain.scenes[0]!.endSec - mountain.scenes[0]!.startSec + 1);
+assert.equal(manualTimeline.scenes[1]!.startSec, mountain.scenes[1]!.startSec + 1, "manual scene resize shifts following scenes without overlap");
+assert.equal(manualTimeline.scenes.at(-1)!.endSec, mountain.scenes.at(-1)!.endSec + 1, "manual scene resize preserves downstream durations");
+assert.throws(() => setSceneDuration(mountain, "missing-scene", 2), /tidak ditemukan/i);
 
 const script = narrationScript(mountain);
 assert.equal(script, mountain.scenes.map((scene) => scene.narrationText.trim()).join("\n\n"));
@@ -1211,6 +1233,17 @@ assert.equal(synced.scenes[0]!.startSec, 0);
 assert.equal(synced.scenes.at(-1)!.endSec, 43.27);
 assert.ok(synced.scenes.every((scene, index) => scene.endSec > scene.startSec && (index === 0 || scene.startSec === synced.scenes[index - 1]!.endSec)));
 assert.equal(sceneTimes(synced, synced.scenes[2]!, 43.27, "estimated").startSec, synced.scenes[2]!.startSec);
+assert.equal(timelineDuration(synced, 43.27, "estimated"), 44, "estimated timeline contains ceil target duration");
+const beatResearch = structuredClone(mountain);
+const beatScene = beatResearch.scenes[0]!;
+const beatSceneFrames = Math.floor((beatScene.endSec - beatScene.startSec) * 30);
+beatScene.motionActions = [{ id: "retime-beat", kind: "fade", targetNode: "front/0", startFrame: beatSceneFrames - 30, durationFrames: 30, easing: "linear", keyframes: [{ at: 0, opacity: 0 }, { at: 1, opacity: 1 }] }];
+const retimedBeats = estimateSceneTimings(beatResearch, 2);
+assert.ok(retimedBeats.scenes.every((scene) => scene.motionActions.every((action) => action.startFrame + action.durationFrames <= Math.floor((scene.endSec - scene.startSec) * 30))), "narration retiming keeps canonical Motion Beats inside each new scene duration");
+const retimedBoard = retimeVisualStoryboard(mountainStoryboard, mountain, synced);
+assert.deepEqual(retimedBoard.scenes.map((scene) => scene.sceneId), mountainStoryboard.scenes.map((scene) => scene.sceneId), "retiming preserves stable visual scene IDs and order");
+assert.deepEqual(retimedBoard.scenes.map((scene) => scene.composition), mountainStoryboard.scenes.map((scene) => scene.composition), "retiming preserves authored scene compositions");
+assert.ok(retimedBoard.scenes.every((scene) => scene.durationSec === Math.round((synced.scenes.find((item) => item.id === scene.sceneId)!.endSec - synced.scenes.find((item) => item.id === scene.sceneId)!.startSec) * 1000) / 1000), "retiming synchronizes board scene durations");
 
 assert.equal(DEFAULT_TTS_MODEL, "gemini-3.8-flash-lite-tts");
 assert.equal(GEMINI_TTS_LOCALES[0]!.locale, "id-ID", "default voice catalog locale should be Bahasa Indonesia");
@@ -1229,6 +1262,11 @@ assert.ok(layerMotion([directionPlan], "front", 1, 6, .25).translateY === 0, "ho
 assert.ok(Math.abs(layerMotion([directionPlan], "front", 1, 6, .25).translateX) > Math.abs(layerMotion([motionPlan("slide")], "front", 1, 6, .25).translateY), "motion intensity scales effect distance");
 assert.equal(sceneTransitionOpacity([motionPlan("cut")], 0), 1, "cut stays immediate");
 assert.ok(sceneTransitionOpacity([motionPlan("dissolve")], 12) > 0 && sceneTransitionOpacity([motionPlan("dissolve")], 12) < 1, "dissolve spans its configured frames");
+for (const cue of ["slide-transition", "wipe"] as const) {
+  const plan = { ...motionPlan(cue), targetLayer: "scene" as const };
+  assert.ok(sceneTransitionOpacity([plan], 12) > 0 && sceneTransitionOpacity([plan], 12) < 1, `${cue} spans configured frames`);
+  assert.deepEqual(layerMotion([plan], "front", 1, 6, .25), still, `${cue} is treated as a scene transition, not a layer effect`);
+}
 assert.deepEqual(layerMotion([motionPlan("zoom")], "front", 12, 12, .5), layerMotion([motionPlan("zoom")], "front", 12, 12, .5), "motion state must be deterministic");
 const cacheBase = { provider: "gemini-developer-api", model: FREE_TIER_TTS_MODELS[0], scriptSha256: "abc", locale: "id-ID", voiceId: "Kore", style: "documentary", speakingRate: 1 };
 assert.equal(ttsCacheKey(cacheBase), ttsCacheKey({ ...cacheBase }));

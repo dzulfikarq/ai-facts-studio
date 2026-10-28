@@ -191,6 +191,28 @@ export function compositionForVisualScene(storyboard: Pick<VisualStoryboard, "vi
   return scene.compositionOverride ?? storyboard.visualWorld?.composition ?? scene.composition;
 }
 
+export function retimeVisualStoryboard(storyboard: VisualStoryboard, previous: ResearchPackage, next: ResearchPackage): VisualStoryboard {
+  if (previous.scenes.length !== next.scenes.length || previous.scenes.some((scene, index) => scene.id !== next.scenes[index]?.id)) {
+    throw new Error("Scene IDs berubah; storyboard perlu rekonsiliasi eksplisit sebelum retiming.");
+  }
+  const scenes = storyboard.scenes.map((visual) => {
+    const index = previous.scenes.findIndex((scene) => scene.id === visual.sceneId);
+    const before = previous.scenes[index];
+    const after = next.scenes[index];
+    if (!before || !after) throw new Error(`Scene ${visual.sceneId} tidak ditemukan saat retiming.`);
+    const oldFrames = Math.max(1, Math.round((before.endSec - before.startSec) * 30));
+    const newFrames = Math.max(1, Math.round((after.endSec - after.startSec) * 30));
+    const ratio = newFrames / oldFrames;
+    const motionActions = visual.motionActions.map((action) => {
+      const startFrame = Math.min(newFrames - 1, Math.max(0, Math.round(action.startFrame * ratio)));
+      return { ...action, startFrame, durationFrames: Math.min(newFrames - startFrame, Math.max(1, Math.round(action.durationFrames * ratio))) };
+    });
+    const retimed = { ...visual, durationSec: Math.round((after.endSec - after.startSec) * 1000) / 1000, motionActions };
+    return visual.approved ? { ...retimed, approvedFingerprint: visualApprovalFingerprint(retimed) } : retimed;
+  });
+  return visualStoryboardSchema.parse({ ...storyboard, scenes });
+}
+
 export function buildVisualWorld(name: string, sourceScene: VisualStoryboardScene): VisualWorld {
   const composition = sourceScene.compositionOverride ?? sourceScene.composition;
   const image = compositionNodes(composition).find((node) => node.type === "image");

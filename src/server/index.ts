@@ -13,7 +13,7 @@ import { openverseLicenseIds, reusableSceneInputSchema } from "../domain/asset-l
 import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
-import { applyVisualStoryboard, buildVisualStoryboard, compositionForVisualScene, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, compositionForVisualScene, retimeVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
 import type { VisualPreparationJob, VisualPreparationScene } from "../domain/visual-preparation";
 import type { MotionPreparationJob, MotionPreparationScene } from "../domain/motion-preparation";
 import { motionIntensitySchema, planSceneMotion } from "../domain/motion-director";
@@ -120,6 +120,7 @@ function projectRow(id: string) {
 }
 
 function snapshotForProject(project: StoredProject): RenderSnapshot {
+  if (project.visualStoryboardError) throw new Error(project.visualStoryboardError);
   const extension = project.audio ? path.extname(project.audio.file) : "";
   const referencedAssetIds = new Set(project.visualStoryboard.scenes.flatMap((scene) => compositionForVisualScene(project.visualStoryboard, scene).layers
     .flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node]))
@@ -191,7 +192,7 @@ function getProject(id: string) {
   const audioMatchesNarration = project.audio?.source === "tts"
     ? project.audio.tts?.scriptSha256 === currentScriptSha
     : true;
-  const latestJobContentCurrent = Boolean(latest && (
+  const latestJobContentCurrent = Boolean(latest && !project.visualStoryboardError && (
     latest.source_sha256 === createHash("sha256").update(JSON.stringify(snapshotForProject(project))).digest("hex")
     || snapshotContentMatchesProject(latest.snapshot_path, project)
   ));
@@ -210,8 +211,9 @@ function getProject(id: string) {
 
 function saveProject(id: string, project: StoredProject) {
   const now = new Date().toISOString();
+  const { visualStoryboardError: _validationError, ...persisted } = project;
   db.prepare("UPDATE projects SET title = ?, data_json = ?, updated_at = ? WHERE id = ?")
-    .run(project.researchPackage.title, JSON.stringify(project), now, id);
+    .run(project.researchPackage.title, JSON.stringify(persisted), now, id);
 }
 
 function withTransaction<T>(action: () => T): T {
@@ -229,6 +231,21 @@ function withTransaction<T>(action: () => T): T {
 function apiError(response: express.Response, status: number, message: string, extra: object = {}) {
   response.status(status).json({ error: message, ...extra });
 }
+
+function invalidStoryboardResponse(response: express.Response, project: StoredProject) {
+  if (!project.visualStoryboardError) return false;
+  apiError(response, 409, project.visualStoryboardError, { code: "invalid-visual-storyboard" });
+  return true;
+}
+
+app.use("/api/projects/:id", (request, response, next) => {
+  if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS" || request.method === "DELETE" && request.path === "/") return next();
+  const row = projectRow(String(request.params.id));
+  if (!row) return next();
+  const project = projectFromRow(row);
+  if (project.visualStoryboardError) return invalidStoryboardResponse(response, project);
+  next();
+});
 
 function missingVisualAssetReferences(storyboard: ReturnType<typeof buildVisualStoryboard>, assets: readonly VisualAsset[]) {
   const available = new Set(assets.map((asset) => asset.id));
@@ -560,16 +577,17 @@ async function sha256File(filePath: string) {
 async function sceneMediaIntegrityError(media: SceneMedia) {
   const parsed = sceneMediaSchema.safeParse(media);
   if (!parsed.success) return "Metadata scene media tidak valid.";
-  for (const [file, checksum] of [[media.file, media.sha256], [media.posterFile, media.posterSha256]] as const) {
-    const filePath = path.resolve(sceneMediaDir, file);
-    if (path.dirname(filePath) !== sceneMediaDir || !existsSync(filePath)) return `File scene media ${file} tidak tersedia.`;
-    const expectedBytes = file === media.file ? media.bytes : media.posterBytes;
-    if ((await stat(filePath)).size !== expectedBytes) return `Ukuran scene media ${file} tidak cocok dengan metadata.`;
-    if (await sha256File(filePath) !== checksum) return `Hash scene media ${file} berubah.`;
-  }
-  try { await verifyStoredSceneMedia(path.join(sceneMediaDir, media.file), media); }
-  catch (error) { return error instanceof Error ? error.message : "Metadata video tersimpan tidak valid."; }
-  return null;
+  try {
+    for (const [file, checksum] of [[media.file, media.sha256], [media.posterFile, media.posterSha256]] as const) {
+      const filePath = path.resolve(sceneMediaDir, file);
+      if (path.dirname(filePath) !== sceneMediaDir || !existsSync(filePath)) return `File scene media ${file} tidak tersedia.`;
+      const expectedBytes = file === media.file ? media.bytes : media.posterBytes;
+      if ((await stat(filePath)).size !== expectedBytes) return `Ukuran scene media ${file} tidak cocok dengan metadata.`;
+      if (await sha256File(filePath) !== checksum) return `Hash scene media ${file} berubah.`;
+    }
+    await verifyStoredSceneMedia(path.join(sceneMediaDir, media.file), media);
+    return null;
+  } catch (error) { return error instanceof Error ? `Scene media tidak dapat dibaca: ${error.message}` : "Metadata video tersimpan tidak valid."; }
 }
 
 function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
@@ -1246,6 +1264,19 @@ app.get("/api/projects/:id", (request, response) => {
   response.json(project);
 });
 
+app.get("/api/projects/:id/scene-media-health", async (request, response) => {
+  const row = projectRow(request.params.id);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  const project = projectFromRow(row);
+  if (project.visualStoryboardError) return response.json({ errors: {} });
+  const results = await Promise.all(project.visualStoryboard.scenes.map(async (scene) => scene.sceneMedia
+    ? [scene.sceneId, await sceneMediaIntegrityError(scene.sceneMedia)] as const
+    : null));
+  const errors: Record<string, string> = {};
+  for (const result of results) if (result?.[1]) errors[result[0]] = result[1];
+  response.json({ errors });
+});
+
 app.post("/api/projects", (request, response) => {
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
@@ -1255,7 +1286,7 @@ app.post("/api/projects", (request, response) => {
   const requestId = requestIdResult?.success ? requestIdResult.data : null;
   const researchSha256 = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
   const now = new Date().toISOString();
-  const stored: StoredProject = { researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null, researchReviewStatus: "needs-review" };
+  const stored: StoredProject = { researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null, narrationMode: "unset", researchReviewStatus: "needs-review" };
   const create = () => {
     const id = randomUUID();
     db.prepare("INSERT INTO projects (id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -1279,11 +1310,25 @@ app.put("/api/projects/:id", async (request, response) => {
   if (activeProjectTasks.has(String(request.params.id)) || activeRenderJob || activeJobCreation) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
+  const narrationMode = request.body && Object.hasOwn(request.body, "narrationMode")
+    ? z.enum(["unset", "audio", "manual"]).safeParse(request.body.narrationMode)
+    : null;
+  if (narrationMode && !narrationMode.success) return apiError(response, 400, "Pilihan mode narasi tidak valid.", { code: "invalid-narration-mode" });
   const project = projectFromRow(row);
+  if (invalidStoryboardResponse(response, project)) return;
   const previousSceneMediaFiles = new Set(project.visualStoryboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia.file, scene.sceneMedia.posterFile] : []));
-  const storyboardResult = request.body?.visualStoryboard === undefined
-    ? { success: true as const, data: buildVisualStoryboard(parsed.data, project.visualStoryboard) }
-    : visualStoryboardSchema.safeParse(request.body.visualStoryboard);
+  let storyboardResult: ReturnType<typeof visualStoryboardSchema.safeParse>;
+  if (request.body?.visualStoryboard === undefined) {
+    try {
+      const sameSceneIds = project.researchPackage.scenes.length === parsed.data.scenes.length
+        && project.researchPackage.scenes.every((scene, index) => scene.id === parsed.data.scenes[index]?.id);
+      const timingChanged = sameSceneIds && project.researchPackage.scenes.some((scene, index) => scene.startSec !== parsed.data.scenes[index]?.startSec || scene.endSec !== parsed.data.scenes[index]?.endSec);
+      const priorBoard = timingChanged ? retimeVisualStoryboard(project.visualStoryboard, project.researchPackage, parsed.data) : project.visualStoryboard;
+      storyboardResult = visualStoryboardSchema.safeParse(buildVisualStoryboard(parsed.data, priorBoard));
+    } catch (error) {
+      return apiError(response, 400, "Visual Storyboard tidak dapat disinkronkan tanpa kehilangan data.", { code: "visual-storyboard-retime-failed", message: error instanceof Error ? error.message : "Data timing tidak valid." });
+    }
+  } else storyboardResult = visualStoryboardSchema.safeParse(request.body.visualStoryboard);
   if (!storyboardResult.success) return apiError(response, 400, "Visual Storyboard tidak valid.", { code: "invalid-visual-storyboard", issues: storyboardResult.error.issues });
   if (storyboardResult.data.scenes.length !== parsed.data.scenes.length || storyboardResult.data.scenes.some((scene, index) => scene.sceneId !== parsed.data.scenes[index]?.id || scene.durationSec !== Math.round(((parsed.data.scenes[index]?.endSec ?? 0) - (parsed.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)) {
     return apiError(response, 400, "Scene Visual Storyboard harus cocok dengan Research Package.", { code: "visual-storyboard-scene-mismatch" });
@@ -1311,6 +1356,7 @@ app.put("/api/projects/:id", async (request, response) => {
   const factsChanged = factReviewContent(project.researchPackage) !== factReviewContent(storyboardResearch.data);
   project.researchPackage = storyboardResearch.data;
   project.visualStoryboard = storyboard;
+  if (narrationMode?.success) project.narrationMode = narrationMode.data;
   if (factsChanged) project.researchReviewStatus = "needs-review";
   if (project.pendingTts && project.pendingTts.scriptSha256 !== createHash("sha256").update(narrationScript(parsed.data)).digest("hex")) project.pendingTts = null;
   const nextSceneMediaFiles = new Set(storyboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia.file, scene.sceneMedia.posterFile] : []));
@@ -1987,7 +2033,15 @@ app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request,
       return apiError(response, 404, "Project tidak ditemukan.");
     }
     const project = projectFromRow(row);
+    if (project.visualStoryboardError) {
+      await removeOrQueueCleanup("audio", request.file.path);
+      return apiError(response, 409, project.visualStoryboardError, { code: "invalid-visual-storyboard" });
+    }
     const previousUpload = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
+    const previousResearch = project.researchPackage;
+    const nextResearch = estimateSceneTimings(previousResearch, durationSec);
+    project.visualStoryboard = retimeVisualStoryboard(project.visualStoryboard, previousResearch, nextResearch);
+    project.researchPackage = nextResearch;
     project.audio = {
       file: `audio/${request.file.filename}`,
       name: request.file.originalname.slice(0, 200),
@@ -1995,8 +2049,9 @@ app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request,
       bytes: request.file.size,
       sha256,
       source: "upload",
-      timingMode: "scaled",
+      timingMode: "estimated",
     };
+    project.narrationMode = "audio";
     withTransaction(() => {
       saveProject(row.id, project);
       if (previousUpload && path.dirname(previousUpload) === audioDir) queueFileCleanup("audio", previousUpload);
@@ -2030,6 +2085,7 @@ app.delete("/api/projects/:id/audio", async (request, response) => {
   const project = projectFromRow(row);
   const previousUpload = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
   project.audio = null;
+  project.narrationMode = "unset";
   try {
     withTransaction(() => {
       saveProject(row.id, project);
@@ -2256,10 +2312,11 @@ app.post("/api/tts/test-voice", async (request, response) => {
   } catch (error) { sendTtsError(response, error); }
 });
 
-async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha256: string) {
+async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha256: string, timingDecision: "retime" | "keep-timeline") {
   const row = projectRow(projectId);
   if (!row) throw new SpeechProviderError("Project tidak ditemukan.", "project-not-found", 404);
   const project = projectFromRow(row);
+  if (project.visualStoryboardError) throw new SpeechProviderError(project.visualStoryboardError, "invalid-visual-storyboard", 409);
   if (project.pendingTts?.cacheKey !== asset.cache_key || project.pendingTts.scriptSha256 !== scriptSha256) {
     throw new SpeechProviderError("Preview berubah sebelum disetujui. Periksa preview terbaru.", "preview-changed", 409);
   }
@@ -2270,7 +2327,12 @@ async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha25
   if (!existsSync(ttsAudioPath)) throw new SpeechProviderError("Audio preview tidak ditemukan. Buat ulang pratinjau.", "audio-not-found", 410);
   if (await sha256File(ttsAudioPath) !== asset.audio_sha256) throw new SpeechProviderError("Audio preview rusak atau berubah. Buat ulang pratinjau.", "audio-integrity-failed", 409);
   const previousUpload = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
-  project.researchPackage = estimateSceneTimings(project.researchPackage, asset.duration_sec, asset.words_per_minute, asset.speaking_rate);
+  if (timingDecision === "retime") {
+    const previousResearch = project.researchPackage;
+    const nextResearch = estimateSceneTimings(previousResearch, asset.duration_sec, asset.words_per_minute, asset.speaking_rate);
+    project.visualStoryboard = retimeVisualStoryboard(project.visualStoryboard, previousResearch, nextResearch);
+    project.researchPackage = nextResearch;
+  }
   const audio: StoredAudio = {
     file: asset.file,
     name: `AI Voice · ${asset.voice_name}`,
@@ -2298,6 +2360,7 @@ async function attachTtsAudio(projectId: string, asset: TtsAssetRow, scriptSha25
   };
   project.pendingTts = null;
   project.audio = audio;
+  project.narrationMode = "audio";
   withTransaction(() => {
     saveProject(projectId, project);
     if (previousUpload && path.dirname(previousUpload) === audioDir) queueFileCleanup("audio", previousUpload);
@@ -2341,12 +2404,20 @@ app.post("/api/projects/:id/tts/approve", async (request, response) => {
   const row = projectRow(id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   const project = projectFromRow(row);
+  if (invalidStoryboardResponse(response, project)) return;
   if (!project.pendingTts) return apiError(response, 409, "Belum ada pratinjau narasi untuk digunakan.", { code: "no-pending-tts" });
   const asset = db.prepare("SELECT * FROM tts_assets WHERE cache_key = ?").get(project.pendingTts.cacheKey) as TtsAssetRow | undefined;
   if (!asset) return apiError(response, 410, "Audio preview tidak ditemukan. Buat pratinjau baru.", { code: "audio-not-found" });
+  const currentDurationSec = project.audio?.durationSec ?? project.researchPackage.targetDurationSec;
+  const durationChanged = Math.abs(currentDurationSec - asset.duration_sec) >= 0.01;
+  const parsedDecision = z.enum(["retime", "keep-timeline"]).optional().safeParse(request.body?.timingDecision);
+  if (!parsedDecision.success) return apiError(response, 400, "Pilihan timing narasi tidak valid.", { code: "invalid-tts-timing-decision" });
+  if (durationChanged && !parsedDecision.data) return apiError(response, 409, "Pilih cara menangani perubahan durasi sebelum menyetujui audio.", {
+    code: "tts-duration-decision-required", previousDurationSec: currentDurationSec, nextDurationSec: asset.duration_sec,
+  });
   activeProjectTasks.add(id);
   try {
-    response.json(await attachTtsAudio(row.id, asset, project.pendingTts.scriptSha256));
+    response.json(await attachTtsAudio(row.id, asset, project.pendingTts.scriptSha256, parsedDecision.data ?? "retime"));
   } catch (error) { sendTtsError(response, error); }
   finally { activeProjectTasks.delete(id); }
 });

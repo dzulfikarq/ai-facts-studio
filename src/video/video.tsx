@@ -5,7 +5,7 @@ import { timelineDuration, sceneTimes } from "../domain/timeline";
 import type { ResearchPackage, Scene } from "../domain/research";
 import type { VideoProps } from "./types";
 import type { VideoEditorInteractions } from "./types";
-import { sceneTransitionOpacity } from "./motion";
+import { sceneTransitionOpacity, sceneTransitionPlan } from "./motion";
 import { layerMotion } from "./motion";
 import { rendererRegistry } from "./renderer-registry";
 import { visualStyles } from "./style-config";
@@ -39,12 +39,22 @@ function captionLine(line: string, emphasis: string[], accent: string) {
   });
 }
 
-function SceneVisual({ scene, preset, progress, frame, opacity, editor }: { scene: Scene; preset: ResearchPackage["visualPreset"]; progress: number; frame: number; opacity: number; editor?: VideoEditorInteractions }) {
+type SceneTransitionCue = "dissolve" | "slide-transition" | "wipe";
+
+function SceneVisual({ scene, preset, progress, frame, opacity, editor, transitionCue, transitionProgress, transitionDirection, previousScene }: { scene: Scene; preset: ResearchPackage["visualPreset"]; progress: number; frame: number; opacity: number; editor?: VideoEditorInteractions; transitionCue?: SceneTransitionCue; transitionProgress?: number; transitionDirection?: "left" | "right" | "up" | "down"; previousScene?: boolean }) {
   const definition = rendererRegistry[scene.templateId];
   if (!definition) throw new Error(`No renderer registered for template '${scene.templateId}'.`);
   const Renderer = definition.component;
   const renderScene = scene.visualComposition ? scene : { ...scene, visualComposition: definition.defaultComposition() };
-  return <g opacity={opacity}>
+  const entering = !previousScene;
+  const direction = transitionDirection ?? "right";
+  const transitionFrame = transitionProgress ?? 1;
+  const slideSign = direction === "right" || direction === "down" ? 1 : -1;
+  const slideOffset = (entering ? 1 - transitionFrame : -transitionFrame) * slideSign;
+  const transform = transitionCue === "slide-transition"
+    ? direction === "left" || direction === "right" ? `translate(${slideOffset * 1080} 0)` : `translate(0 ${slideOffset * 1920})`
+    : undefined;
+  return <g opacity={opacity} transform={transform} clipPath={transitionCue === "wipe" && entering ? "url(#scene-transition-wipe)" : undefined}>
     <Renderer scene={renderScene} composition={renderScene.visualComposition} preset={preset} frame={frame} progress={progress} editor={editor}/>
   </g>;
 }
@@ -53,18 +63,24 @@ function mediaPosition(position: SceneMedia["position"]) {
   return position.split("-").join(" ");
 }
 
-function SceneMediaLayer({ media, startFrame, durationFrames, opacity, motionPlan, localFrame, progress }: { media: SceneMedia; startFrame: number; durationFrames: number; opacity: number; motionPlan: Scene["motionPlan"]; localFrame: number; progress: number }) {
+function SceneMediaLayer({ media, startFrame, durationFrames, opacity, motionPlan, localFrame, progress, transitionCue, transitionProgress, transitionDirection }: { media: SceneMedia; startFrame: number; durationFrames: number; opacity: number; motionPlan: Scene["motionPlan"]; localFrame: number; progress: number; transitionCue?: SceneTransitionCue; transitionProgress?: number; transitionDirection?: "left" | "right" | "up" | "down" }) {
   const trimIn = Math.round(media.trimInSec * 30);
   const trimOut = Math.max(trimIn + 1, Math.round(media.trimOutSec * 30));
   const mediaFrames = Math.max(1, trimOut - trimIn);
   const file = staticFile(`scene-media/${media.file}`);
   const style: React.CSSProperties = { width: "100%", height: "100%", objectFit: media.fit, objectPosition: mediaPosition(media.position) };
   const motion = layerMotion(motionPlan.map((plan) => ({ ...plan, targetLayer: "scene" })), "scene", 0.5, localFrame, progress);
+  const direction = transitionDirection ?? "right";
+  const offset = 100 * (1 - (transitionProgress ?? 1));
+  const transitionTransform = transitionCue === "slide-transition"
+    ? direction === "right" ? `translateX(${offset}%)` : direction === "left" ? `translateX(-${offset}%)` : direction === "down" ? `translateY(${offset}%)` : `translateY(-${offset}%)`
+    : undefined;
+  const clipRight = Math.max(100 * (1 - (transitionProgress ?? 1)), 100 * (1 - motion.reveal));
   const motionStyle: React.CSSProperties = {
     opacity: opacity * motion.opacity,
-    transform: `translate(${motion.translateX}px, ${motion.translateY}px) scale(${motion.scale})`,
+    transform: `${transitionTransform ? `${transitionTransform} ` : ""}translate(${motion.translateX}px, ${motion.translateY}px) scale(${motion.scale})`,
     transformOrigin: "center",
-    clipPath: motion.reveal < 1 ? `inset(0 ${100 * (1 - motion.reveal)}% 0 0)` : undefined,
+    clipPath: transitionCue === "wipe" || motion.reveal < 1 ? `inset(0 ${clipRight}% 0 0)` : undefined,
   };
   const video = () => <Video src={file} trimBefore={trimIn} trimAfter={trimOut} muted={!media.audioEnabled} style={style}/>;
   return <Sequence from={startFrame} durationInFrames={durationFrames} layout="none">
@@ -105,12 +121,15 @@ function findSceneIndex(research: ResearchPackage, durationSec: number, time: nu
   return next < 0 ? research.scenes.length - 1 : Math.max(0, next - 1);
 }
 
-export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile, audioDurationSec, audioTimingMode, editor }) => {
+export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile, audioDurationSec, audioTimingMode, rendererVersion, editor }) => {
   const frame = useCurrentFrame();
   const fps = 30;
-  const durationSec = timelineDuration(research, audioDurationSec);
+  const durationSec = rendererVersion !== undefined && rendererVersion < RENDERER_VERSION
+    ? audioDurationSec && audioDurationSec > 0 ? audioDurationSec : research.targetDurationSec
+    : timelineDuration(research, audioDurationSec, audioTimingMode);
   const time = frame / fps;
   const style = visualStyles[research.visualPreset];
+  const overlays = research.videoOverlaySettings ?? { showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: true, brandName: "AI FACTS STUDIO" };
   if (!research.scenes.length) return <AbsoluteFill style={{ backgroundColor: style.palette.canvas }} />;
 
   const activeIndex = findSceneIndex(research, durationSec, time, audioTimingMode);
@@ -118,10 +137,12 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
   const span = sceneTimes(research, scene, durationSec, audioTimingMode);
   const localFrame = Math.max(0, frame - Math.floor(span.startSec * fps));
   const progress = Math.max(0, Math.min(1, (time - span.startSec) / Math.max(.01, span.endSec - span.startSec)));
-  const transitionPlan = scene.motionPlan.find((plan) => plan.cue === "dissolve");
+  const activeTransition = sceneTransitionPlan(scene.motionPlan);
+  const transitionCue = activeTransition?.cue === "dissolve" || activeTransition?.cue === "slide-transition" || activeTransition?.cue === "wipe"
+    ? activeTransition.cue : "cut";
   const transition = sceneTransitionOpacity(scene.motionPlan, localFrame);
-  const titleLines = wrapText(scene.onScreenText, 42, 3);
-  const captionSegments = captionSegmentsForScene(scene);
+  const titleLines = overlays.showTitle ? wrapText(scene.onScreenText, 42, 3) : [];
+  const captionSegments = overlays.showSubtitles ? captionSegmentsForScene(scene) : [];
   const activeCaption = captionSegments.find((segment) => progress >= segment.startProgress && progress < segment.endProgress) ?? captionSegments.at(-1);
   const captionLines = activeCaption ? wrapText(activeCaption.text, 36, 2) : [];
   const captionSpan = activeCaption ? activeCaption.endProgress - activeCaption.startProgress : 1;
@@ -139,35 +160,40 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
   const progressY = 1920 - style.spacing.progressBottomInset;
   const footerY = 1920 - style.spacing.footerBottomInset;
   const titleEntrance = interpolate(frame, [span.startSec * fps, span.startSec * fps + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const previous = activeIndex > 0 && transitionPlan && transition < 1 ? research.scenes[activeIndex - 1] : undefined;
+  const previous = activeIndex > 0 && activeTransition && transitionCue !== "cut" && transition < 1 ? research.scenes[activeIndex - 1] : undefined;
   const previousSpan = previous ? sceneTimes(research, previous, durationSec, audioTimingMode) : null;
+  const visualTransitionCue = transitionCue === "cut" ? undefined : transitionCue;
+  const transitionOpacity = transitionCue === "dissolve" ? transition : 1;
+  const transitionDirection = ["left", "right", "up", "down"].includes(activeTransition?.direction ?? "")
+    ? activeTransition!.direction as "left" | "right" | "up" | "down" : "right";
 
   return <AbsoluteFill style={{ backgroundColor: style.palette.canvas, color: style.palette.text, fontFamily: style.bodyFont, overflow: "hidden" }}>
-    {previous?.sceneMedia && previousSpan && <AbsoluteFill style={{ opacity: 1 - transition }}><Img src={staticFile(`scene-media/${previous.sceneMedia.posterFile}`)} style={{ width: "100%", height: "100%", objectFit: previous.sceneMedia.fit, objectPosition: mediaPosition(previous.sceneMedia.position) }}/></AbsoluteFill>}
-    {scene.sceneMedia && <SceneMediaLayer media={scene.sceneMedia} startFrame={Math.floor(span.startSec * fps)} durationFrames={Math.max(1, Math.floor((span.endSec - span.startSec) * fps))} opacity={transition} motionPlan={scene.motionPlan} localFrame={localFrame} progress={progress}/>}
+    {previous?.sceneMedia && previousSpan && <AbsoluteFill style={{ opacity: transitionCue === "dissolve" ? 1 - transition : 1, transform: transitionCue === "slide-transition" ? `translate${transitionDirection === "up" || transitionDirection === "down" ? "Y" : "X"}(${(transitionDirection === "left" || transitionDirection === "up" ? 1 : -1) * transition * 100}%)` : undefined }}><Img src={staticFile(`scene-media/${previous.sceneMedia.posterFile}`)} style={{ width: "100%", height: "100%", objectFit: previous.sceneMedia.fit, objectPosition: mediaPosition(previous.sceneMedia.position) }}/></AbsoluteFill>}
+    {scene.sceneMedia && <SceneMediaLayer media={scene.sceneMedia} startFrame={Math.floor(span.startSec * fps)} durationFrames={Math.max(1, Math.floor((span.endSec - span.startSec) * fps))} opacity={transitionOpacity} motionPlan={scene.motionPlan} localFrame={localFrame} progress={progress} transitionCue={visualTransitionCue} transitionProgress={transition} transitionDirection={transitionDirection}/>}
     <svg width="100%" height="100%" viewBox="0 0 1080 1920" preserveAspectRatio="xMidYMid slice" aria-label={`${research.title}, scene ${activeIndex + 1}`}>
       <defs>
         <linearGradient id="engine-sky" x1="0" y1="0" x2="0" y2="1"><stop stopColor={style.palette.canvas}/><stop offset="1" stopColor={style.palette.surface}/></linearGradient>
         <linearGradient id="caption-shade" x1="0" y1="0" x2="0" y2="1"><stop stopColor={style.palette.canvas} stopOpacity="0"/><stop offset="1" stopColor={style.palette.canvas} stopOpacity=".92"/></linearGradient>
+        <clipPath id="scene-transition-wipe"><rect x="0" y="0" width={1080 * transition} height="1920"/></clipPath>
       </defs>
        {!scene.sceneMedia && <rect width="1080" height="1920" fill="url(#engine-sky)"/>}
-        {previous && !previous.sceneMedia && <SceneVisual key={`prev-${previous.id}`} scene={previous} preset={research.visualPreset} progress={1} frame={Math.max(0, Math.floor((previousSpan?.endSec ?? 0)*fps))} opacity={scene.sceneMedia ? 0 : 1-transition}/>}
-        {!scene.sceneMedia && <SceneVisual key={scene.id} scene={scene} preset={research.visualPreset} progress={progress} frame={localFrame} opacity={transition} editor={editor?.sceneId === scene.id ? editor : undefined}/>}
+         {previous && !previous.sceneMedia && <SceneVisual key={`prev-${previous.id}`} scene={previous} preset={research.visualPreset} progress={1} frame={Math.max(0, Math.floor((previousSpan?.endSec ?? 0)*fps))} opacity={transitionCue === "dissolve" ? 1-transition : 1} transitionCue={visualTransitionCue} transitionProgress={transition} transitionDirection={transitionDirection} previousScene/>}
+         {!scene.sceneMedia && <SceneVisual key={scene.id} scene={scene} preset={research.visualPreset} progress={progress} frame={localFrame} opacity={transitionOpacity} editor={editor?.sceneId === scene.id ? editor : undefined} transitionCue={visualTransitionCue} transitionProgress={transition} transitionDirection={transitionDirection}/>}
       <PresetDecorations preset={research.visualPreset} time={time}/>
       <rect x="0" y="0" width="1080" height="510" fill="url(#caption-shade)" opacity=".72"/>
       <rect x="0" y="1510" width="1080" height="410" fill="url(#caption-shade)"/>
-      <text x={style.safeArea.left} y={headerY} fill={style.palette.primary} fontSize="23" fontWeight="700" letterSpacing="4">AI FACTS STUDIO</text>
+       {overlays.showBranding && overlays.brandName && <text x={style.safeArea.left} y={headerY} fill={style.palette.primary} fontSize="23" fontWeight="700" letterSpacing="4">{overlays.brandName}</text>}
       <text x={1080-style.safeArea.right} y={headerY} textAnchor="end" fill={style.palette.muted} fontSize="21">{`${String(Math.floor(time/60)).padStart(2,"0")}:${String(Math.floor(time%60)).padStart(2,"0")}`}</text>
       <g opacity={titleEntrance} transform={`translate(0 ${interpolate(titleEntrance,[0,1],[24,0])})`}>
-        <text x={style.safeArea.left} y={categoryY} fill={style.palette.accent} fontSize="22" fontWeight="700" letterSpacing="3">{research.category.toUpperCase()}</text>
+         {overlays.showCategory && <text x={style.safeArea.left} y={categoryY} fill={style.palette.accent} fontSize="22" fontWeight="700" letterSpacing="3">{research.category.toUpperCase()}</text>}
         {titleLines.map((line,index)=><text key={index} x={style.safeArea.left} y={titleY+index*(titleFontSize+style.spacing.titleLineGap)} fill={style.palette.text} fontFamily={style.headingFont} fontSize={titleFontSize} fontWeight="800" stroke={style.palette.canvas} strokeOpacity=".28" strokeWidth="2" paintOrder="stroke">{line}</text>)}
       </g>
-      <text x={style.safeArea.left} y={sceneLabelY} fill={style.palette.primary} fontSize="20" fontWeight="700" letterSpacing="3">{`SCENE ${String(activeIndex+1).padStart(2,"0")} / ${String(research.scenes.length).padStart(2,"0")}`}</text>
+       {overlays.showSceneLabel && <text x={style.safeArea.left} y={sceneLabelY} fill={style.palette.primary} fontSize="20" fontWeight="700" letterSpacing="3">{`SCENE ${String(activeIndex+1).padStart(2,"0")} / ${String(research.scenes.length).padStart(2,"0")}`}</text>}
       <g opacity={captionOpacity} transform={`translate(0 ${interpolate(captionOpacity,[0,1],[8,0])})`}>
         {captionLines.map((line,index)=><text key={index} x={style.safeArea.left} y={captionY+index*style.spacing.captionLineGap} fill={style.palette.text} fontSize={style.captionFontSize+8} fontWeight="600" stroke={style.palette.canvas} strokeWidth="4" paintOrder="stroke">{captionLine(line, activeCaption?.emphasis ?? [], style.palette.accent)}</text>)}
       </g>
-      <rect x={style.safeArea.left} y={progressY} width={1080-style.safeArea.left-style.safeArea.right} height="3" rx="2" fill={style.palette.muted} opacity=".35"/>
-      <rect x={style.safeArea.left} y={progressY-2} width={(1080-style.safeArea.left-style.safeArea.right)*Math.max(0,Math.min(1,time/durationSec))} height="6" rx="3" fill={style.palette.accent}/>
+       {overlays.showProgress && <><rect x={style.safeArea.left} y={progressY} width={1080-style.safeArea.left-style.safeArea.right} height="3" rx="2" fill={style.palette.muted} opacity=".35"/>
+       <rect x={style.safeArea.left} y={progressY-2} width={(1080-style.safeArea.left-style.safeArea.right)*Math.max(0,Math.min(1,time/durationSec))} height="6" rx="3" fill={style.palette.accent}/></>}
       <text x={1080-style.safeArea.right} y={footerY} textAnchor="end" fill={style.palette.muted} fontSize="17">{research.title}</text>
     </svg>
     {audioFile ? <Audio src={staticFile(audioFile)} /> : null}

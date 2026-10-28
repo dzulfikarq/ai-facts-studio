@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { visualApprovalFingerprint, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
+import { parseResearchPackage } from "../src/domain/research";
 import { RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
@@ -67,8 +68,10 @@ function setPersistedAiMode(mode: "development" | "production") {
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
   env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", OPENCODE_SERVER_URL: "http://localhost:4096", OPENCODE_SERVER_PASSWORD: "smoke-password", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), VITE_PORT: String(vitePort), DATA_DIR: dataPath },
-  stdio: "ignore",
+  stdio: "pipe",
 });
+server.stdout?.pipe(process.stdout);
+server.stderr?.pipe(process.stderr);
 let serverExit: string | null = null;
 server.on("exit", (code, signal) => { serverExit = `exit ${code ?? "null"} signal ${signal ?? "null"}`; });
 server.on("error", (error) => { serverExit = error.message; });
@@ -216,6 +219,26 @@ try {
   assert.equal((await createIdempotently({ ...research, title: `${research.title} changed` })).status, 409, "request ID cannot be reused for a different project payload");
   assert.equal((await fetch(`${baseUrl}/api/projects/${firstIdempotentProject.id}`, { method: "DELETE" })).status, 200);
 
+  const recoveryProject = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
+  }).then((response) => response.json());
+  const recoveryDb = new DatabaseSync(databasePath);
+  const recoveryRow = recoveryDb.prepare("SELECT data_json FROM projects WHERE id = ?").get(recoveryProject.id) as { data_json: string };
+  const invalidData = JSON.parse(recoveryRow.data_json);
+  invalidData.visualStoryboard.scenes[0].sceneId = "preserved-invalid-scene-id";
+  recoveryDb.prepare("UPDATE projects SET data_json = ? WHERE id = ?").run(JSON.stringify(invalidData), recoveryProject.id);
+  recoveryDb.close();
+  const invalidProject = await fetch(`${baseUrl}/api/projects/${recoveryProject.id}`).then((response) => response.json());
+  assert.match(invalidProject.visualStoryboardError, /tidak cocok/i, "malformed storyboard reports recovery state");
+  assert.equal(invalidProject.visualStoryboard.scenes[0].sceneId, "preserved-invalid-scene-id", "malformed storyboard data stays intact on read");
+  const blockedWrite = await fetch(`${baseUrl}/api/projects/${recoveryProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: recoveryProject.researchPackage }),
+  });
+  assert.equal(blockedWrite.status, 409, "malformed storyboard blocks project writes");
+  assert.equal((await blockedWrite.json()).code, "invalid-visual-storyboard");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${recoveryProject.id}/audio`, { method: "DELETE" })).status, 409, "malformed storyboard blocks subresource mutation");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${recoveryProject.id}`, { method: "DELETE" })).status, 200, "project deletion remains available for recovery");
+
   const preparationProject = await fetch(`${baseUrl}/api/projects`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
   }).then((response) => response.json());
@@ -304,7 +327,9 @@ try {
   assert.equal(unselectedOpenverseImport.status, 502);
   assert.match(unselectedResult.error, /Pilih ulang gambar dari hasil pencarian Openverse/, "API import rejects IDs absent from active selected search results without an external request");
   const pngPath = path.join(tempDir, "illustration.png");
-  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=teal:s=128x96:d=1", "-frames:v", "1", "-y", pngPath]);
+  const fixtureSeed = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 6), 16);
+  const fixtureColor = (offset: number) => `0x${((fixtureSeed + offset * 7919) & 0xffffff).toString(16).padStart(6, "0")}`;
+  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${fixtureColor(1)}:s=128x96:d=1`, "-frames:v", "1", "-y", pngPath]);
   const pngBytes = await readFile(pngPath);
   const imageForm = new FormData();
   imageForm.append("illustration", new Blob([pngBytes], { type: "image/png" }), "ocean.png");
@@ -322,7 +347,7 @@ try {
   assetUploadPath = path.resolve("public/visual-assets", uploadedVisual.asset.file);
   assert.equal((await fetch(`${baseUrl}/visual-assets/${uploadedVisual.asset.file}`)).status, 200, "content-hash image route serves uploaded asset");
 
-  const batchColors = ["red", "blue", "green", "yellow", "purple"];
+  const batchColors = [2, 3, 4, 5, 6].map(fixtureColor);
   const batchForm = new FormData();
   const batchMetadata = [];
   for (const [index, color] of batchColors.entries()) {
@@ -349,7 +374,7 @@ try {
   assert.ok(batchUpload.results.every((entry: { asset: { source: string; provider: string; prompt: string } }, index: number) => entry.asset.source === "ai-generated" && entry.asset.provider === "Google Flow (manual import)" && entry.asset.prompt === `Prompt scene ${index + 1}`), "batch keeps per-file Flow metadata");
 
   const flowPngPath = path.join(tempDir, "flow-fixture.png");
-  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=purple:s=128x96:d=1", "-frames:v", "1", "-y", flowPngPath]);
+  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${fixtureColor(7)}:s=128x96:d=1`, "-frames:v", "1", "-y", flowPngPath]);
   const flowPngBytes = await readFile(flowPngPath);
   const flowForm = new FormData();
   flowForm.append("illustration", new Blob([flowPngBytes], { type: "image/png" }), "flow-scene-01.png");
@@ -543,7 +568,12 @@ try {
     });
     assert.equal(updated.status, 200, `project title should change for ${suffix} quota snapshot`);
   }
-  const first = await generate().then((response) => response.json());
+  const beforeRender = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  const researchCheck = parseResearchPackage(beforeRender.researchPackage);
+  assert.equal(researchCheck.success, true, `Research Package remains valid before render: ${researchCheck.success ? "" : JSON.stringify(researchCheck.error.issues)}`);
+  const firstResponse = await generate();
+  const first = await firstResponse.json();
+  assert.ok(first.job, `first render snapshot is created: ${JSON.stringify(first)}`);
   const second = await generate().then((response) => response.json());
   assert.equal(first.job.id, second.job.id, "unchanged snapshot should reuse idempotent job");
   assert.equal(first.job.rendererVersion, RENDERER_VERSION, "new snapshot should record current renderer version");

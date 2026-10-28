@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { visualApprovalFingerprint } from "../src/domain/visual-storyboard";
 
 const execFileAsync = promisify(execFile);
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-tts-smoke-"));
@@ -47,6 +48,7 @@ async function restartServer() {
   await waitForServer();
 }
 let projectId: string | undefined;
+let manualProjectId: string | undefined;
 const audioPaths = new Set<string>();
 let projectUploadPath: string | undefined;
 let jobAudioPath: string | undefined;
@@ -75,7 +77,8 @@ try {
   assert.equal(voices.configured, true);
   assert.ok(voices.voices.some((voice: { gender: string }) => voice.gender === "Female"));
   assert.ok(voices.voices.some((voice: { gender: string }) => voice.gender === "Male"));
-  const selection = { locale: "id-ID", voiceId: "Kore", style: "documentary", speakingRate: 1 };
+  const speakingRate = 0.7 + Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 6), 16) % 600 / 1000;
+  const selection = { locale: "id-ID", voiceId: "Kore", style: "documentary", speakingRate };
   const voiceSample = await fetch(`${baseUrl}/api/tts/test-voice`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(selection),
   }).then((response) => response.json());
@@ -162,7 +165,35 @@ try {
   assert.equal((await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "development" }) })).status, 200, "mode can be switched back without altering pending preview");
   await readFile(projectUploadPath);
 
-  const approvedResponse = await fetch(`${baseUrl}/api/projects/${projectId}/tts/approve`, { method: "POST" });
+  const timingDecisionRequired = await fetch(`${baseUrl}/api/projects/${projectId}/tts/approve`, { method: "POST" });
+  assert.equal(timingDecisionRequired.status, 409, "changed TTS duration requires explicit timeline choice");
+  assert.equal((await timingDecisionRequired.json()).code, "tts-duration-decision-required");
+  const beforeKeep = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  assert.equal(beforeKeep.audio.file, uploaded.audio.file, "active audio remains unchanged until timing decision");
+  const keptResponse = await fetch(`${baseUrl}/api/projects/${projectId}/tts/approve`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ timingDecision: "keep-timeline" }),
+  });
+  const kept = await keptResponse.json();
+  assert.equal(keptResponse.status, 200, kept.error);
+  assert.deepEqual(kept.project.researchPackage.scenes.map((scene: any) => [scene.startSec, scene.endSec]), beforeKeep.researchPackage.scenes.map((scene: any) => [scene.startSec, scene.endSec]), "keep-timeline preserves scene boundaries");
+  assert.equal(kept.project.audio.source, "tts");
+  assert.equal(kept.project.audioMatchesNarration, true);
+  await assert.rejects(readFile(projectUploadPath), "prior audio is replaced only after explicit approval");
+  audioPaths.add(path.resolve("public", kept.project.audio.file));
+
+  const replacementUploadForm = new FormData();
+  replacementUploadForm.append("audio", new Blob([await readFile(audioPath)], { type: "audio/wav" }), "voice-again.wav");
+  const replacementUpload = await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "POST", body: replacementUploadForm }).then((response) => response.json());
+  assert.equal(replacementUpload.audio.source, "upload");
+  projectUploadPath = path.resolve("public", replacementUpload.audio.file);
+  audioPaths.add(projectUploadPath);
+  const retimePreview = await fetch(`${baseUrl}/api/projects/${projectId}/tts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(replacementSelection),
+  }).then((response) => response.json());
+  assert.equal(retimePreview.project.audio.file, replacementUpload.audio.file);
+  const approvedResponse = await fetch(`${baseUrl}/api/projects/${projectId}/tts/approve`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ timingDecision: "retime" }),
+  });
   const approved = await approvedResponse.json();
   assert.equal(approvedResponse.status, 200, approved.error);
   assert.equal(approved.project.audio.source, "tts", "only explicit approval attaches the full narration");
@@ -183,7 +214,22 @@ try {
   assert.equal(restoredApproval.audio.tts.cacheKey, freshPreview.preview.cacheKey, "approved TTS audio survives API restart");
   assert.equal(restoredApproval.audioMatchesNarration, true);
 
-  const generatedJob = await fetch(`${baseUrl}/api/projects/${projectId}/generate`, { method: "POST" }).then((response) => response.json());
+  const reviewProject = await fetch(`${baseUrl}/api/projects/${projectId}`).then((response) => response.json());
+  const approvedBoard = {
+    ...reviewProject.visualStoryboard,
+    scenes: reviewProject.visualStoryboard.scenes.map((scene: any) => {
+      const approved = { ...scene, authoringStatus: scene.authoringStatus === "needs_review" ? "ready_for_review" : scene.authoringStatus, approved: true };
+      return { ...approved, approvedFingerprint: visualApprovalFingerprint(approved) };
+    }),
+  };
+  const approvalResponse = await fetch(`${baseUrl}/api/projects/${projectId}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: reviewProject.researchPackage, visualStoryboard: approvedBoard }),
+  });
+  assert.equal(approvalResponse.status, 200, `smoke fixture Visual Storyboard approvals persist: ${await approvalResponse.clone().text()}`);
+
+  const generatedResponse = await fetch(`${baseUrl}/api/projects/${projectId}/generate`, { method: "POST" });
+  const generatedJob = await generatedResponse.json();
+  assert.equal(generatedResponse.status, 201, `approved TTS project creates render snapshot: ${JSON.stringify(generatedJob)}`);
   assert.equal(generatedJob.job.state, "preview-ready");
   const snapshot = JSON.parse(await readFile(path.join(tempDir, "data", "jobs", generatedJob.job.id, "snapshot.json"), "utf8"));
   assert.equal(snapshot.audio.timingMode, "estimated");
@@ -236,9 +282,30 @@ try {
   assert.equal(renderedProjectAfterModeChange.latestJob.id, renderedProjectBeforeModeChange.latestJob.id, "mode change preserves render job");
   assert.equal(renderedProjectAfterModeChange.latestJob.state, "rendered", "mode change preserves completed render");
   await fetch(`${baseUrl}/api/settings/ai-generation`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "development" }) });
-  console.log(`PASS: AI mode persistence/isolation + mock Test Voice/cache + upload preservation + settings/edit/restart approval + immutable snapshot → ${completed.manifest.audioValidation} AAC (${completed.manifest.audioMeanVolumeDb} dB mean, ${completed.manifest.durationSec.toFixed(2)}s). Mock is tone, not speech.`);
+  const manualProject = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: sample }),
+  }).then((response) => response.json());
+  manualProjectId = manualProject.id;
+  const manualChosen = await fetch(`${baseUrl}/api/projects/${manualProjectId}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: manualProject.researchPackage, visualStoryboard: manualProject.visualStoryboard, narrationMode: "manual" }),
+  }).then((response) => response.json());
+  const manualPreview = await fetch(`${baseUrl}/api/projects/${manualProjectId}/tts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(selection),
+  }).then((response) => response.json());
+  audioPaths.add(path.resolve("public", manualPreview.preview.audioUrl.slice(1)));
+  const manualBoundaries = manualChosen.researchPackage.scenes.map((scene: any) => [scene.startSec, scene.endSec]);
+  const manualChoiceRequired = await fetch(`${baseUrl}/api/projects/${manualProjectId}/tts/approve`, { method: "POST" });
+  assert.equal(manualChoiceRequired.status, 409, "new TTS duration offers timing choice for manual-timing projects without prior audio");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${manualProjectId}`).then((response) => response.json())).audio, null, "manual project remains without audio until timing choice");
+  const manualKeep = await fetch(`${baseUrl}/api/projects/${manualProjectId}/tts/approve`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ timingDecision: "keep-timeline" }),
+  }).then((response) => response.json());
+  assert.deepEqual(manualKeep.project.researchPackage.scenes.map((scene: any) => [scene.startSec, scene.endSec]), manualBoundaries, "manual project can keep authored timing when adding first narration");
+  assert.equal(manualKeep.project.audio.source, "tts");
+  console.log(`PASS: AI mode persistence/isolation + mock Test Voice/cache + upload preservation + TTS retime/keep choices + manual timing + immutable snapshot → ${completed.manifest.audioValidation} AAC (${completed.manifest.audioMeanVolumeDb} dB mean, ${completed.manifest.durationSec.toFixed(2)}s). Mock is tone, not speech.`);
 } finally {
   await stopServer(server);
+  if (manualProjectId) await fetch(`${baseUrl}/api/projects/${manualProjectId}`, { method: "DELETE" }).catch(() => {});
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "DELETE" }).catch(() => {});
   await Promise.all([...audioPaths].map((file) => rm(file, { force: true })));
   if (jobAudioPath) await rm(jobAudioPath, { force: true });

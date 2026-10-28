@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { parseResearchPackage } from "../domain/research";
-import { buildVisualStoryboard, legacyMotionApprovalFingerprint, visualApprovalFingerprint, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { buildVisualStoryboard, legacyMotionApprovalFingerprint, retimeVisualStoryboard, visualApprovalFingerprint, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { aiGenerationSchema } from "./ai-generation/provider";
 import { visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
 
@@ -237,6 +237,8 @@ export type StoredProject = {
   audio: StoredAudio | null;
   pendingTts: { cacheKey: string; scriptSha256: string } | null;
   researchReviewStatus: "needs-review" | "verified-by-author";
+  narrationMode?: "unset" | "audio" | "manual";
+  visualStoryboardError?: string;
 };
 
 export type JobRow = {
@@ -259,6 +261,7 @@ export function projectFromRow(row: { id: string; data_json: string; created_at:
   const project = JSON.parse(row.data_json) as StoredProject;
   const normalizedResearch = parseResearchPackage(project.researchPackage);
   if (normalizedResearch.success) project.researchPackage = normalizedResearch.data;
+  const originalStoryboard = project.visualStoryboard === undefined ? undefined : structuredClone(project.visualStoryboard);
   const rawStoryboard = project.visualStoryboard as unknown as { scenes?: Array<Record<string, unknown>> };
   if (Array.isArray(rawStoryboard?.scenes)) project.visualStoryboard = {
     ...(project.visualStoryboard as unknown as Record<string, unknown>),
@@ -275,16 +278,44 @@ export function projectFromRow(row: { id: string; data_json: string; created_at:
     }),
   } as unknown as VisualStoryboard;
   const savedStoryboard = visualStoryboardSchema.safeParse(project.visualStoryboard);
-  project.visualStoryboard = normalizedResearch.success && savedStoryboard.success
-    && savedStoryboard.data.scenes.length === normalizedResearch.data.scenes.length
-    && savedStoryboard.data.scenes.every((scene, index) => scene.sceneId === normalizedResearch.data.scenes[index]?.id && scene.durationSec === Math.round(((normalizedResearch.data.scenes[index]?.endSec ?? 0) - (normalizedResearch.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)
-    ? {
-      ...savedStoryboard.data,
-      scenes: savedStoryboard.data.scenes.map((scene) => scene.approved && scene.approvedFingerprint === legacyMotionApprovalFingerprint(scene)
-        ? { ...scene, approvedFingerprint: visualApprovalFingerprint(scene) } : scene),
+  delete project.visualStoryboardError;
+  if (project.visualStoryboard === undefined && normalizedResearch.success) {
+    project.visualStoryboard = buildVisualStoryboard(normalizedResearch.data);
+  } else if (!normalizedResearch.success) {
+    project.visualStoryboardError = "Research Package tidak valid; Visual Storyboard asli dipertahankan dan tidak dapat disinkronkan.";
+    project.visualStoryboard = originalStoryboard as VisualStoryboard;
+  } else {
+    const matchesSceneIds = (scenes: readonly { sceneId: string }[]) => scenes.length === normalizedResearch.data.scenes.length
+      && scenes.every((scene, index) => scene.sceneId === normalizedResearch.data.scenes[index]?.id);
+    if (savedStoryboard.success && matchesSceneIds(savedStoryboard.data.scenes)) {
+      const normalizedBoard = {
+        ...savedStoryboard.data,
+        scenes: savedStoryboard.data.scenes.map((scene) => scene.approved && scene.approvedFingerprint === legacyMotionApprovalFingerprint(scene)
+          ? { ...scene, approvedFingerprint: visualApprovalFingerprint(scene) } : scene),
+      };
+      try {
+        project.visualStoryboard = normalizedBoard.scenes.every((scene, index) => scene.durationSec === Math.round(((normalizedResearch.data.scenes[index]?.endSec ?? 0) - (normalizedResearch.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)
+          ? normalizedBoard
+          : retimeVisualStoryboard(normalizedBoard, {
+            ...normalizedResearch.data,
+            scenes: normalizedBoard.scenes.map((visual, index) => {
+              const source = normalizedResearch.data.scenes[index]!;
+              const duration = Number(visual.durationSec);
+              return { ...source, startSec: 0, endSec: Number.isFinite(duration) && duration > 0 ? duration : source.endSec };
+            }),
+          } as typeof normalizedResearch.data, normalizedResearch.data);
+      } catch (error) {
+        project.visualStoryboard = originalStoryboard as VisualStoryboard;
+        project.visualStoryboardError = `Visual Storyboard tidak dapat disinkronkan dengan aman (${error instanceof Error ? error.message : "data tidak valid"}). Data asli dipertahankan; unduh backup sebelum perbaikan.`;
+      }
+    } else {
+      project.visualStoryboard = originalStoryboard as VisualStoryboard;
+      const detail = savedStoryboard.success ? "Scene ID atau urutan tidak cocok dengan Research Package." : savedStoryboard.error.issues[0]?.message ?? "skema tidak valid.";
+      project.visualStoryboardError = `Visual Storyboard tidak valid (${detail}). Data asli dipertahankan; unduh backup sebelum perbaikan.`;
     }
-    : normalizedResearch.success ? buildVisualStoryboard(normalizedResearch.data) : project.visualStoryboard;
+  }
   project.pendingTts ??= null;
+  project.narrationMode ??= project.audio ? "audio" : "unset";
   project.visualAssets = Array.isArray(project.visualAssets) ? project.visualAssets.flatMap((asset) => {
     const parsed = visualAssetSchema.safeParse(asset);
     return parsed.success ? [parsed.data] : [];

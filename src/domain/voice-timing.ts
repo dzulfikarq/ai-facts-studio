@@ -24,7 +24,14 @@ export function estimateSceneTimings(research: ResearchPackage, audioDurationSec
       ? audioDurationSec
       : Math.round((cursor + audioDurationSec * weights[index]! / weightTotal) * 1000) / 1000;
     cursor = endSec;
-    return { ...scene, startSec, endSec };
+    const oldFrames = Math.max(1, Math.floor((scene.endSec - scene.startSec) * 30));
+    const newFrames = Math.max(1, Math.floor((endSec - startSec) * 30));
+    const ratio = newFrames / oldFrames;
+    const motionActions = scene.motionActions.map((action) => {
+      const actionStart = Math.min(newFrames - 1, Math.max(0, Math.round(action.startFrame * ratio)));
+      return { ...action, startFrame: actionStart, durationFrames: Math.min(newFrames - actionStart, Math.max(1, Math.round(action.durationFrames * ratio))) };
+    });
+    return { ...scene, startSec, endSec, motionActions };
   });
   return { ...research, targetDurationSec: Math.max(1, Math.ceil(audioDurationSec)), scenes };
 }

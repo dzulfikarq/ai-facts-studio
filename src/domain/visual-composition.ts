@@ -173,7 +173,7 @@ export function updateVisualImageNode(composition: VisualComposition, nodeId: st
   return visualCompositionSchema.parse({ ...composition, layers });
 }
 
-export const motionCueIds = ["fadeIn", "slide", "scale", "pan", "zoom", "parallax", "reveal", "pulse", "cut", "dissolve"] as const;
+export const motionCueIds = ["fadeIn", "slide", "scale", "pan", "zoom", "parallax", "reveal", "pulse", "cut", "dissolve", "slide-transition", "wipe"] as const;
 export const motionEasings = ["linear", "easeIn", "easeOut", "easeInOut", "spring"] as const;
 export const motionDirections = ["left", "right", "up", "down", "in", "out", "both"] as const;
 
@@ -188,7 +188,7 @@ export const motionCuePlanSchema = z.object({
 }).strict().superRefine((plan, ctx) => {
   const directions = plan.cue === "zoom" ? ["in", "out"]
     : plan.cue === "parallax" ? ["left", "right", "up", "down", "both"]
-      : ["slide", "pan"].includes(plan.cue) ? ["left", "right", "up", "down"] : [];
+      : ["slide", "slide-transition", "pan"].includes(plan.cue) ? ["left", "right", "up", "down"] : [];
   if (plan.direction && !directions.includes(plan.direction)) ctx.addIssue({ code: "custom", message: `Arah tidak didukung untuk cue '${plan.cue}'.`, path: ["direction"] });
   if (plan.intensity !== undefined && !["slide", "scale", "pan", "zoom", "parallax", "pulse"].includes(plan.cue)) {
     ctx.addIssue({ code: "custom", message: `Intensitas tidak didukung untuk cue '${plan.cue}'.`, path: ["intensity"] });

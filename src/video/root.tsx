@@ -4,7 +4,7 @@ import { durationInFrames } from "../domain/timeline";
 import { defaultMotionPlan, defaultVisualComposition } from "../domain/visual-defaults";
 import { LegacyVideo } from "./legacy-video";
 import { MotionGraphicsVideo } from "./video";
-import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "./renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "./renderer-version";
 import type { VideoProps } from "./types";
 import { visualCompositionSchema } from "../domain/visual-composition";
 
@@ -21,14 +21,14 @@ const defaultProps: VideoProps = {
   research: {
     schemaVersion: "1.1", id: "preview", title: "AI Facts Studio", category: "Sains & Antariksa",
     visualPreset: "cinematic-parallax", language: "id-ID", targetDurationSec: 56, aspectRatio: "9:16",
-    narration: "", references: [], scenes: [defaultScene],
+    narration: "", videoOverlaySettings: { showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: true, brandName: "AI FACTS STUDIO" }, references: [], scenes: [defaultScene],
   },
 };
 
 export const VersionedVideo: React.FC<VideoProps> = (props) => {
   const rendererVersion = props.rendererVersion ?? LEGACY_RENDERER_VERSION;
   if (rendererVersion === LEGACY_RENDERER_VERSION) return <LegacyVideo {...props}/>;
-  if (rendererVersion === OLDER_RENDERER_VERSION || rendererVersion === PREVIOUS_RENDERER_VERSION || rendererVersion === RENDERER_VERSION) return <MotionGraphicsVideo {...props}/>;
+  if (rendererVersion === OLDEST_RENDERER_VERSION || rendererVersion === OLDER_RENDERER_VERSION || rendererVersion === PREVIOUS_RENDERER_VERSION || rendererVersion === RENDERER_VERSION) return <MotionGraphicsVideo {...props}/>;
   throw new Error(`Unsupported renderer version: ${rendererVersion}`);
 };
 
@@ -41,6 +41,6 @@ export const VideoRoot: React.FC = () => (
     fps={30}
     durationInFrames={56 * 30}
     defaultProps={defaultProps}
-    calculateMetadata={({ props }) => ({ durationInFrames: durationInFrames(props.research, props.audioDurationSec) })}
+    calculateMetadata={({ props }) => ({ durationInFrames: durationInFrames(props.research, props.audioDurationSec, props.rendererVersion === RENDERER_VERSION ? props.audioTimingMode : "scaled") })}
   />
 );

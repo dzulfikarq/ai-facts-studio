@@ -6,8 +6,7 @@ import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
 import { categories, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
-import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
-import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
+import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, retimeVisualStoryboard, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
 import type { VisualAsset } from "../domain/visual-assets";
@@ -21,7 +20,7 @@ import type { AiVectorIllustration } from "../domain/ai-vector-illustration";
 import type { VisualPreparationJob } from "../domain/visual-preparation";
 import type { MotionPreparationJob } from "../domain/motion-preparation";
 import { planSceneMotion, type MotionIntensity } from "../domain/motion-director";
-import { durationInFrames } from "../domain/timeline";
+import { durationInFrames, setSceneDuration } from "../domain/timeline";
 import { narrationScript } from "../domain/voice-timing";
 import { seedVolcanoVisualSample } from "../domain/volcano-visual-sample";
 import { previewInputProps } from "../video/video";
@@ -59,6 +58,8 @@ type Project = {
   id: string;
   researchPackage: ResearchPackage;
   visualStoryboard: VisualStoryboard;
+  visualStoryboardError?: string;
+  sceneMediaErrors?: Record<string, string>;
   visualPreparation: VisualPreparationJob | null;
   motionPreparation: MotionPreparationJob | null;
   visualAssets: VisualAsset[];
@@ -68,6 +69,7 @@ type Project = {
     tts?: { provider: string; model: string; cacheKey: string; scriptSha256: string; locale: string; voiceId: string; voiceName: string; gender: string; voiceAvailability: "api" | "fallback"; speakingRate: number; style: string; generatedAt: string; approvedAt?: string; alignment: "estimated" };
   } | null;
   pendingTts: { cacheKey: string; scriptSha256: string; audioUrl: string; durationSec: number; bytes: number; voiceName: string; locale: string; style: string; speakingRate: number; generatedAt: string } | null;
+  narrationMode: "unset" | "audio" | "manual";
   pendingTtsMatchesNarration: boolean;
   audioMatchesNarration: boolean;
   researchReviewStatus: "needs-review" | "verified-by-author";
@@ -99,6 +101,8 @@ type TtsPreview = { cacheKey: string; scriptSha256: string; audioUrl: string; du
 type Failure = Error & { code?: string; issues?: Array<{ path: Array<string | number>; message: string }>; nextAllowedAt?: string | null; retryAt?: string | null; quotaType?: string | null };
 type ConfirmationOptions = { title: string; message: string; content?: React.ReactNode; confirmLabel: string; cancelLabel?: string; tone?: "primary" | "warning" | "danger"; onConfirm?: () => Promise<void> };
 type PendingConfirmation = ConfirmationOptions & { resolve: (confirmed: boolean) => void; pending?: boolean; error?: string };
+type TtsTimingChoice = "retime" | "keep-timeline" | "cancel";
+type PendingTtsTiming = { previousDurationSec: number; nextDurationSec: number; hadActiveAudio: boolean; resolve: (choice: TtsTimingChoice) => void };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -170,6 +174,7 @@ function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
+  const [sceneMediaErrors, setSceneMediaErrors] = useState<Record<string, string>>({});
   const [research, setResearch] = useState<ResearchPackage | null>(null);
   const [jsonDraft, setJsonDraft] = useState("");
   const [status, setStatus] = useState<Status | null>(null);
@@ -201,6 +206,7 @@ function App() {
   const [testVoicePreview, setTestVoicePreview] = useState<TtsPreview | null>(null);
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null);
   const confirmationRef = useRef<PendingConfirmation | null>(null);
+  const [ttsTimingPrompt, setTtsTimingPrompt] = useState<PendingTtsTiming | null>(null);
   const createDraftUnsaved = useRef(false);
   const [createDraftUnsavedState, setCreateDraftUnsavedState] = useState(false);
   const popNavigationPending = useRef(false);
@@ -211,20 +217,21 @@ function App() {
 
   const selectedSceneId = route.view === "workspace" ? route.sceneId : null;
   const selectedScene = useMemo(() => research?.scenes.find((scene) => scene.id === selectedSceneId) ?? research?.scenes[0], [research, selectedSceneId]);
-  const visualResearch = useMemo(() => project && research ? applyVisualStoryboard(research, project.visualStoryboard) : research, [project?.visualStoryboard, project?.id, research]);
-  const visualGate = useMemo(() => project && visualResearch ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets) : null, [project?.visualStoryboard, project?.visualAssets, visualResearch]);
-  const visualApproved = Boolean(visualGate?.ready && project?.visualStoryboard.scenes.length && project.visualStoryboard.scenes.every((scene) => scene.approved));
+  const visualResearch = useMemo(() => project && research && !project.visualStoryboardError ? applyVisualStoryboard(research, project.visualStoryboard) : research, [project?.visualStoryboard, project?.visualStoryboardError, project?.id, research]);
+  const visualGate = useMemo(() => project && visualResearch && !project.visualStoryboardError ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets) : null, [project?.visualStoryboard, project?.visualStoryboardError, project?.visualAssets, visualResearch]);
+  const visualApproved = Boolean(visualGate?.ready && !Object.keys(sceneMediaErrors).length && project?.visualStoryboard.scenes.length && project.visualStoryboard.scenes.every((scene) => scene.approved));
   const reviewFingerprint = project && visualResearch ? previewReviewFingerprint(visualResearch, project.audio, RENDERER_VERSION) : "";
   const draftAudioMatches = !project?.audio || project.audio.source !== "tts" || Boolean(project.audioMatchesNarration && visualResearch && narrationScript(visualResearch) === narrationScript(project.researchPackage));
   const workflowSignals = {
     activeStep,
     hasResearch: Boolean(research),
     saved,
-    visualStoryboardReady: Boolean(visualGate?.ready),
+    visualStoryboardReady: Boolean(visualGate?.ready && !Object.keys(sceneMediaErrors).length),
     visualStoryboardApproved: visualApproved,
     hasAudio: Boolean(project?.audio),
     audioMatchesNarration: draftAudioMatches,
     hasPendingAudio: Boolean(project?.pendingTts),
+    narrationMode: project?.narrationMode ?? "unset",
     reviewVerified: project?.researchReviewStatus === "verified-by-author" && saved,
     hasWarnings: Boolean(research && researchWarnings(research).length),
     previewReviewed,
@@ -259,6 +266,7 @@ function App() {
 
   function hydrateProject(loaded: Project, requestedStep?: WorkspaceStep, requestedSceneId?: string | null): AppRoute {
     setProject(loaded);
+    setSceneMediaErrors(loaded.sceneMediaErrors ?? {});
     setResearch(loaded.researchPackage);
     setAudioMode(loaded.audio?.source === "tts" ? "ai" : "upload");
     setTtsLocale(loaded.audio?.tts?.locale ?? "id-ID");
@@ -268,20 +276,21 @@ function App() {
     setTtsRate(loaded.audio?.tts?.speakingRate ?? 1);
     setTtsVoices(null);
     setTtsLoading(false);
-    const loadedVisualResearch = applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
-    const loadedVisualGate = visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets);
-    const loadedVisualApproved = loadedVisualGate.ready && loaded.visualStoryboard.scenes.every((scene) => scene.approved);
+    const loadedVisualResearch = loaded.visualStoryboardError ? loaded.researchPackage : applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
+    const loadedVisualGate = loaded.visualStoryboardError ? null : visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets);
+    const loadedVisualApproved = Boolean(loadedVisualGate?.ready && !Object.keys(loaded.sceneMediaErrors ?? {}).length && loaded.visualStoryboard.scenes.every((scene) => scene.approved));
     const savedPreviewReview = storedPreviewReviewed(loaded.id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION));
     const savedStep = requestedStep ?? storedWorkspaceStep(loaded.id);
-    const reachableStep = reachableWorkspaceStep(savedStep, {
+    const reachableStep = loaded.visualStoryboardError ? "materials" : reachableWorkspaceStep(savedStep, {
       activeStep: savedStep,
       hasResearch: true,
       saved: true,
-      visualStoryboardReady: loadedVisualGate.ready,
+      visualStoryboardReady: Boolean(loadedVisualGate?.ready && !Object.keys(loaded.sceneMediaErrors ?? {}).length),
       visualStoryboardApproved: loadedVisualApproved,
       hasAudio: Boolean(loaded.audio),
       audioMatchesNarration: loaded.audio?.source !== "tts" || loaded.audioMatchesNarration,
       hasPendingAudio: Boolean(loaded.pendingTts),
+      narrationMode: loaded.narrationMode,
       reviewVerified: loaded.researchReviewStatus === "verified-by-author",
       hasWarnings: researchWarnings(loaded.researchPackage).length > 0,
       previewReviewed: savedPreviewReview,
@@ -304,7 +313,8 @@ function App() {
     setBusy(true);
     try {
       const loaded = await api<Project>(`/api/projects/${encodeURIComponent(projectId)}`);
-      const next = hydrateProject(loaded, step, sceneId);
+      const mediaHealth = loaded.visualStoryboardError ? { errors: {} } : await api<{ errors: Record<string, string> }>(`/api/projects/${encodeURIComponent(projectId)}/scene-media-health`);
+      const next = hydrateProject({ ...loaded, sceneMediaErrors: mediaHealth.errors }, step, sceneId);
       commitRoute(next, mode);
       return next;
     } finally { setBusy(false); }
@@ -558,6 +568,18 @@ function App() {
     commitRoute({ view: "dashboard" });
   }
 
+  function askTtsTimingDecision(previousDurationSec: number, nextDurationSec: number, hadActiveAudio: boolean) {
+    return new Promise<TtsTimingChoice>((resolve) => {
+      setTtsTimingPrompt({ previousDurationSec, nextDurationSec, hadActiveAudio, resolve });
+    });
+  }
+
+  function resolveTtsTimingDecision(choice: TtsTimingChoice) {
+    if (!ttsTimingPrompt) return;
+    setTtsTimingPrompt(null);
+    ttsTimingPrompt.resolve(choice);
+  }
+
   async function openProject(id: string, notice?: string, createAlreadyConfirmed = false, initialStep?: WorkspaceStep) {
     if (view === "workspace" && project?.id === id) return;
     if (ttsBusy || ttsLoading) return;
@@ -707,6 +729,9 @@ function App() {
     if (!project || !research) return;
     const prior = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
     if (!prior) return;
+    if (Object.hasOwn(change, "sceneMedia") && (!change.sceneMedia || change.sceneMedia.file !== prior.sceneMedia?.file)) {
+      setSceneMediaErrors((current) => { const next = { ...current }; delete next[sceneId]; return next; });
+    }
     const currentComposition = compositionForVisualScene(project.visualStoryboard, prior);
     const requestedComposition = change.compositionOverride ?? change.composition;
     const compositionChanged = Boolean(requestedComposition && JSON.stringify(requestedComposition) !== JSON.stringify(currentComposition));
@@ -1210,6 +1235,7 @@ function App() {
       approved: false,
       warnings: ["Klip Google Flow diimpor manual; tinjau gerakan, crop, durasi, dan audio sebelum approval.", ...(current.motionActions.length ? ["Motion Beat dipertahankan, tidak ditumpuk otomatis di atas klip video."] : [])],
     });
+    setSceneMediaErrors((current) => { const next = { ...current }; delete next[sceneId]; return next; });
     setMessage("Klip diterapkan ke scene aktif. Komposisi dan Motion Beat lain tetap; tinjau lalu simpan.");
     return true;
   }
@@ -1242,6 +1268,7 @@ function App() {
       approved: false,
       warnings: ["Visual statis dipulihkan; tinjau komposisi dan approval ulang."],
     });
+    setSceneMediaErrors((current) => { const next = { ...current }; delete next[sceneId]; return next; });
     setMessage("Klip dilepas sebagai visual aktif. Komposisi statis lama dipulihkan; simpan perubahan.");
   }
 
@@ -1308,6 +1335,11 @@ function App() {
         const storyboard: VisualStoryboard = { ...project.visualStoryboard, scenes };
         setProject((current) => current ? { ...current, visualStoryboard: storyboard } : current);
         setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
+        setSceneMediaErrors((current) => {
+          const next = { ...current };
+          for (const { scene } of imported) delete next[scene.sceneId];
+          return next;
+        });
         setSaved(false);
         setPreviewReviewed(false);
         setPreviewStarted(false);
@@ -1454,6 +1486,26 @@ function App() {
       cancelLabel: "Pertahankan komposisi",
       tone: "warning",
     });
+  }
+
+  function updateSceneDuration(sceneId: string, durationSec: number) {
+    if (!research || !project) return;
+    try {
+      const nextResearch = setSceneDuration(research, sceneId, durationSec);
+      const nextStoryboard = retimeVisualStoryboard(project.visualStoryboard, research, nextResearch);
+      setResearch(nextResearch);
+      setProject((current) => current ? { ...current, researchPackage: nextResearch, visualStoryboard: nextStoryboard } : current);
+      setSaved(false);
+      setPreviewReviewed(false);
+      setPreviewStarted(false);
+    } catch (error) { setMessage(friendlyError(error)); }
+  }
+
+  function updateOverlaySettings(change: Partial<ResearchPackage["videoOverlaySettings"]>) {
+    setResearch((current) => current ? { ...current, videoOverlaySettings: { ...current.videoOverlaySettings, ...change } } : current);
+    setSaved(false);
+    setPreviewReviewed(false);
+    setPreviewStarted(false);
   }
 
   async function selectVisualLibraryAsset(sceneId: string, assetId: string, placement: AssetPlacement) {
@@ -1622,6 +1674,12 @@ function App() {
         currentProject = updated;
         currentSaved = true;
       }
+      if (step === "visual" && !currentSaved) {
+        const updated = await saveProject();
+        if (!updated) { navigateWorkspaceStep("visual", "replace"); return; }
+        currentProject = updated;
+        currentSaved = true;
+      }
       const canAdvance = canAdvanceWorkspaceStep(step, {
         ...workflowSignals,
         activeStep: step,
@@ -1630,7 +1688,7 @@ function App() {
       });
       if (!canAdvance) {
         navigateWorkspaceStep(step, "replace");
-        setMessage(step === "materials" ? "Simpan storyboard sebelum lanjut." : step === "visual" ? "Perbaiki quality gate, lalu approve setiap scene Visual Storyboard." : step === "narration" ? "Audio AI Voice tidak sesuai dengan naskah terbaru. Buat dan setujui preview narasi baru." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Motion sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
+        setMessage(step === "materials" ? "Simpan materi sebelum lanjut." : step === "narration" ? "Setujui audio yang cocok, atau pilih durasi manual tanpa narasi." : step === "visual" ? "Perbaiki quality gate, lalu approve setiap scene Visual Storyboard." : step === "editor" ? "Simpan perubahan editor sebelum lanjut." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Video sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
         return;
       }
     }
@@ -1660,7 +1718,7 @@ function App() {
       setPreviewStarted(false);
       setAudioMode("upload");
       await refresh();
-      setMessage(`Audio siap · ${updated.audio?.durationSec.toFixed(1)} dtk. Timing scene disesuaikan secara proporsional; caption tetap per-scene.`);
+      setMessage(`Audio siap · ${updated.audio?.durationSec.toFixed(1)} dtk. Timing scene memakai estimasi berbobot dari naskah.`);
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }
@@ -1676,6 +1734,24 @@ function App() {
       await refresh();
       setMessage("Audio dilepas.");
     } catch (error) { setMessage(friendlyError(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function chooseManualTiming() {
+    if (!project || !research || project.audio || busy || ttsBusy) return;
+    setBusy(true);
+    try {
+      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", {
+        researchPackage: research, visualStoryboard: project.visualStoryboard, narrationMode: "manual",
+      }));
+      setProject(updated);
+      setResearch(updated.researchPackage);
+      setSaved(true);
+      setPreviewReviewed(false);
+      setPreviewStarted(false);
+      setMessage("Mode durasi manual dipilih. Tidak ada layanan TTS yang dipanggil.");
+      navigateWorkspaceStep("visual");
+    } catch (error) { setTtsMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }
 
@@ -1745,7 +1821,13 @@ function App() {
     setTtsBusy(true);
     setTtsMessage("");
     try {
-      const result = await api<{ project: Project }>(`/api/projects/${project.id}/tts/approve`, { method: "POST" });
+      const previousDurationSec = project.audio?.durationSec ?? project.researchPackage.targetDurationSec;
+      const durationChanged = Math.abs(previousDurationSec - project.pendingTts.durationSec) >= 0.01;
+      const timingDecision = durationChanged
+        ? await askTtsTimingDecision(previousDurationSec, project.pendingTts.durationSec, Boolean(project.audio))
+        : "retime";
+      if (timingDecision === "cancel") return;
+      const result = await api<{ project: Project }>(`/api/projects/${project.id}/tts/approve`, jsonRequest("POST", { timingDecision }));
       setProject(result.project);
       setResearch(result.project.researchPackage);
       setSaved(true);
@@ -1753,7 +1835,9 @@ function App() {
       setPreviewStarted(false);
       setTestVoicePreview(null);
       await refresh();
-      setTtsMessage("Audio disetujui dan dipakai untuk preview video. Buat snapshot baru sebelum render.");
+      setTtsMessage(timingDecision === "keep-timeline"
+        ? "Audio disetujui. Timing scene dipertahankan; sesuaikan durasi manual di Video Editor."
+        : "Audio disetujui. Timing awal diselaraskan secara estimasi berbobot; visual tetap dipertahankan.");
     } catch (error) { setTtsMessage(friendlyError(error)); }
     finally { setTtsBusy(false); }
   }
@@ -1875,7 +1959,7 @@ function App() {
   const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
 
-  return <div className={`app-shell ${view === "workspace" && activeStep === "visual" ? "editor-active" : ""}`}>
+  return <div className={`app-shell ${view === "workspace" && ["visual", "editor"].includes(activeStep) ? "editor-active" : ""}`}>
     <main className="main-area">
       <header className="topbar">
         <div className="topbar-left">
@@ -1887,7 +1971,7 @@ function App() {
           </nav>
         </div>
         <div className="topbar-actions">
-          {view === "workspace" && activeStep !== "visual" && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
+          {view === "workspace" && !["visual", "editor"].includes(activeStep) && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
           <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "create" ? "page" : undefined} aria-label="Buat video" title="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>
           <ThemeSwitcher preference={theme} onChange={setTheme} />
           <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>
@@ -1936,8 +2020,8 @@ function App() {
         onTheme={setTheme}
       />}
 
-      {view === "workspace" && project && research && <section className={`page layout-container workspace-page ${activeStep === "visual" ? "video-editor-workspace" : ""}`}>
-        {activeStep !== "visual" && <div className="workspace-heading">
+      {view === "workspace" && project && research && <section className={`page layout-container workspace-page ${["visual", "editor"].includes(activeStep) ? "video-editor-workspace" : ""}`}>
+        {!["visual", "editor"].includes(activeStep) && <div className="workspace-heading">
           <div><div className="eyebrow">VIDEO WORKSPACE <span className="crumb-dot">/</span> LANGKAH {currentStepIndex + 1} DARI {workspaceSteps.length}</div>
             <input className="title-input" aria-label="Judul video" value={research.title} onChange={(event) => updateResearch((current) => ({ ...current, title: event.target.value }))} />
             <div className="meta-line"><span>{research.scenes.length} scenes</span><i />{project.audio ? <span>Audio {project.audio.durationSec.toFixed(1)} dtk</span> : <span>Audio belum ditambahkan</span>}<i /><span>9:16 · 1080 × 1920</span></div>
@@ -1945,9 +2029,14 @@ function App() {
         </div>}
 
         <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />
-        <div className={`workspace-step-panel ${activeStep === "visual" ? "video-editor-step-panel" : ""}`}>
-          {activeStep !== "visual" && <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>}
+        <div className={`workspace-step-panel ${["visual", "editor"].includes(activeStep) ? "video-editor-step-panel" : ""}`}>
+          {!["visual", "editor"].includes(activeStep) && <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>}
 
+          {project.visualStoryboardError ? <div className="storyboard-recovery-card" role="alert"><span className="eyebrow">DATA VISUAL DILINDUNGI</span><h2>Visual Storyboard perlu dipulihkan</h2><p>{project.visualStoryboardError}</p><p>Project tidak dimuat dengan visual pengganti. Data asli tetap tersimpan dan semua perubahan ditahan.</p><button type="button" className="button button-primary" onClick={() => {
+            const backup = new Blob([JSON.stringify({ id: project.id, researchPackage: project.researchPackage, visualStoryboard: project.visualStoryboard, visualAssets: project.visualAssets }, null, 2)], { type: "application/json" });
+            const href = URL.createObjectURL(backup);
+            const link = document.createElement("a"); link.href = href; link.download = `${project.id}-visual-storyboard-backup.json`; link.click(); URL.revokeObjectURL(href);
+          }}>Unduh backup project</button></div> : <>
           {activeStep === "materials" && <div className="workspace-step-content materials-content">
             <div className="story-column">
               <div className="section-title"><div><h2>Storyboard</h2><p>Pilih scene untuk edit teks, narasi, timing, dan sumber.</p></div><span className="count-chip">{research.scenes.length} SCENES</span></div>
@@ -1956,7 +2045,7 @@ function App() {
                   <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
                 </button>)}
               </div>
-              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} onEditMotion={() => { selectScene(selectedScene.id); void goToStep("visual"); }} />}
+              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} />}
             </div>
             <aside className="materials-aside">
               <div className="project-details-card">
@@ -1975,7 +2064,9 @@ function App() {
             </aside>
           </div>}
 
-          {activeStep === "visual" && <VideoEditorV2
+          {(["visual", "editor"].includes(activeStep)) && <VideoEditorV2
+            workspaceMode={activeStep as "visual" | "editor"}
+            backLabel={activeStep === "editor" ? "Visual" : "Narasi"}
             research={research}
             storyboard={project.visualStoryboard}
             gate={visualGate!}
@@ -1984,12 +2075,16 @@ function App() {
             generatingSceneId={generatingVisualSceneId}
             assets={project.visualAssets}
             projectId={project.id}
+            sceneMediaErrors={sceneMediaErrors}
             audio={project.audio}
             selectedSceneId={selectedSceneId}
             onSelectScene={selectScene}
             onTitleChange={(title) => updateResearch((current) => ({ ...current, title }))}
-            onBack={() => navigateWorkspaceStep("materials")}
-            onExport={() => void goToStep("render")}
+            onDurationChange={updateSceneDuration}
+            onCaptionSegmentsChange={(sceneId, segments) => updateScene(sceneId, (scene) => ({ ...scene, captionSegments: segments }))}
+            onOverlaySettingsChange={updateOverlaySettings}
+            onBack={() => void goToStep(activeStep === "editor" ? "visual" : "narration")}
+            onExport={() => void goToStep(activeStep === "visual" ? "editor" : "render")}
             onSave={() => void saveProject()}
             onChange={updateVisualScene}
             onMotionDirectionChange={(sceneId, motionPlan) => updateScene(sceneId, (current) => ({ ...current, motionCues: motionPlan.map((plan) => plan.cue), motionPlan }))}
@@ -2046,7 +2141,7 @@ function App() {
           />}
 
           {activeStep === "narration" && <div className="workspace-step-content single narration-step">
-            <div className="audio-step-intro"><strong>{project.audio ? `Audio aktif · ${project.audio.source === "tts" ? project.audio.tts?.voiceName ?? "AI Voice" : project.audio.name}` : "Belum ada audio aktif"}</strong><span>Kandidat AI Voice tidak mengganti audio aktif sampai Anda menyetujuinya. Membuka langkah ini tidak menjalankan synthesis.</span></div>
+            <div className="audio-step-intro"><strong>{project.audio ? `Audio aktif · ${project.audio.source === "tts" ? project.audio.tts?.voiceName ?? "AI Voice" : project.audio.name}` : project.narrationMode === "manual" ? "Mode durasi manual aktif" : "Belum ada audio aktif"}</strong><span>Kandidat AI Voice tidak mengganti audio aktif sampai Anda menyetujuinya. Membuka langkah ini tidak menjalankan synthesis.</span></div>
             <section className="audio-source-card">
               <div className="audio-source-tabs" role="group" aria-label="Sumber voice-over">
                 <button type="button" aria-pressed={audioMode === "ai"} className={audioMode === "ai" ? "selected" : ""} onClick={() => { setAudioMode("ai"); setTtsMessage(""); }}>Generate dengan AI Voice</button>
@@ -2089,6 +2184,7 @@ function App() {
                 onRemove={() => void removeAudio()}
               /> : <UploadPanel project={project} busy={busy} onUpload={(file) => void uploadAudio(file)} onRemove={() => void removeAudio()} />}
             </section>
+            {!project.audio && <div className="manual-narration-choice"><div><strong>Tanpa narasi?</strong><span>Gunakan durasi manual dari storyboard dan edit timing di Video Editor. Tidak ada request TTS.</span></div><button type="button" className={`button ${project.narrationMode === "manual" ? "button-light" : "button-primary"}`} onClick={() => void chooseManualTiming()} disabled={busy || project.narrationMode === "manual"}>{project.narrationMode === "manual" ? "Durasi manual dipilih" : "Gunakan durasi manual"}</button></div>}
           </div>}
 
           {activeStep === "review" && <ReviewStep
@@ -2106,7 +2202,7 @@ function App() {
                 ref={previewPlayer}
                 component={VersionedVideo}
                 inputProps={previewInputProps(visualResearch!, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, RENDERER_VERSION)}
-                durationInFrames={durationInFrames(research, project.audio?.durationSec)}
+                durationInFrames={durationInFrames(research, project.audio?.durationSec, project.audio?.timingMode)}
                 compositionWidth={1080}
                 compositionHeight={1920}
                 fps={30}
@@ -2143,17 +2239,19 @@ function App() {
             </div>
           </div>}
 
-          {activeStep !== "visual" && <div className="workflow-navigation">
+          {!["visual", "editor"].includes(activeStep) && <div className="workflow-navigation">
             <span>{saved ? "Semua perubahan tersimpan." : "Perubahan tersimpan saat lanjut dari Materi & Storyboard."}</span>
             <div className="workflow-navigation-actions">
               {currentStepIndex > 0 && <button type="button" className="button button-light" onClick={() => void goToStep(workspaceSteps[currentStepIndex - 1]!.id)} disabled={busy}>← Kembali</button>}
               {currentStepIndex < workspaceSteps.length - 1 && <button type="button" className="button button-primary" onClick={() => void goToStep(workspaceSteps[currentStepIndex + 1]!.id)} disabled={busy}>Lanjut <b>→</b></button>}
             </div>
           </div>}
+          </>}
         </div>
       </section>}
     </main>
     {confirmation && <ConfirmationDialog key="confirmation" options={confirmation} onResolve={resolveConfirmation} />}
+    {ttsTimingPrompt && <TtsTimingDialog options={ttsTimingPrompt} onResolve={resolveTtsTimingDecision} />}
   </div>;
 }
 
@@ -2332,6 +2430,50 @@ function ConfirmationDialog({ options, onResolve }: { options: PendingConfirmati
   </div>;
 }
 
+function TtsTimingDialog({ options, onResolve }: { options: PendingTtsTiming; onResolve: (choice: TtsTimingChoice) => void }) {
+  const dialog = useRef<HTMLElement>(null);
+  const retimeButton = useRef<HTMLButtonElement>(null);
+  const onResolveRef = useRef(onResolve);
+  onResolveRef.current = onResolve;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    retimeButton.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onResolveRef.current("cancel");
+      } else if (event.key === "Tab") {
+        const focusable = [...(dialog.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (first && last && (event.shiftKey && document.activeElement === first || !event.shiftKey && document.activeElement === last)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, []);
+
+  return <div className="confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onResolve("cancel"); }}>
+    <section ref={dialog} tabIndex={-1} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="tts-timing-title" aria-describedby="tts-timing-message">
+      <div className="confirm-symbol warning" aria-hidden="true"><Clock3 size={20} /></div>
+      <div className="confirm-copy"><span className="confirm-eyebrow">DURASI NARASI BERUBAH</span><h2 id="tts-timing-title">Pilih cara mengatur timeline</h2><p id="tts-timing-message">{options.hadActiveAudio ? "Audio aktif tetap dipakai sampai pilihan disimpan. " : "Timeline saat ini tetap dipakai sampai pilihan disimpan. "}Durasi berubah dari {options.previousDurationSec.toFixed(1)} menjadi {options.nextDurationSec.toFixed(1)} detik.</p></div>
+      <div className="confirm-content"><p><strong>Retiming scene</strong> menghitung ulang durasi berbobot dari naskah dan mempertahankan visual, Motion Beat, serta approval.</p><p><strong>Pertahankan timeline</strong> memakai durasi scene saat ini; audio baru mungkin lebih pendek atau panjang.</p></div>
+      <div className="confirm-actions">
+        <button className="confirm-cancel" onClick={() => onResolve("cancel")}>Batal</button>
+        <button className="confirm-cancel" onClick={() => onResolve("keep-timeline")}>Pertahankan timeline</button>
+        <button ref={retimeButton} className="confirm-submit" onClick={() => onResolve("retime")}>Retiming scene</button>
+      </div>
+    </section>
+  </div>;
+}
+
 function renderQuotaValue(status: Status | null, mode: AiGenerationMode | null) {
   if (!status || !mode) return "Memuat quota…";
   return mode === "development" ? "Render Lokal — Unlimited" : `${status.jobsUsed}/${status.dailyLimit} job per 24 jam`;
@@ -2456,15 +2598,13 @@ function UploadPanel({ project, busy, onUpload, onRemove }: { project: Project; 
       <label className="button button-light upload-button">{project.audio ? "Ganti" : "Pilih audio"}<input type="file" accept="audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" disabled={busy} onChange={(event) => onUpload(event.target.files?.[0])} /></label>
     </div>
     {project.audio && <div className="tts-audio-preview"><span>Pratinjau voice-over</span><audio controls preload="metadata" src={`/${project.audio.file}`} aria-label="Pratinjau audio upload" /><button className="text-button danger-text" onClick={onRemove} disabled={busy}>Lepas</button></div>}
-    <p className="upload-note">Audio di-probe dengan ffprobe. Timing scene diskalakan memakai durasi aktual; koreksi manual tersedia.</p>
+    <p className="upload-note">Audio di-probe dengan ffprobe. Timing awal memakai estimasi berbobot dari naskah; koreksi manual tersedia di Edit Video.</p>
   </div>;
 }
 
-function SceneEditor({ scene, references, onChange, onEditMotion }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void; onEditMotion: () => void }) {
+function SceneEditor({ scene, references, onChange }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void }) {
   const [compositionDraft, setCompositionDraft] = useState(JSON.stringify(scene.visualComposition, null, 2));
   const [compositionError, setCompositionError] = useState("");
-  const [captionDraft, setCaptionDraft] = useState(JSON.stringify(captionSegmentsForScene(scene), null, 2));
-  const [captionError, setCaptionError] = useState("");
 
   function editComposition(value: string) {
     setCompositionDraft(value);
@@ -2481,34 +2621,13 @@ function SceneEditor({ scene, references, onChange, onEditMotion }: { scene: Sce
     } catch { setCompositionError("JSON komposisi belum lengkap/valid."); }
   }
 
-  function editCaptionSegments(value: string) {
-    setCaptionDraft(value);
-    try {
-      const parsed = captionSegmentsSchema.safeParse(JSON.parse(value));
-      if (!parsed.success) { setCaptionError(parsed.error.issues[0]?.message ?? "Caption segments tidak valid."); return; }
-      setCaptionError("");
-      onChange((current) => ({ ...current, captionSegments: parsed.data }));
-    } catch { setCaptionError("JSON caption segments belum lengkap/valid."); }
-  }
-
-  function useAutoCaptionSegments() {
-    const generated = captionSegmentsForScene({ ...scene, captionSegments: undefined });
-    setCaptionDraft(JSON.stringify(generated, null, 2));
-    setCaptionError("");
-    onChange((current) => ({ ...current, captionSegments: undefined }));
-  }
-
   function changeNarration(value: string) {
     const next = { ...scene, narrationText: value, captionSegments: undefined };
-    const generated = captionSegmentsForScene(next);
-    setCaptionDraft(JSON.stringify(generated, null, 2));
-    setCaptionError("");
     onChange(() => next);
   }
 
   function changeOnScreenText(value: string) {
     const next = { ...scene, onScreenText: value };
-    if (!scene.captionSegments) setCaptionDraft(JSON.stringify(captionSegmentsForScene(next), null, 2));
     onChange(() => next);
   }
 
@@ -2519,19 +2638,9 @@ function SceneEditor({ scene, references, onChange, onEditMotion }: { scene: Sce
       <label><span>Narration / caption</span><textarea rows={3} maxLength={2000} placeholder="Tulis narasi untuk scene ini" value={scene.narrationText} onChange={(event) => changeNarration(event.target.value)} /></label>
     </section>
     <fieldset className="scene-reference-picker"><legend>Sumber klaim</legend>{references.length ? references.map((reference) => <label key={reference.id}><input type="checkbox" checked={scene.referenceIds.includes(reference.id)} onChange={(event) => onChange((current) => ({ ...current, referenceIds: event.target.checked ? [...current.referenceIds, reference.id] : current.referenceIds.filter((id) => id !== reference.id) }))} /><span><strong>{reference.title}</strong><small>{reference.publisher}</small></span></label>) : <small>Tambahkan referensi lewat Research Package JSON.</small>}</fieldset>
-    <details className="advanced-editor"><summary><span><strong>Advanced scene controls</strong><small>Visual direction, timing, motion, dan subtitle</small></span><b aria-hidden="true">⌄</b></summary>
+    <details className="advanced-editor"><summary><span><strong>Advanced scene controls</strong><small>Arahan visual editorial</small></span><b aria-hidden="true">⌄</b></summary>
       <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Visual direction</h3><p>Catatan editorial; bukan prompt generasi gambar.</p></div>
         <label><span>Deskripsi visual</span><textarea rows={3} maxLength={500} placeholder="Contoh: lapisan batuan terlihat dari samping" value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>
-      </section>
-      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Timing</h3><p>Atur rentang scene dalam video.</p></div>
-        <div className="timing-fields"><label><span>Mulai (detik)</span><input type="number" min="0" max="120" step="0.5" value={scene.startSec} onChange={(event) => onChange((current) => ({ ...current, startSec: Number(event.target.value) }))} /></label><label><span>Akhir (detik)</span><input type="number" min="0.5" max="120" step="0.5" value={scene.endSec} onChange={(event) => onChange((current) => ({ ...current, endSec: Number(event.target.value) }))} /></label></div>
-      </section>
-      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Motion Direction</h3><p>Ringkasan read-only. Edit timing dan efek di Video Editor.</p></div>
-        <p>{scene.motionPlan.filter((plan) => plan.cue !== "cut" && plan.cue !== "dissolve").map((plan) => plan.cue.replace(/([A-Z])/g, " $1")).join(" · ") || "Tanpa gerakan tambahan"} · Transisi {scene.motionPlan.some((plan) => plan.cue === "dissolve") ? "Dissolve" : "Cut"}</p>
-        <button type="button" className="button button-light" onClick={onEditMotion}>Edit di Video Editor</button>
-      </section>
-      <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Caption phrases</h3><p>Sesuaikan frasa dan timing subtitle.</p></div>
-        <details className="visual-json-editor"><summary>{scene.captionSegments ? "Edit caption phrases" : "Atur caption phrases"} · {scene.captionSegments ? "manual timing" : "estimasi otomatis"}</summary><textarea rows={7} spellCheck={false} value={captionDraft} onChange={(event) => editCaptionSegments(event.target.value)} aria-label="JSON caption phrases" /><div className="caption-editor-note">Timing frasa 0–1 dalam scene; bukan word-level sync. <button type="button" className="text-button" onClick={useAutoCaptionSegments}>Pakai segmentasi otomatis</button></div>{captionError && <span role="alert">{captionError}</span>}</details>
       </section>
       <div className="advanced-technical-controls"><details className="visual-json-editor"><summary>Structured visual · {scene.visualComposition.layers.length} layer</summary><textarea rows={10} spellCheck={false} value={compositionDraft} onChange={(event) => editComposition(event.target.value)} aria-label="JSON visual composition" />{compositionError && <span role="alert">{compositionError}</span>}</details></div>
       <div className="cue-line">SFX metadata · belum diputar <span>{scene.sfxCues.join(" · ") || "none"}</span></div>

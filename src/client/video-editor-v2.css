@@ -49,6 +49,12 @@
 .editor-canvas-toolbar .button { min-height: 42px; font-size: 12px; }
 .editor-canvas-toolbar .button.selected { border-color: var(--primary); color: var(--primary-text); }
 .editor-canvas-shell { position: relative; height: min(52vh, 610px); width: auto; max-width: 100%; aspect-ratio: 9 / 16; flex: 0 1 auto; align-self: center; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 7px; background: #101018; box-shadow: var(--shadow-md); }
+.editor-media-error { position: absolute; z-index: 4; inset: auto 8px 8px; display: grid; gap: 4px; max-height: 45%; overflow: auto; padding: 10px; border: 1px solid var(--danger); border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.editor-media-error small { color: inherit; }
+.editor-thumbnail-media-error { display: grid; place-content: center; width: 100%; height: 100%; padding: 18px; color: var(--danger); font: 700 26px/1.4 "Plus Jakarta Sans", sans-serif; text-align: center; overflow-wrap: anywhere; }
+.editor-overlay-settings { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); }
+.editor-overlay-settings legend { padding: 0 4px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.editor-overlay-settings>label:not(.editor-field) { display: flex; align-items: center; gap: 8px; min-height: 42px; color: var(--text-primary); font-size: 13px; }
 .editor-canvas-shell>div { width: 100% !important; height: 100% !important; }
 .editor-safe-guide { position: absolute; z-index: 3; border: 1px dashed var(--primary); box-shadow: 0 0 0 100vmax rgb(0 0 0 / .035); pointer-events: none; }
 .editor-transport { min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 8px; }

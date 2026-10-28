@@ -69,9 +69,10 @@ try {
   const mp4Path = path.join(tempDir, "moving-flow.mp4");
   const gifPath = path.join(tempDir, "moving-flow.gif");
   const imagePath = path.join(tempDir, "static-flow.png");
-  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=24:duration=1.4", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-movflags", "+faststart", "-y", mp4Path]);
-  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x480:rate=12:duration=1.4", "-filter_complex", "[0:v]split[a][b];[a]palettegen[p];[b][p]paletteuse", "-loop", "0", "-y", gifPath]);
-  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x8254ce:s=720x1280:d=1", "-frames:v", "1", "-y", imagePath]);
+  const fixtureHue = Number.parseInt(randomUUID().slice(0, 6), 16) % 360;
+  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=size=360x640:rate=24:duration=1.4,hue=h=${fixtureHue}`, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-movflags", "+faststart", "-y", mp4Path]);
+  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=size=320x480:rate=12:duration=1.4,hue=h=${fixtureHue}`, "-filter_complex", "[0:v]split[a][b];[a]palettegen[p];[b][p]paletteuse", "-loop", "0", "-y", gifPath]);
+  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=0x${fixtureHue.toString(16).padStart(6, "0")}:s=720x1280:d=1`, "-frames:v", "1", "-y", imagePath]);
 
   apiServer = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
     cwd: root,
@@ -166,7 +167,7 @@ try {
     return { ...approved, approvedFingerprint: visualApprovalFingerprint(approved) };
   });
   const saved = await fetch(`${apiUrl}/api/projects/${created.id}`, {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: fresh.researchPackage, visualStoryboard: normalizedBoard }),
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: fresh.researchPackage, visualStoryboard: normalizedBoard, narrationMode: "manual" }),
   });
   const persisted = await json<any>(saved);
   assert.deepEqual(persisted.visualStoryboard.scenes.map((scene: any) => Boolean(scene.sceneMedia)), [true, true, false], "project persists two animated clips plus separate static illustration");
@@ -233,7 +234,7 @@ try {
 
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "animated clip Motion Direction controls");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Tanpa gerakan tambahan"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Tanpa efek · Cut"))?.click());
   assert.ok(await seekEditor(15), "motion-free clip can be scrubbed");
   const staticClipMotion = await page.evaluate(() => {
     const canvas = document.querySelector<HTMLElement>(".editor-canvas-shell");
@@ -315,6 +316,19 @@ try {
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.getAttribute("aria-label") === "Putar video"), "editor playback pauses");
   assert.ok(playedTime >= playState.videoTime, `video playback time advances after seek/play: ${playState.videoTime} → ${playedTime}`);
+  latest = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
+  const reapprovedBoard = {
+    ...latest.visualStoryboard,
+    scenes: latest.visualStoryboard.scenes.map((scene: any) => {
+      const approved = { ...scene, authoringConfirmed: true, authoringStatus: "ready_for_review", approved: true, flowStatus: "approved" };
+      return { ...approved, approvedFingerprint: visualApprovalFingerprint(approved) };
+    }),
+  };
+  await json(await fetch(`${apiUrl}/api/projects/${created.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: latest.researchPackage, visualStoryboard: reapprovedBoard, narrationMode: "manual" }),
+  }));
+  await page.goto({ url: editorUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-inspector-tabs button")].some((button) => button.textContent?.trim() === "Gerak")), "approved Visual Storyboard unlocks Edit Video step");
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[2]?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-inspector-scene")?.textContent?.includes("SCENE 03") ?? false), "static image scene selection");
   assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-canvas-shell image").length > 0), "static imported image remains separate from video scene media");
@@ -322,7 +336,9 @@ try {
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Tanpa gerakan tambahan"))?.click());
   await seekEditor(135);
   const staticImageTransform = await page.evaluate(() => document.querySelector<SVGGElement>('.editor-canvas-shell svg g[transform*="translate(540 960)"]')?.getAttribute("transform") ?? "");
-  assert.ok(await setMotionCue("pan", true) && await setMotionControl('.editor-motion-parameters select', "right"), "static raster image accepts targeted Pan effect");
+  const panEnabled = await setMotionCue("pan", true);
+  const panDirectionSet = await setMotionControl('.editor-motion-parameters select', "right");
+  assert.ok(panEnabled && panDirectionSet, `static raster image accepts targeted Pan effect: ${JSON.stringify({ panEnabled, panDirectionSet, ui: await page.evaluate(() => ({ tabs: [...document.querySelectorAll(".editor-inspector-tabs button")].map((button) => button.textContent?.trim()), effects: [...document.querySelectorAll(".editor-motion-effect")].map((item) => item.getAttribute("data-cue")), parameters: document.querySelector(".editor-motion-parameters")?.textContent?.slice(0, 120) })) })}`);
   await seekEditor(135);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   const animatedImageTransform = await page.evaluate(() => document.querySelector<SVGGElement>('.editor-canvas-shell svg g[transform*="translate(540 960)"]')?.getAttribute("transform") ?? "");
@@ -365,6 +381,14 @@ try {
   assert.deepEqual(renderSnapshot.research.scenes.map((scene: any) => Boolean(scene.sceneMedia)), [true, true, false], "immutable render snapshot keeps animated media separate from static composition");
   assert.deepEqual(renderSnapshot.research.scenes[0].motionPlan, latest.researchPackage.scenes[0].motionPlan, "MP4 snapshot uses exact Motion Direction plan preview used");
   assert.equal(renderSnapshot.research.scenes[0].sceneMedia.shortClip, "loop", "render snapshot captures loop selection");
+  await rm(path.join(root, "public/scene-media", mp4Media.file), { force: true });
+  const mediaHealth = await fetch(`${apiUrl}/api/projects/${created.id}/scene-media-health`).then((response) => json<any>(response));
+  assert.match(mediaHealth.errors[sceneIds[0]], /tidak tersedia/i, "missing Flow media surfaces an integrity error");
+  const blockedSnapshot = await fetch(`${apiUrl}/api/projects/${created.id}/generate`, { method: "POST" });
+  assert.equal(blockedSnapshot.status, 409, "missing Flow media cannot silently fall back during render snapshot creation");
+  assert.equal((await blockedSnapshot.json()).code, "scene-media-integrity-failed");
+  await page.goto({ url: editorUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".editor-media-error[role=alert]"))), "missing Flow media displays editor alert without composition fallback");
   const deleted = await fetch(`${apiUrl}/api/projects/${created.id}`, { method: "DELETE" });
   assert.equal(deleted.status, 200, "project deletion succeeds after completed render");
   const deleteResult = await deleted.json() as { cleanupPending: number | null };

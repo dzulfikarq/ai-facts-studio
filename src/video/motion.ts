@@ -21,7 +21,7 @@ export function cueProgress(plan: MotionCuePlan, localFrame: number, fps = 30) {
 export function layerMotion(plans: MotionCuePlan[], layerId: string, depth: number, localFrame: number, progress: number): LayerMotion {
   const state: LayerMotion = { opacity: 1, translateX: 0, translateY: 0, scale: 1, reveal: 1 };
   for (const plan of plans) {
-    if (!["all", "scene", layerId].includes(plan.targetLayer) || plan.cue === "cut" || plan.cue === "dissolve") continue;
+    if (!["all", "scene", layerId].includes(plan.targetLayer) || isSceneTransitionPlan(plan)) continue;
     const t = cueProgress(plan, localFrame);
     const intensity = plan.intensity ?? 1;
     const direction = plan.direction ?? (plan.cue === "slide" ? "up" : plan.cue === "pan" ? "left" : plan.cue === "zoom" ? "in" : "both");
@@ -59,10 +59,17 @@ export function layerMotion(plans: MotionCuePlan[], layerId: string, depth: numb
   return state;
 }
 
+export function isSceneTransitionPlan(plan: MotionCuePlan) {
+  return plan.cue === "cut" || plan.cue === "dissolve" || plan.cue === "slide-transition" || plan.cue === "wipe";
+}
+
+export function sceneTransitionPlan(plans: MotionCuePlan[]) {
+  return plans.find(isSceneTransitionPlan);
+}
+
 export function sceneTransitionOpacity(plans: MotionCuePlan[], localFrame: number) {
-  if (plans.some((plan) => plan.cue === "cut")) return 1;
-  const dissolve = plans.find((plan) => plan.cue === "dissolve");
-  return dissolve ? cueProgress(dissolve, localFrame) : 1;
+  const transition = sceneTransitionPlan(plans);
+  return !transition || transition.cue === "cut" ? 1 : cueProgress(transition, localFrame);
 }
 
 export function carriedMotionProgress(sceneOrder: number, activationOrder: number, action: MotionAction | undefined, frame: number, fallback = 0) {

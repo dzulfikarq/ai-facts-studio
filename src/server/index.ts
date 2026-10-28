@@ -3,7 +3,7 @@ import express from "express";
 import multer from "multer";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +19,7 @@ import type { MotionPreparationJob, MotionPreparationScene } from "../domain/mot
 import { motionIntensitySchema, planSceneMotion } from "../domain/motion-director";
 import { trustedImageAssets } from "../domain/visual-composition";
 import { visualAssetSchema, type VisualAsset, type VisualLibraryEntry } from "../domain/visual-assets";
+import { sceneMediaSchema, type SceneMedia } from "../domain/scene-media";
 import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
@@ -32,6 +33,7 @@ import { AiGenerationRequestError } from "./ai-generation/quota";
 import { getAiGenerationSettings, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "./ai-generation/provider";
 import { DEFAULT_HF_IMAGE_MODEL, HF_IMAGE_RESOLUTIONS, HuggingFaceImageError, HuggingFaceInferenceImageProvider, discoverHuggingFaceImageModels, huggingFaceImageConfiguration } from "./ai-generation/huggingface-image";
 import { validateAndOptimizeRasterImage } from "./visual-asset-processing";
+import { validateAndNormalizeSceneMedia, verifyStoredSceneMedia } from "./scene-media-processing";
 import { validateRasterImage } from "../domain/visual-assets";
 import { prepareSmartVisual, type ReusableCandidate } from "./visual-orchestrator";
 import { assetFtsExpression, backfillVisualAssetCatalog, fetchOpenverseThumbnail, indexTablerIcons, sanitizedTablerSvg, searchOpenverse, searchTablerIcons, upsertVisualAssetCatalog, downloadOpenverseImage } from "./asset-library";
@@ -42,11 +44,12 @@ const app = express();
 const root = process.cwd();
 const audioDir = path.resolve(root, "public/audio");
 const visualAssetDir = path.resolve(root, "public/visual-assets");
+const sceneMediaDir = path.resolve(root, "public/scene-media");
 const jobDir = path.join(dataDir, "jobs");
 const renderDir = path.resolve(root, "renders");
 const samplePath = path.resolve(root, "samples/mountain-formation.json");
 const volcanoSamplePath = path.resolve(root, "samples/volcano-formation.json");
-const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir, "visual-assets": visualAssetDir };
+const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir, "visual-assets": visualAssetDir, "scene-media": sceneMediaDir };
 type CleanupRoot = keyof typeof cleanupRoots;
 const maxUploadMb = Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 100));
 const dailyLimit = Math.max(1, Number(process.env.DAILY_JOB_LIMIT ?? 1));
@@ -93,9 +96,19 @@ const illustrationBatchUpload = multer({
   limits: { fileSize: 11 * 1024 * 1024, files: 30, fields: 1, parts: 31, fieldSize: 1024 * 1024 },
   fileFilter: (_request, _file, done) => done(null, true),
 });
+const sceneMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, done) => {
+    const extension = path.extname(file.originalname).toLowerCase();
+    if ((file.mimetype === "video/mp4" && extension === ".mp4") || (file.mimetype === "image/gif" && extension === ".gif")) return done(null, true);
+    done(new Error("Pilih MP4 atau GIF animasi dengan MIME dan ekstensi yang cocok."));
+  },
+});
 
 await mkdir(audioDir, { recursive: true });
 await mkdir(visualAssetDir, { recursive: true });
+await mkdir(sceneMediaDir, { recursive: true });
 await mkdir(jobDir, { recursive: true });
 await mkdir(renderDir, { recursive: true });
 indexTablerIcons(db);
@@ -114,6 +127,7 @@ function snapshotForProject(project: StoredProject): RenderSnapshot {
   return {
     research: applyVisualStoryboard(project.researchPackage, project.visualStoryboard),
     visualAssets: project.visualAssets.filter((asset) => referencedAssetIds.has(asset.id)),
+    sceneMedia: project.visualStoryboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia] : []),
     rendererVersion: RENDERER_VERSION,
     audio: project.audio ? {
       file: `audio/jobs/${project.audio.sha256}${extension}`,
@@ -529,10 +543,33 @@ function illustrationBatchUploadMiddleware(request: express.Request, response: e
   });
 }
 
+function sceneMediaUploadMiddleware(request: express.Request, response: express.Response, next: express.NextFunction) {
+  sceneMediaUpload.single("media")(request, response, (error) => {
+    if (!error) return next();
+    const status = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    apiError(response, status, error instanceof Error ? error.message : "Klip gagal diunggah.", { code: "invalid-scene-media-upload" });
+  });
+}
+
 async function sha256File(filePath: string) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest("hex");
+}
+
+async function sceneMediaIntegrityError(media: SceneMedia) {
+  const parsed = sceneMediaSchema.safeParse(media);
+  if (!parsed.success) return "Metadata scene media tidak valid.";
+  for (const [file, checksum] of [[media.file, media.sha256], [media.posterFile, media.posterSha256]] as const) {
+    const filePath = path.resolve(sceneMediaDir, file);
+    if (path.dirname(filePath) !== sceneMediaDir || !existsSync(filePath)) return `File scene media ${file} tidak tersedia.`;
+    const expectedBytes = file === media.file ? media.bytes : media.posterBytes;
+    if ((await stat(filePath)).size !== expectedBytes) return `Ukuran scene media ${file} tidak cocok dengan metadata.`;
+    if (await sha256File(filePath) !== checksum) return `Hash scene media ${file} berubah.`;
+  }
+  try { await verifyStoredSceneMedia(path.join(sceneMediaDir, media.file), media); }
+  catch (error) { return error instanceof Error ? error.message : "Metadata video tersimpan tidak valid."; }
+  return null;
 }
 
 function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
@@ -541,7 +578,8 @@ function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
   const relativePath = path.relative(base, target);
   if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)
     || rootName === "audio" && path.dirname(target) !== audioDir
-    || rootName === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))) {
+    || rootName === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))
+    || rootName === "scene-media" && (path.dirname(target) !== sceneMediaDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))) {
     throw new Error("Cleanup path keluar dari direktori yang diizinkan.");
   }
   db.prepare("INSERT OR IGNORE INTO file_cleanup_queue (root, relative_path, created_at) VALUES (?, ?, ?)")
@@ -554,6 +592,28 @@ function projectReferencesVisualAsset(file: string, excludingProjectId?: string)
   return rows.some((row) => {
     try { return (JSON.parse(row.data_json) as StoredProject).visualAssets?.some((asset) => asset.file === file); }
     catch { return false; }
+  });
+}
+
+function projectReferencesSceneMedia(file: string, excludingProjectId?: string) {
+  const rows = db.prepare(excludingProjectId ? "SELECT id, data_json FROM projects WHERE id <> ?" : "SELECT id, data_json FROM projects")
+    .all(...(excludingProjectId ? [excludingProjectId] : [])) as Array<{ id: string; data_json: string }>;
+  return rows.some((row) => {
+    try { return (JSON.parse(row.data_json) as StoredProject).visualStoryboard.scenes.some((scene) => scene.sceneMedia && [scene.sceneMedia.file, scene.sceneMedia.posterFile].includes(file)); }
+    catch { return false; }
+  });
+}
+
+function snapshotReferencesSceneMedia(file: string) {
+  const rows = db.prepare("SELECT snapshot_path FROM jobs").all() as Array<{ snapshot_path: string }>;
+  return rows.some((row) => {
+    const snapshotPath = path.resolve(row.snapshot_path);
+    if (!snapshotPath.startsWith(`${jobDir}${path.sep}`)) return false;
+    try {
+      const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8")) as RenderSnapshot;
+      return snapshot.sceneMedia?.some((media) => media.file === file || media.posterFile === file)
+        || snapshot.research.scenes.some((scene) => scene.sceneMedia && [scene.sceneMedia.file, scene.sceneMedia.posterFile].includes(file));
+    } catch { return false; }
   });
 }
 
@@ -669,6 +729,52 @@ async function writeVisualAssetFile(asset: VisualAsset, bytes: Buffer) {
   catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== expectedHash) throw error;
     return false;
+  }
+}
+
+async function writeSceneMediaFile(media: SceneMedia, bytes: Buffer, poster: Buffer) {
+  const entries = [
+    { file: media.file, checksum: media.sha256, bytes, maxBytes: 150 * 1024 * 1024 },
+    { file: media.posterFile, checksum: media.posterSha256, bytes: poster, maxBytes: 2 * 1024 * 1024 },
+  ];
+  const created: string[] = [];
+  try {
+    for (const entry of entries) {
+      if (createHash("sha256").update(entry.bytes).digest("hex") !== entry.checksum || entry.bytes.length > entry.maxBytes) throw new Error("Hash atau ukuran file scene media tidak cocok dengan metadata.");
+      const destination = path.join(sceneMediaDir, entry.file);
+      try { await writeFile(destination, entry.bytes, { flag: "wx" }); created.push(entry.file); }
+      catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== entry.checksum) throw error;
+      }
+    }
+  } catch (error) {
+    await Promise.all(created.map((file) => rm(path.join(sceneMediaDir, file), { force: true })));
+    throw error;
+  }
+  return created;
+}
+
+async function createTrimmedSceneMediaPoster(media: SceneMedia) {
+  const workingDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-scene-poster-"));
+  try {
+    const outputPath = path.join(workingDir, "poster.jpg");
+    const lastFrameSec = Math.max(media.trimInSec, media.trimOutSec - 1 / media.frameRate);
+    await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", path.join(sceneMediaDir, media.file), "-ss", lastFrameSec.toFixed(6), "-map", "0:v:0", "-frames:v", "1", "-q:v", "3", "-pix_fmt", "yuvj420p", "-threads", "1", "-f", "image2", "-y", outputPath], { timeout: 30_000, maxBuffer: 1024 * 1024 });
+    const bytes = await readFile(outputPath);
+    if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("Poster frame hasil trim tidak valid.");
+    const checksum = createHash("sha256").update(bytes).digest("hex");
+    return { file: `${checksum}.jpg`, sha256: checksum, bytes: bytes.length, buffer: bytes };
+  } finally { await rm(workingDir, { recursive: true, force: true }); }
+}
+
+async function writeSceneMediaPosterFile(file: string, checksum: string, bytes: Buffer) {
+  if (!/^[a-f0-9]{64}\.jpg$/.test(file) || file !== `${checksum}.jpg` || bytes.length > 2 * 1024 * 1024 || createHash("sha256").update(bytes).digest("hex") !== checksum) {
+    throw new Error("Hash atau ukuran poster scene media tidak valid.");
+  }
+  const destination = path.join(sceneMediaDir, file);
+  try { await writeFile(destination, bytes, { flag: "wx" }); }
+  catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST") || await sha256File(destination) !== checksum) throw error;
   }
 }
 
@@ -800,8 +906,9 @@ async function runFileCleanupQueue() {
     const target = base ? path.resolve(base, item.relative_path) : "";
     const relative = base ? path.relative(base, target) : "";
     if (!base || !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
-      || item.root === "audio" && path.dirname(target) !== audioDir
-      || item.root === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))) {
+       || item.root === "audio" && path.dirname(target) !== audioDir
+       || item.root === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))
+       || item.root === "scene-media" && (path.dirname(target) !== sceneMediaDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))) {
       db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
         .run("Cleanup path invalid/outside allowed root.", item.root, item.relative_path);
       continue;
@@ -819,6 +926,15 @@ async function runFileCleanupQueue() {
       if (item.root === "visual-assets" && reusableSceneReferencesVisualAsset(path.basename(target))) {
         db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
           .run("Asset masih dirujuk reusable scene.", item.root, item.relative_path);
+        continue;
+      }
+      if (item.root === "scene-media" && projectReferencesSceneMedia(path.basename(target))) {
+        db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
+        continue;
+      }
+      if (item.root === "scene-media" && snapshotReferencesSceneMedia(path.basename(target))) {
+        db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+          .run("Scene media masih dirujuk snapshot render.", item.root, item.relative_path);
         continue;
       }
       await rm(target, { recursive: true, force: true });
@@ -1157,13 +1273,14 @@ app.post("/api/projects", (request, response) => {
   response.status(created.replay ? 200 : 201).json(getProject(created.id));
 });
 
-app.put("/api/projects/:id", (request, response) => {
+app.put("/api/projects/:id", async (request, response) => {
   const row = projectRow(request.params.id);
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   if (activeProjectTasks.has(String(request.params.id)) || activeRenderJob || activeJobCreation) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
   const project = projectFromRow(row);
+  const previousSceneMediaFiles = new Set(project.visualStoryboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia.file, scene.sceneMedia.posterFile] : []));
   const storyboardResult = request.body?.visualStoryboard === undefined
     ? { success: true as const, data: buildVisualStoryboard(parsed.data, project.visualStoryboard) }
     : visualStoryboardSchema.safeParse(request.body.visualStoryboard);
@@ -1171,16 +1288,37 @@ app.put("/api/projects/:id", (request, response) => {
   if (storyboardResult.data.scenes.length !== parsed.data.scenes.length || storyboardResult.data.scenes.some((scene, index) => scene.sceneId !== parsed.data.scenes[index]?.id || scene.durationSec !== Math.round(((parsed.data.scenes[index]?.endSec ?? 0) - (parsed.data.scenes[index]?.startSec ?? 0)) * 1000) / 1000)) {
     return apiError(response, 400, "Scene Visual Storyboard harus cocok dengan Research Package.", { code: "visual-storyboard-scene-mismatch" });
   }
-  const missingAssets = missingVisualAssetReferences(storyboardResult.data, project.visualAssets);
+  let storyboard = storyboardResult.data;
+  for (const scene of storyboard.scenes) if (scene.sceneMedia) {
+    const media = scene.sceneMedia;
+    const error = await sceneMediaIntegrityError(media);
+    if (error) return apiError(response, 409, error, { code: "scene-media-integrity-failed", sceneId: scene.sceneId });
+    if (media.posterTrimOutSec !== media.trimOutSec) {
+      try {
+        const poster = await createTrimmedSceneMediaPoster(media);
+        await writeSceneMediaPosterFile(poster.file, poster.sha256, poster.buffer);
+        const updatedMedia: SceneMedia = { ...media, posterFile: poster.file, posterSha256: poster.sha256, posterBytes: poster.bytes, posterTrimOutSec: media.trimOutSec };
+        storyboard = { ...storyboard, scenes: storyboard.scenes.map((item) => item.sceneId === scene.sceneId ? { ...item, sceneMedia: updatedMedia } : item) };
+      } catch (error) {
+        return apiError(response, 422, error instanceof Error ? error.message : "Poster untuk trim scene media gagal dibuat.", { code: "scene-media-poster-failed", sceneId: scene.sceneId });
+      }
+    }
+  }
+  const missingAssets = missingVisualAssetReferences(storyboard, project.visualAssets);
   if (missingAssets.length) return apiError(response, 400, "Visual Storyboard merujuk aset yang tidak dimiliki project ini.", { code: "visual-asset-not-found", assets: [...new Set(missingAssets)] });
-  const storyboardResearch = parseResearchPackage(applyVisualStoryboard(parsed.data, storyboardResult.data));
+  const storyboardResearch = parseResearchPackage(applyVisualStoryboard(parsed.data, storyboard));
   if (!storyboardResearch.success) return apiError(response, 400, "Visual Storyboard menghasilkan Research Package tidak valid.", { code: "invalid-visual-storyboard-research", issues: storyboardResearch.error.issues });
   const factsChanged = factReviewContent(project.researchPackage) !== factReviewContent(storyboardResearch.data);
   project.researchPackage = storyboardResearch.data;
-  project.visualStoryboard = storyboardResult.data;
+  project.visualStoryboard = storyboard;
   if (factsChanged) project.researchReviewStatus = "needs-review";
   if (project.pendingTts && project.pendingTts.scriptSha256 !== createHash("sha256").update(narrationScript(parsed.data)).digest("hex")) project.pendingTts = null;
-  saveProject(row.id, project);
+  const nextSceneMediaFiles = new Set(storyboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia.file, scene.sceneMedia.posterFile] : []));
+  withTransaction(() => {
+    saveProject(row.id, project);
+    for (const file of previousSceneMediaFiles) if (!nextSceneMediaFiles.has(file)) queueFileCleanup("scene-media", path.join(sceneMediaDir, file));
+  });
+  await tryProcessFileCleanupQueue();
   response.json(getProject(row.id));
 });
 
@@ -1645,6 +1783,25 @@ app.post("/api/projects/:id/visual-assets", illustrationUploadMiddleware, async 
   } finally { activeProjectTasks.delete(id); }
 });
 
+app.post("/api/projects/:id/scenes/:sceneId/media", sceneMediaUploadMiddleware, async (request, response) => {
+  const projectId = String(request.params.id);
+  const sceneId = String(request.params.sceneId);
+  const row = projectRow(projectId);
+  if (!row) return apiError(response, 404, "Project tidak ditemukan.");
+  if (!projectFromRow(row).visualStoryboard.scenes.some((scene) => scene.sceneId === sceneId)) return apiError(response, 404, "Scene tidak ditemukan.");
+  if (!request.file) return apiError(response, 400, "File MP4/GIF tidak ditemukan.", { code: "missing-scene-media" });
+  if (activeRenderJob || activeJobCreation || activeProjectTasks.has(projectId)) return apiError(response, 409, "Project sedang dipersiapkan atau dirender.", { code: "project-busy" });
+  activeProjectTasks.add(projectId);
+  try {
+    const processed = await validateAndNormalizeSceneMedia(request.file.buffer, request.file.mimetype, request.file.originalname);
+    await writeSceneMediaFile(processed.media, processed.buffer, processed.poster);
+    invalidateBundleCache();
+    response.status(201).json({ media: processed.media });
+  } catch (error) {
+    apiError(response, 400, error instanceof Error ? error.message : "Klip tidak valid atau gagal dinormalisasi.", { code: "invalid-scene-media" });
+  } finally { activeProjectTasks.delete(projectId); }
+});
+
 app.post("/api/projects/:id/visual-assets/batch", illustrationBatchUploadMiddleware, async (request, response) => {
   const id = String(request.params.id);
   const files = Array.isArray(request.files) ? request.files : [];
@@ -1897,11 +2054,13 @@ app.delete("/api/projects/:id", async (request, response) => {
   if (activeProjectTasks.has(id)) return apiError(response, 409, "Project sedang memproses audio atau snapshot.");
 
   const project = projectFromRow(row);
+  const sceneMediaFiles = new Set(project.visualStoryboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia.file, scene.sceneMedia.posterFile] : []));
   const uploadPath = project.audio?.source === "upload" ? path.resolve(root, "public", project.audio.file) : null;
   const safeUploadPath = uploadPath && path.dirname(uploadPath) === audioDir ? uploadPath : null;
   withTransaction(() => {
     if (safeUploadPath) queueFileCleanup("audio", safeUploadPath);
     for (const asset of project.visualAssets) if (!projectReferencesVisualAsset(asset.file, id)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
+    for (const file of sceneMediaFiles) queueFileCleanup("scene-media", path.join(sceneMediaDir, file));
     for (const job of jobs) {
       queueFileCleanup("jobs", path.join(jobDir, job.id));
       queueFileCleanup("renders", path.join(renderDir, job.id));
@@ -2215,6 +2374,10 @@ app.post("/api/projects/:id/generate", async (request, response) => {
       return apiError(response, 409, `Aset visual ${asset.name} hilang atau hash berubah; pilih ulang/unggah lagi sebelum membuat snapshot.`, { code: "visual-asset-integrity-failed", assetId: asset.id });
     }
   }
+  for (const media of snapshot.sceneMedia ?? []) {
+    const error = await sceneMediaIntegrityError(media);
+    if (error) return apiError(response, 409, error, { code: "scene-media-integrity-failed" });
+  }
   const source = JSON.stringify(snapshot);
   const sourceSha = createHash("sha256").update(source).digest("hex");
   const existing = db.prepare("SELECT * FROM jobs WHERE project_id = ? AND source_sha256 = ?").get(row.id, sourceSha) as JobRow | undefined;
@@ -2359,6 +2522,7 @@ app.post("/api/projects/:id/review", (request, response) => {
 // Serve uploads created after `vite build` too, not only assets copied at build time.
 app.use("/audio", express.static(audioDir));
 app.use("/visual-assets", express.static(visualAssetDir, { immutable: true, maxAge: "1y" }));
+app.use("/scene-media", express.static(sceneMediaDir, { immutable: true, maxAge: "1y" }));
 
 if (existsSync(path.resolve(root, "dist/index.html"))) {
   app.use(express.static(path.resolve(root, "dist")));

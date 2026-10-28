@@ -1,3 +1,4 @@
-export const RENDERER_VERSION = 3;
-export const PREVIOUS_RENDERER_VERSION = 2;
+export const RENDERER_VERSION = 4;
+export const PREVIOUS_RENDERER_VERSION = 3;
+export const OLDER_RENDERER_VERSION = 2;
 export const LEGACY_RENDERER_VERSION = 1;

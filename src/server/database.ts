@@ -151,7 +151,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS video_job_requests_created_at_idx ON video_job_requests(created_at);
   CREATE TABLE IF NOT EXISTS file_cleanup_queue (
-    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets')),
+    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets', 'scene-media')),
     relative_path TEXT NOT NULL,
     created_at TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -161,12 +161,12 @@ db.exec(`
 `);
 
 const cleanupTable = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_cleanup_queue'").get() as { sql?: string } | undefined;
-if (cleanupTable?.sql && !cleanupTable.sql.includes("'visual-assets'")) {
+if (cleanupTable?.sql && (!cleanupTable.sql.includes("'visual-assets'") || !cleanupTable.sql.includes("'scene-media'"))) {
   db.exec(`
     BEGIN IMMEDIATE;
     ALTER TABLE file_cleanup_queue RENAME TO file_cleanup_queue_legacy;
     CREATE TABLE file_cleanup_queue (
-      root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets')),
+      root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets', 'scene-media')),
       relative_path TEXT NOT NULL,
       created_at TEXT NOT NULL,
       attempt_count INTEGER NOT NULL DEFAULT 0,

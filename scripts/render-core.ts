@@ -9,9 +9,10 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
 import type { ResearchPackage } from "../src/domain/research";
 import type { VisualAsset } from "../src/domain/visual-assets";
+import type { SceneMedia } from "../src/domain/scene-media";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { durationInFrames } from "../src/domain/timeline";
-import { LEGACY_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
@@ -24,6 +25,7 @@ export function invalidateBundleCache() {
 export type RenderSnapshot = {
   research: ResearchPackage;
   visualAssets?: VisualAsset[];
+  sceneMedia?: SceneMedia[];
   audio?: {
     file: string; durationSec: number; timingMode?: "scaled" | "estimated"; source?: "upload" | "tts" | "mock-fixture"; sha256?: string;
     tts?: { provider: string; model: string; cacheKey?: string; scriptSha256: string; locale: string; voiceId: string; voiceName: string; style: string; speakingRate: number; approvedAt?: string; alignment: "estimated" };
@@ -94,6 +96,25 @@ async function verifySnapshotVisualAssets(assets: readonly VisualAsset[] = []) {
   }
 }
 
+async function verifySnapshotSceneMedia(research: ResearchPackage) {
+  const allowedRoot = path.resolve(root, "public/scene-media");
+  const clips = research.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia] : []);
+  for (const media of clips) {
+    if (media.shortClip === "freeze-last-frame" && media.posterTrimOutSec !== media.trimOutSec) throw new Error("Freeze poster frame tidak cocok dengan batas trim scene media.");
+    for (const [file, checksum, maxBytes] of [[media.file, media.sha256, 150 * 1024 * 1024], [media.posterFile, media.posterSha256, 2 * 1024 * 1024]] as const) {
+      if (!/^[a-f0-9]{64}\.(mp4|jpg)$/.test(file) || file.slice(0, 64) !== checksum) throw new Error("Scene media snapshot tidak valid.");
+      const filePath = path.resolve(allowedRoot, file);
+      if (path.dirname(filePath) !== allowedRoot) throw new Error("Scene media snapshot keluar dari direktori yang diizinkan.");
+      const fileStat = await stat(filePath);
+      const expectedBytes = file === media.file ? media.bytes : media.posterBytes;
+      if (fileStat.size <= 0 || fileStat.size > maxBytes || fileStat.size !== expectedBytes) throw new Error(`Ukuran scene media tidak cocok dengan metadata: ${file}.`);
+      const hash = createHash("sha256");
+      for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+      if (hash.digest("hex") !== checksum) throw new Error(`Hash scene media snapshot tidak cocok: ${file}.`);
+    }
+  }
+}
+
 export async function renderSnapshot(
   snapshot: RenderSnapshot,
   outputLocation: string,
@@ -101,9 +122,10 @@ export async function renderSnapshot(
   scale = 1,
 ) {
   const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
-  if (![LEGACY_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
+  if (![LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
   if (snapshot.audio) await verifySnapshotAudio(snapshot.audio);
   await verifySnapshotVisualAssets(snapshot.visualAssets);
+  await verifySnapshotSceneMedia(snapshot.research);
   await mkdir(path.dirname(outputLocation), { recursive: true });
   bundlePromise ??= bundle({
     entryPoint: path.resolve(root, "src/video/entry.tsx"),
@@ -141,7 +163,8 @@ export async function renderSnapshot(
     throw new Error(`Resolusi hasil render salah: ${manifest.width}x${manifest.height}.`);
   }
   const audioQuality = validateAudioQuality({
-    expected: Boolean(snapshot.audio),
+    expected: Boolean(snapshot.audio || snapshot.research.scenes.some((scene) => scene.sceneMedia?.audioEnabled)),
+    source: snapshot.audio ? "narration" : snapshot.research.scenes.some((scene) => scene.sceneMedia?.audioEnabled) ? "scene-media" : undefined,
     codec: manifest.audioCodec,
     videoDurationSec: manifest.durationSec,
     audioDurationSec: manifest.audioDurationSec,

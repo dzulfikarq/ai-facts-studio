@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, Audio, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Audio, Img, interpolate, Sequence, staticFile, useCurrentFrame, Video } from "remotion";
 import { captionSegmentsForScene } from "../domain/captions";
 import { timelineDuration, sceneTimes } from "../domain/timeline";
 import type { ResearchPackage, Scene } from "../domain/research";
@@ -9,6 +9,7 @@ import { sceneTransitionOpacity } from "./motion";
 import { rendererRegistry } from "./renderer-registry";
 import { visualStyles } from "./style-config";
 import { RENDERER_VERSION } from "./renderer-version";
+import type { SceneMedia } from "../domain/scene-media";
 
 function wrapText(text: string, width: number, maxLines: number) {
   const lines: string[] = [];
@@ -45,6 +46,31 @@ function SceneVisual({ scene, preset, progress, frame, opacity, editor }: { scen
   return <g opacity={opacity}>
     <Renderer scene={renderScene} composition={renderScene.visualComposition} preset={preset} frame={frame} progress={progress} editor={editor}/>
   </g>;
+}
+
+function mediaPosition(position: SceneMedia["position"]) {
+  return position.split("-").join(" ");
+}
+
+function SceneMediaLayer({ media, startFrame, durationFrames, opacity }: { media: SceneMedia; startFrame: number; durationFrames: number; opacity: number }) {
+  const trimIn = Math.round(media.trimInSec * 30);
+  const trimOut = Math.max(trimIn + 1, Math.round(media.trimOutSec * 30));
+  const mediaFrames = Math.max(1, trimOut - trimIn);
+  const file = staticFile(`scene-media/${media.file}`);
+  const style: React.CSSProperties = { width: "100%", height: "100%", objectFit: media.fit, objectPosition: mediaPosition(media.position) };
+  const video = () => <Video src={file} trimBefore={trimIn} trimAfter={trimOut} muted={!media.audioEnabled} style={style}/>;
+  return <Sequence from={startFrame} durationInFrames={durationFrames} layout="none">
+    <AbsoluteFill style={{ opacity }}>
+      {media.shortClip === "loop" ? Array.from({ length: Math.ceil(durationFrames / mediaFrames) }, (_, index) => {
+        const from = index * mediaFrames;
+        const frames = Math.min(mediaFrames, durationFrames - from);
+        return frames > 0 ? <Sequence key={index} from={from} durationInFrames={frames} layout="none">{video()}</Sequence> : null;
+      }) : <>
+        <Sequence from={0} durationInFrames={Math.min(durationFrames, mediaFrames)} layout="none">{video()}</Sequence>
+        {durationFrames > mediaFrames && <Sequence from={mediaFrames} durationInFrames={durationFrames - mediaFrames} layout="none"><Img src={staticFile(`scene-media/${media.posterFile}`)} style={style}/></Sequence>}
+      </>}
+    </AbsoluteFill>
+  </Sequence>;
 }
 
 function PresetDecorations({ preset, time }: { preset: ResearchPackage["visualPreset"]; time: number }) {
@@ -106,16 +132,19 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
   const footerY = 1920 - style.spacing.footerBottomInset;
   const titleEntrance = interpolate(frame, [span.startSec * fps, span.startSec * fps + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const previous = activeIndex > 0 && transitionPlan && transition < 1 ? research.scenes[activeIndex - 1] : undefined;
+  const previousSpan = previous ? sceneTimes(research, previous, durationSec, audioTimingMode) : null;
 
   return <AbsoluteFill style={{ backgroundColor: style.palette.canvas, color: style.palette.text, fontFamily: style.bodyFont, overflow: "hidden" }}>
+    {previous?.sceneMedia && previousSpan && <AbsoluteFill style={{ opacity: 1 - transition }}><Img src={staticFile(`scene-media/${previous.sceneMedia.posterFile}`)} style={{ width: "100%", height: "100%", objectFit: previous.sceneMedia.fit, objectPosition: mediaPosition(previous.sceneMedia.position) }}/></AbsoluteFill>}
+    {scene.sceneMedia && <SceneMediaLayer media={scene.sceneMedia} startFrame={Math.floor(span.startSec * fps)} durationFrames={Math.max(1, Math.floor((span.endSec - span.startSec) * fps))} opacity={transition}/>}
     <svg width="100%" height="100%" viewBox="0 0 1080 1920" preserveAspectRatio="xMidYMid slice" aria-label={`${research.title}, scene ${activeIndex + 1}`}>
       <defs>
         <linearGradient id="engine-sky" x1="0" y1="0" x2="0" y2="1"><stop stopColor={style.palette.canvas}/><stop offset="1" stopColor={style.palette.surface}/></linearGradient>
         <linearGradient id="caption-shade" x1="0" y1="0" x2="0" y2="1"><stop stopColor={style.palette.canvas} stopOpacity="0"/><stop offset="1" stopColor={style.palette.canvas} stopOpacity=".92"/></linearGradient>
       </defs>
-      <rect width="1080" height="1920" fill="url(#engine-sky)"/>
-       {previous && <SceneVisual key={`prev-${previous.id}`} scene={previous} preset={research.visualPreset} progress={1} frame={Math.max(0, Math.floor((sceneTimes(research, previous, durationSec, audioTimingMode).endSec)*fps))} opacity={1-transition}/>}
-       <SceneVisual key={scene.id} scene={scene} preset={research.visualPreset} progress={progress} frame={localFrame} opacity={transition} editor={editor?.sceneId === scene.id ? editor : undefined}/>
+       {!scene.sceneMedia && <rect width="1080" height="1920" fill="url(#engine-sky)"/>}
+        {previous && !previous.sceneMedia && <SceneVisual key={`prev-${previous.id}`} scene={previous} preset={research.visualPreset} progress={1} frame={Math.max(0, Math.floor((previousSpan?.endSec ?? 0)*fps))} opacity={scene.sceneMedia ? 0 : 1-transition}/>}
+        {!scene.sceneMedia && <SceneVisual key={scene.id} scene={scene} preset={research.visualPreset} progress={progress} frame={localFrame} opacity={transition} editor={editor?.sceneId === scene.id ? editor : undefined}/>}
       <PresetDecorations preset={research.visualPreset} time={time}/>
       <rect x="0" y="0" width="1080" height="510" fill="url(#caption-shade)" opacity=".72"/>
       <rect x="0" y="1510" width="1080" height="410" fill="url(#caption-shade)"/>

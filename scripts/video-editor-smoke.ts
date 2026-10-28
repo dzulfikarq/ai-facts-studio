@@ -136,6 +136,14 @@ try {
     select.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }, workflow);
+  const setFlowVisualMode = async (mode: string) => page.evaluate((value) => {
+    const select = [...document.querySelectorAll<HTMLLabelElement>(".google-flow-panel label.editor-field")].find((label) => label.textContent?.includes("Jenis Visual"))?.querySelector("select");
+    if (!select) return false;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, value);
+    select.dispatchEvent(new Event("input", { bubbles: true }));
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, mode);
   const captureViewport = async (filename: string) => {
     const client = (page as unknown as { _client: () => { send: (method: string, params?: Record<string, unknown>) => Promise<{ value: any }> } })._client();
     const viewport = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight }));
@@ -230,6 +238,7 @@ try {
     status: document.querySelector(".editor-save-state")?.textContent?.trim(),
     headline: document.querySelector(".editor-canvas-shell svg text")?.textContent?.trim(),
     workflow: document.querySelector<HTMLSelectElement>(".editor-illustration-section select")?.value,
+    flowVisualMode: [...document.querySelectorAll<HTMLLabelElement>(".google-flow-panel label.editor-field")].find((label) => label.textContent?.includes("Jenis Visual"))?.querySelector("select")?.value,
     illustrationStatus: document.querySelector(".editor-illustration-heading span")?.textContent?.trim(),
     hfVisible: Boolean(document.querySelector(".editor-ai-image-panel")),
     inspectorExpanded: document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded"),
@@ -239,6 +248,7 @@ try {
   assert.ok(initialEditor.scrollWidth <= initialEditor.viewportWidth, `desktop editor does not overflow: ${JSON.stringify(initialEditor)}`);
   assert.ok(initialEditor.headline, "canvas displays real scene text");
   assert.equal(initialEditor.workflow, "google-flow", "Google Flow is default source for scene one");
+  assert.equal(initialEditor.flowVisualMode, "animated-video", "new scenes default to animated Google Flow prompts");
   assert.equal(initialEditor.illustrationStatus, "Perlu Ilustrasi", "procedural draft is explicitly not treated as main illustration");
   assert.equal(initialEditor.hfVisible, false, "Hugging Face controls stay hidden until AI Image API is selected");
   assert.equal(initialEditor.inspectorExpanded, "false", "inspector starts collapsed");
@@ -403,7 +413,11 @@ try {
   await waitFor(async () => {
     const latest = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
     return latest.visualStoryboard.scenes[0].composition.layers.some((layer: { nodes: Array<{ type: string; fit?: string }> }) => layer.nodes.some((node) => node.type === "image" && node.fit === "cover"));
-  }, "fit choice persists with raster transform");
+  }, "fit choice persists with raster transform").catch(async (error) => {
+    const latest = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+    const ui = await page.evaluate(() => ({ scene: document.querySelector(".editor-inspector-scene")?.textContent, saved: document.querySelector(".editor-save-state")?.textContent, fit: [...document.querySelectorAll<HTMLLabelElement>(".editor-field")].find((label) => label.textContent?.includes("Tampilan gambar"))?.querySelector("select")?.value }));
+    throw new Error(`${error instanceof Error ? error.message : error}\nUI ${JSON.stringify(ui)}\nScene ${JSON.stringify({ base: latest.visualStoryboard.scenes[0].composition, override: latest.visualStoryboard.scenes[0].compositionOverride })}`);
+  });
   await captureViewport("mountain-editor-scene-01-after-edit.png");
 
   for (const width of [1280, 1024, 768, 390, 360]) {
@@ -457,6 +471,8 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "reopen inspector for Flow authoring checks");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].find((button) => button.textContent?.trim() === "Visual")?.click());
   await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].some((button) => button.textContent?.trim() === "Visual" && button.getAttribute("aria-selected") === "true")), "return to Visual tab for Flow authoring checks");
+  assert.ok(await setFlowVisualMode("still-image"), "legacy still-image Flow workflow remains selectable");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".google-flow-panel label.editor-field")].find((label) => label.textContent?.includes("Jenis Visual"))?.querySelector("select")?.value === "still-image"), "select still-image prompt mode for image-import regression");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-panel button")].find((button) => button.textContent?.includes("Buat Prompt Ilustrasi"))?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-prompt-details"))), "per-scene prompt generation and collapsible prompt editor");
   const panelPrompt = await page.evaluate(() => document.querySelector<HTMLTextAreaElement>(".google-flow-prompt")?.value ?? "");
@@ -589,10 +605,10 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head) .google-flow-match-status")[5]?.textContent?.includes("melebihi 10 MB") ?? false), "oversized file gets per-row validation before upload");
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-row:not(.google-flow-batch-head) button")[5]?.click());
   await captureViewport("mountain-google-flow-batch-review.png");
-  const batchApplyButton = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.textContent ?? "");
+  const batchApplyButton = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Media"))?.textContent ?? "");
   assert.match(batchApplyButton, /\(4\)/, "three scene mappings and one server-validated candidate have unique assignments");
   const batchRequestsBefore = await page.evaluate((path) => performance.getEntriesByType("resource").filter((entry) => new URL(entry.name).pathname === path).length, `/api/projects/${mountainProject.id}/visual-assets/batch`);
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Media"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"] .confirm-submit') !== null), "confirm batch replacement for existing artwork");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-batch-error")?.textContent?.trim())), "batch keeps per-file failure visible after successful files apply", 180);
@@ -622,9 +638,9 @@ try {
   }, retryFixtureBytes.toString("base64"));
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".google-flow-batch-row:not(.google-flow-batch-head)").length === 4), "retry adds only replacement for failed file while retaining skipped rows");
   await waitFor(() => page.evaluate((sceneId) => [...document.querySelectorAll<HTMLSelectElement>(".google-flow-batch-row:not(.google-flow-batch-head) select")].some((select) => select.value === sceneId), mountainProject.visualStoryboard.scenes[3].sceneId), "retry file auto-matches failed scene");
-  const retryCount = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.textContent ?? "");
+  const retryCount = await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Media"))?.textContent ?? "");
   assert.match(retryCount, /\(1\)/, "retry submits only remaining valid file, not prior successes");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Ilustrasi"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-batch-dialog footer button")].find((button) => button.textContent?.includes("Terapkan Media"))?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "confirm replacement for retry scene");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
   await waitFor(() => page.evaluate(() => !(document.querySelector<HTMLDialogElement>(".google-flow-batch-dialog")?.open ?? false)), "retry applies failed file and closes completed batch");
@@ -711,7 +727,7 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-canvas-shell image").length > 0), "motion preview retains imported raster artwork");
   await captureViewport("mountain-google-flow-motion-preview.png");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Visual")?.click());
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Saya sudah meninjau ilustrasi"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Saya sudah meninjau visual"))?.click());
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "human visual review confirmation persists");
   await waitFor(() => page.evaluate(() => {

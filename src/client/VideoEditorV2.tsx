@@ -17,6 +17,7 @@ import type { VisualAsset } from "../domain/visual-assets";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { MotionPreparationJob } from "../domain/motion-preparation";
 import type { VisualPreparationJob } from "../domain/visual-preparation";
+import type { SceneMedia } from "../domain/scene-media";
 import { SmartAssetLibraryDialog, type AssetPlacement, type ReusableSceneEntry } from "./SmartAssetLibraryDialog";
 import { GoogleFlowPanel, type FlowBatchItem, type FlowBatchProgress } from "./GoogleFlowPanel";
 import { visualStyles } from "../video/style-config";
@@ -40,7 +41,7 @@ type MotionPreset = "static" | "gentle" | "pan-zoom" | "process" | "particles";
 type IllustrationWorkflow = VisualStoryboardScene["illustrationWorkflow"];
 type ImageBaseline = VisualImageTransform & Pick<VisualImageNode, "fit" | "position">;
 
-export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onApplyFlowBatch }: {
+export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, selectedSceneId, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onTitleChange, onSelectScene, onBack, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
   gate: VisualQualityGate;
@@ -95,11 +96,15 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onSelectAiImageSource: (sceneId: string) => Promise<boolean>;
   onGenerateAiImage: (sceneId: string, provider: string, model: string, prompt: string, resolution: string) => Promise<VisualAsset | null>;
   onFlowPromptChange: (sceneId: string, prompt: string) => void;
+  onFlowVisualModeChange: (sceneId: string, mode: "still-image" | "animated-video") => void;
+  onRemoveSceneMedia: (sceneId: string) => void;
   onStyleLockChange: (styleLock: GoogleFlowStyleLock) => void;
   onPrepareFlowPrompts: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
   onApplyStyleLock: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
   onUploadFlowReference: (file: File) => Promise<VisualAsset | null>;
   onImportFlowIllustration: (sceneId: string, file: File, metadata: { source: "ai-generated"; prompt: string; license: string; provider: string; model: string }) => Promise<boolean>;
+  onPrepareSceneMedia: (sceneId: string, file: File) => Promise<SceneMedia | null>;
+  onApplySceneMedia: (sceneId: string, media: SceneMedia) => Promise<boolean>;
   onApplyFlowBatch: (items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
 }) {
   const [tab, setTab] = useState<InspectorTab>("visual");
@@ -350,6 +355,9 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     setImage({ x, y, width, height });
   };
   const applyMotion = () => { onMotionPreset(selectedScene.sceneId, motionPreset); };
+  const updateSceneMedia = (change: Partial<SceneMedia>) => {
+    if (selectedScene.sceneMedia) onChange(selectedScene.sceneId, { sceneMedia: { ...selectedScene.sceneMedia, ...change } });
+  };
   const startAiImage = async () => {
     setGeneratingImage(true);
     setGenerationError("");
@@ -383,7 +391,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
 
     <div className={`video-editor-layout inspector-${inspectorOpen ? "open" : "closed"}`}>
       <aside className="video-editor-scenes" aria-label="Daftar scene">
-        <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div><div className="editor-scene-heading-actions"><button type="button" className="button button-light editor-batch-launch" onClick={() => batchLauncher?.()} disabled={busy || !batchLauncher} title={batchLauncher ? "Pilih beberapa ilustrasi Google Flow untuk scene" : "Pilih sumber Google Flow di tab Visual untuk membuka batch import"}><Upload size={14} aria-hidden="true"/><span>Import Semua Ilustrasi</span></button><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div></div>
+         <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div><div className="editor-scene-heading-actions"><button type="button" className="button button-light editor-batch-launch" onClick={() => batchLauncher?.()} disabled={busy || !batchLauncher} title={batchLauncher ? "Impor beberapa gambar atau klip Google Flow ke scene" : "Pilih sumber Google Flow di tab Visual untuk membuka batch import"}><Upload size={14} aria-hidden="true"/><span>Import Semua Media</span></button><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div></div>
         <div className="editor-scene-list">
           {storyboard.scenes.map((scene, index) => {
             const source = visualResearch.scenes[index]!;
@@ -421,7 +429,13 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
             const span = sceneSpan(scene);
             return <button type="button" key={scene.id} className={`editor-track-clip ${scene.id === selectedScene.sceneId ? "selected" : ""}`} style={{ left: `${span.startSec / previewDurationSec * 100}%`, width: `${Math.max(0.5, (span.endSec - span.startSec) / previewDurationSec * 100)}%` }} onClick={() => selectScene(scene.id)} aria-label={`Pilih scene ${index + 1}: ${scene.onScreenText}`}><strong>{String(index + 1).padStart(2, "0")}</strong><small>{(span.endSec - span.startSec).toFixed(1)}s</small></button>;
            })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
-          <div className="editor-track-row"><span>Motion Beat</span><div className="editor-motion-rail" aria-label="Timeline motion beats">
+           <div className="editor-track-row"><span>Media</span><div className="editor-track-rail editor-media-rail">{storyboard.scenes.flatMap((visual) => {
+             const scene = research.scenes.find((item) => item.id === visual.sceneId);
+             if (!scene?.sceneMedia) return [];
+             const span = sceneSpan(scene);
+             return [<button type="button" key={scene.id} className={`editor-media-clip ${scene.id === selectedScene.sceneId ? "selected" : ""}`} style={{ left: `${span.startSec / previewDurationSec * 100}%`, width: `${Math.max(0.5, (span.endSec - span.startSec) / previewDurationSec * 100)}%` }} onClick={() => selectScene(scene.id)} aria-label={`Klip ${scene.sceneMedia.sourceFormat.toUpperCase()} scene ${visual.sceneNumber}: ${scene.sceneMedia.name}`} title={`${scene.sceneMedia.name} · trim ${scene.sceneMedia.trimInSec.toFixed(1)}–${scene.sceneMedia.trimOutSec.toFixed(1)}s`}><strong>{scene.sceneMedia.sourceFormat.toUpperCase()}</strong><small>{scene.sceneMedia.shortClip === "loop" ? "loop" : "freeze"}</small></button>];
+           })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
+           <div className="editor-track-row"><span>Motion Beat</span><div className="editor-motion-rail" aria-label="Timeline motion beats">
             {storyboard.scenes.flatMap((visual) => {
               const scene = research.scenes.find((item) => item.id === visual.sceneId);
               if (!scene) return [];
@@ -506,15 +520,26 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
               <IllustrationPromptPanel prompt={selectedPrompt} providerCatalog={imageProviderCatalog} providerId={providerId} model={imageModel} resolution={imageResolution} candidate={candidate} fit={selectedFit} generating={generatingImage} error={generationError} copied={copiedPrompt} onPrompt={(value) => setPrompts((current) => ({ ...current, [selectedScene.sceneId]: value }))} onProvider={(value) => setProviders((current) => ({ ...current, [selectedScene.sceneId]: value }))} onModel={(value) => setModelsByScene((current) => ({ ...current, [selectedScene.sceneId]: value }))} onResolution={(value) => setResolutions((current) => ({ ...current, [selectedScene.sceneId]: value }))} onFit={(value) => setImageFits((current) => ({ ...current, [selectedScene.sceneId]: value }))} onGenerate={() => void startAiImage()} onCopy={() => void navigator.clipboard.writeText(selectedPrompt).then(() => setCopiedPrompt(true)).catch(() => setCopiedPrompt(false))} onApply={() => candidate && onApplyGeneratedAiImage(selectedScene.sceneId, candidate, selectedFit)}/>
             </details>}
 
-            {sceneImages.length > 0 && !selectedScene.authoringConfirmed && <button type="button" className="button button-light full-button" onClick={() => onConfirmUserAsset(selectedScene.sceneId)} disabled={busy}>Saya sudah meninjau ilustrasi</button>}
+              {(sceneImages.length > 0 || selectedScene.sceneMedia) && !selectedScene.authoringConfirmed && <button type="button" className="button button-light full-button" onClick={() => onConfirmUserAsset(selectedScene.sceneId)} disabled={busy}>Saya sudah meninjau visual</button>}
             {sceneImages.length > 0 && <details className="editor-advanced editor-image-controls"><summary>Posisi, skala & crop</summary>
               {sceneImages.length > 1 && <label className="editor-field">Layer ilustrasi<select value={selectedImage?.id ?? ""} onChange={(event) => setSelectedImageId(event.target.value)}>{sceneImages.map((entry) => <option key={entry.id} value={entry.id}>{entry.layerId.replaceAll("-", " ")} · gambar</option>)}</select></label>}
               <label className="editor-field">Tampilan gambar<select value={selectedImage?.node.fit ?? "contain"} onChange={(event) => setImageFit(event.target.value as "cover" | "contain")}><option value="contain">Contain · seluruh gambar</option><option value="cover">Cover · isi area, crop gambar</option></select></label>
               <label className="editor-field">Posisi gambar<select value={selectedImage?.node.position ?? "center"} onChange={(event) => setImage({ position: event.target.value as NonNullable<typeof selectedImage.node.position> })}>{["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].map((position) => <option key={position} value={position}>{position.replaceAll("-", " ")}</option>)}</select></label>
               <label className="editor-range-field">Skala · {imageScale}%<input type="range" min={25} max={200} step={1} value={Math.max(25, Math.min(200, imageScale))} onChange={(event) => setImageScale(Number(event.target.value))} aria-label="Skala ilustrasi"/></label>
               <small className="editor-hint">Klik dan seret gambar pada canvas untuk memindahkan. Tarik handle sudut untuk mengubah ukuran; rasio gambar dipertahankan.</small>
-              <button type="button" className="button button-light full-button" onClick={() => { if (selectedImage && imageBaseline) setImage({ x: imageBaseline.x, y: imageBaseline.y, width: imageBaseline.width, height: imageBaseline.height, fit: imageBaseline.fit, position: imageBaseline.position }); }} disabled={!imageBaseline}><RotateCcw size={14} aria-hidden="true"/> Reset transform</button>
-            </details>}
+               <button type="button" className="button button-light full-button" onClick={() => { if (selectedImage && imageBaseline) setImage({ x: imageBaseline.x, y: imageBaseline.y, width: imageBaseline.width, height: imageBaseline.height, fit: imageBaseline.fit, position: imageBaseline.position }); }} disabled={!imageBaseline}><RotateCcw size={14} aria-hidden="true"/> Reset transform</button>
+             </details>}
+
+             {selectedScene.sceneMedia && <section className="editor-scene-media-controls" aria-label="Pengaturan klip animasi">
+               <div className="editor-info-box"><strong>Video Clip · {selectedScene.sceneMedia.sourceFormat.toUpperCase()}</strong><span>{selectedScene.sceneMedia.sourceWidth}×{selectedScene.sceneMedia.sourceHeight} · {selectedScene.sceneMedia.sourceDurationSec.toFixed(2)}s asli · {selectedScene.sceneMedia.sourceVideoCodec} → H.264/30 fps.</span></div>
+               <label className="editor-field">Trim masuk · detik<input type="number" min={0} max={Math.max(0, selectedScene.sceneMedia.trimOutSec - 0.1)} step={0.1} value={selectedScene.sceneMedia.trimInSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateSceneMedia({ trimInSec: Math.max(0, Math.min(value, selectedScene.sceneMedia!.trimOutSec - 0.1)) }); }}/></label>
+               <label className="editor-field">Trim keluar · detik<input type="number" min={selectedScene.sceneMedia.trimInSec + 0.1} max={selectedScene.sceneMedia.durationSec} step={0.1} value={selectedScene.sceneMedia.trimOutSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateSceneMedia({ trimOutSec: Math.min(selectedScene.sceneMedia!.durationSec, Math.max(value, selectedScene.sceneMedia!.trimInSec + 0.1)) }); }}/></label>
+               <label className="editor-field">Fit video<select value={selectedScene.sceneMedia.fit} onChange={(event) => updateSceneMedia({ fit: event.target.value as SceneMedia["fit"] })}><option value="cover">Cover · crop aman</option><option value="contain">Contain · tanpa crop</option></select></label>
+               <label className="editor-field">Posisi video<select value={selectedScene.sceneMedia.position} onChange={(event) => updateSceneMedia({ position: event.target.value as SceneMedia["position"] })}>{["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].map((position) => <option key={position} value={position}>{position.replaceAll("-", " ")}</option>)}</select></label>
+               <label className="editor-field">Jika klip lebih pendek<select value={selectedScene.sceneMedia.shortClip} onChange={(event) => updateSceneMedia({ shortClip: event.target.value as SceneMedia["shortClip"] })}><option value="loop">Ulangi klip</option><option value="freeze-last-frame">Bekukan frame terakhir</option></select></label>
+               <label className="editor-field editor-media-audio"><input type="checkbox" checked={selectedScene.sceneMedia.audioEnabled} disabled={!selectedScene.sceneMedia.audioCodec} onChange={(event) => updateSceneMedia({ audioEnabled: event.target.checked })}/> Gunakan audio klip{selectedScene.sceneMedia.audioCodec ? " · default nonaktif" : " · klip tanpa audio"}</label>
+               <button type="button" className="button button-light full-button" onClick={() => onRemoveSceneMedia(selectedScene.sceneId)} disabled={busy}>Gunakan gambar/komposisi statis</button>
+             </section>}
 
             <details className="editor-advanced"><summary>Advanced · diagnostics & authoring</summary>
               <p>Sumber aktif: {illustrationSourceForScene(selectedScene)} · {selectedScene.compositionSource}</p>
@@ -536,9 +561,10 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
           </>}
 
           {tab === "motion" && <>
-            <section className="editor-motion-beats" aria-label="Motion Beats scene">
+             <section className="editor-motion-beats" aria-label="Motion Beats scene">
+               {selectedScene.sceneMedia && <div className="editor-info-box"><strong>Klip Flow bergerak sendiri</strong><span>Motion Beat lama tetap tersimpan, tetapi tidak ditumpuk otomatis di atas video.</span></div>}
               <div className="editor-info-box"><strong>{selectedScene.motionActions.length} Motion Beat</strong><span>Beat memakai target/layer stabil dan waktu relatif scene. Timing narasi tetap perkiraan kecuali ada alignment kata.</span></div>
-              <button type="button" className="button button-light full-button" onClick={addMotionBeat} disabled={!selectedImage || selectedScene.motionActions.length >= 12}><Plus size={14} aria-hidden="true"/> Tambah beat jalur magma</button>
+              <button type="button" className="button button-light full-button" onClick={addMotionBeat} disabled={!selectedImage || Boolean(selectedScene.sceneMedia) || selectedScene.motionActions.length >= 12}><Plus size={14} aria-hidden="true"/> Tambah beat jalur magma</button>
               {!selectedMotionAction && <small>Impor ilustrasi dasar untuk menambah overlay jalur yang bisa dikoreksi di canvas.</small>}
               {selectedMotionAction && selectedBeat && <>
                 <label className="editor-field">Kejadian<input maxLength={180} value={selectedMotionAction.description ?? selectedBeat.description} onChange={(event) => editMotionBeat(selectedMotionAction.id, { description: event.target.value })}/></label>
@@ -564,7 +590,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
               </>}
             </section>
             <label className="editor-field">Preset gerak<select value={motionPreset} onChange={(event) => setMotionPreset(event.target.value as MotionPreset)}><option value="static">Statis</option><option value="gentle">Gerak lembut</option><option value="pan-zoom">Pan & zoom</option><option value="process">Animasi proses</option><option value="particles">Aliran partikel</option></select></label>
-            <button type="button" className="button button-primary full-button" onClick={applyMotion} disabled={busy}>Terapkan gerak</button>
+             <button type="button" className="button button-primary full-button" onClick={applyMotion} disabled={busy || Boolean(selectedScene.sceneMedia)}>Terapkan gerak</button>
             <div className="editor-info-box"><strong>{selectedScene.motionActions.length ? selectedScene.motionSummary : "Tidak ada gerak tambahan"}</strong><span>{selectedScene.motionActions.length} animasi · {selectedScene.motionTiming === "approximate" ? "waktu perkiraan" : "selaras narasi"}. Raster bergerak sebagai satu gambar.</span></div>
             <button type="button" className="button button-light full-button" onClick={previewSingleScene}>Pratinjau gerak scene</button>
             <label className="editor-field">Intensitas<select id="editor-motion-intensity" value={selectedScene.motionIntensity} onChange={(event) => onGenerateMotion(selectedScene.sceneId, event.target.value as MotionIntensity)} disabled={busy}><option value="subtle">Subtle</option><option value="balanced">Balanced</option><option value="expressive">Expressive</option></select></label>
@@ -578,7 +604,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
             <div className="editor-info-box"><strong>Subtitle</strong><span>{sourceResearchScene.captionSegments?.length ? `${sourceResearchScene.captionSegments.length} segmen tersimpan.` : "Dibentuk dari narasi scene saat preview dan render."}</span></div>
           </>}
 
-          <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} showPanel={tab === "visual" && selectedScene.illustrationWorkflow === "google-flow"} onFlowPromptChange={onFlowPromptChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>
+           <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} showPanel={tab === "visual" && selectedScene.illustrationWorkflow === "google-flow"} onFlowPromptChange={onFlowPromptChange} onFlowVisualModeChange={onFlowVisualModeChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onPrepareSceneMedia={onPrepareSceneMedia} onApplySceneMedia={onApplySceneMedia} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>
         </div>
         <footer className="editor-inspector-footer">
           {sceneIssueList.length > 0 && <details className="editor-advanced editor-validation"><summary>{needsArtwork ? "Masalah visual" : `${sceneIssueList.length} pemeriksaan`}</summary>{needsArtwork && <p>Ilustrasi belum tersedia.</p>}{!needsArtwork && <ul>{sceneIssueList.map((issue) => <li key={issue}>{issue}</li>)}</ul>}</details>}
@@ -604,14 +630,14 @@ function sceneIllustrationStatus(scene: VisualStoryboardScene, storyboard: Visua
 }
 
 function sceneHasPrimaryIllustration(scene: VisualStoryboardScene, storyboard: VisualStoryboard) {
-  return visualImageNodes(compositionForVisualScene(storyboard, scene)).length > 0 || scene.compositionSource === "ai-vector";
+  return Boolean(scene.sceneMedia) || visualImageNodes(compositionForVisualScene(storyboard, scene)).length > 0 || scene.compositionSource === "ai-vector";
 }
 
 const SceneThumbnail = React.memo(function SceneThumbnail({ scene, storyboard, preset }: { scene: ResearchPackage["scenes"][number]; storyboard: VisualStoryboard; preset: ResearchPackage["visualPreset"] }) {
   const visual = storyboard.scenes.find((item) => item.sceneId === scene.id)!;
   const composition = compositionForVisualScene(storyboard, visual);
   return <svg className="editor-scene-thumbnail" viewBox="0 0 1080 1920" role="img" aria-label={`Ilustrasi scene: ${scene.onScreenText}`}>
-    <VisualCompositionView scene={scene} composition={composition} style={visualStyles[preset]} preset={preset} frame={Math.floor(scene.endSec * FPS * .4)} progress={.4}/>
+    {scene.sceneMedia ? <image href={`/scene-media/${encodeURIComponent(scene.sceneMedia.posterFile)}`} x="0" y="0" width="1080" height="1920" preserveAspectRatio={scene.sceneMedia.fit === "cover" ? "xMidYMid slice" : "xMidYMid meet"}/> : <VisualCompositionView scene={scene} composition={composition} style={visualStyles[preset]} preset={preset} frame={Math.floor(scene.endSec * FPS * .4)} progress={.4}/>}
     <rect x="50" y="40" width="980" height="400" rx="30" fill={storyboard.palette.canvas} opacity=".94"/>
     <foreignObject x="80" y="82" width="920" height="320"><div className="editor-thumbnail-headline">{visual.headline}</div></foreignObject>
   </svg>;

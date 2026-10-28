@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
+import { isAnimatedMediaFile, sceneMediaSchema } from "../src/domain/scene-media";
 import { canStartNewJob, durationInFrames, sceneTimes } from "../src/domain/timeline";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
@@ -150,6 +151,24 @@ assert.equal(carriedMotionProgress(3, 2, undefined, 0), 1, "completed reservoir 
 const mountainStoryboard = buildVisualStoryboard(mountain);
 assert.ok(mountainStoryboard.styleLock.illustrationStyle.includes("Premium 2D"));
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.illustrationWorkflow === "google-flow"), "new and legacy scenes default to persisted Google Flow workflow");
+assert.ok(mountainStoryboard.scenes.every((scene) => scene.flowVisualMode === "animated-video"), "new scenes default to Google Flow animation mode");
+const legacyFlowModes = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map(({ flowVisualMode: _mode, flowPromptMode: _promptMode, ...scene }) => scene) });
+assert.ok(legacyFlowModes.scenes.every((scene) => scene.flowVisualMode === "still-image" && scene.flowPromptMode === "still-image"), "legacy storyboard defaults to still-image prompts without breaking schema compatibility");
+const testMediaHash = (character: string) => character.repeat(64);
+const testSceneMedia = sceneMediaSchema.parse({
+  type: "video", name: "flow-clip.gif", file: `${testMediaHash("b")}.mp4`, sha256: testMediaHash("b"), bytes: 4096,
+  posterFile: `${testMediaHash("c")}.jpg`, posterSha256: testMediaHash("c"), posterBytes: 1024,
+  sourceFormat: "gif", sourceMimeType: "image/gif", sourceSha256: testMediaHash("a"), sourceBytes: 2048,
+  sourceVideoCodec: "gif", sourceAudioCodec: null, sourceWidth: 320, sourceHeight: 480, sourceFrameRate: 12, sourceDurationSec: 1.2,
+  videoCodec: "h264", audioCodec: null, width: 320, height: 480, frameRate: 30, durationSec: 1.2,
+  trimInSec: 0, trimOutSec: 1.2, fit: "cover", position: "center", shortClip: "loop", audioEnabled: false,
+});
+assert.throws(() => sceneMediaSchema.parse({ ...testSceneMedia, trimInSec: 0.8, trimOutSec: 0.7 }), /trim/i, "media trim bounds reject inverted ranges");
+assert.equal(isAnimatedMediaFile({ type: "image/gif", name: "Flow.GIF" } as File), true, "GIF batch files use case-insensitive extension matching");
+const mediaStoryboard = { ...mountainStoryboard, scenes: mountainStoryboard.scenes.map((scene, index) => index === 0 ? { ...scene, sceneMedia: testSceneMedia, authoringConfirmed: true } : scene) };
+const mediaResearch = applyVisualStoryboard(mountain, mediaStoryboard);
+assert.equal(mediaResearch.scenes[0]!.sceneMedia?.sha256, testSceneMedia.sha256, "animated media projects from Visual Storyboard into Research Package");
+assert.equal(buildVisualStoryboard(mediaResearch, mediaStoryboard).scenes[0]!.sceneMedia?.file, testSceneMedia.file, "animated media survives storyboard rebuild/reload path");
 const oldWorkflowBoard = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map(({ illustrationWorkflow: _workflow, ...scene }) => scene) });
 assert.ok(oldWorkflowBoard.scenes.every((scene) => scene.illustrationWorkflow === "google-flow"), "legacy persisted storyboard fills Google Flow source preference without migration loss");
 assert.ok(mountainStoryboard.scenes.every((scene) => /^flow-[a-f0-9]{16}$/.test(scene.sceneToken) && scene.recommendedFilename.includes(scene.sceneToken)), "all scenes persist stable token and tokenized recommended filename");
@@ -623,6 +642,7 @@ unsafeStoryboard.scenes[0].objects[0].assetId = "javascript:alert(1)";
 assert.equal(visualStoryboardSchema.safeParse(unsafeStoryboard).success, false, "storyboard asset IDs are constrained to internal library");
 const clearAudio = { expected: true, codec: "aac", videoDurationSec: 12, audioDurationSec: 12, expectedAudioDurationSec: 12, meanVolumeDb: -20, maxVolumeDb: -2 };
 assert.equal(validateAudioQuality(clearAudio).audioValidation, "pass");
+assert.equal(validateAudioQuality({ ...clearAudio, source: "scene-media", expectedAudioDurationSec: undefined, meanVolumeDb: -80 }).audioValidation, "pass-media", "enabled scene audio remains distinct from narration loudness validation");
 assert.throws(() => validateAudioQuality({ ...clearAudio, meanVolumeDb: -91, maxVolumeDb: -91 }), /senyap/i);
 assert.throws(() => validateAudioQuality({ ...clearAudio, maxVolumeDb: 0 }), /clipping/i);
 assert.throws(() => validateAudioQuality({ ...clearAudio, audioDurationSec: 9 }), /terpotong/i);

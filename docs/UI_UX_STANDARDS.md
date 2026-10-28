@@ -22,6 +22,7 @@
 - Keep left/right page gutters equal and aligned to topbar outer padding. Verify 1440, 1280, 1024, 768, 390, 360, and 320px without page-level horizontal overflow; fill desktop editor step tabs across row and keep them/timelines internally scrollable on narrow screens.
 - Keep keyboard access, visible `:focus-visible` rings, accessible names, semantic status, native control behavior, and reduced-motion support.
 - Preserve Light, Dark, and System appearance on every page and dialog. Theme changes must not affect project or renderer data.
+- Video scene controls must keep trim, fit/crop, loop/freeze, and opt-in audio keyboard-accessible; clip audio stays off by default and separate from narration approval.
 
 ## Verification
 

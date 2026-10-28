@@ -3,6 +3,7 @@ import { captionSegmentsSchema } from "./captions";
 import { defaultMotionPlan, defaultVisualComposition } from "./visual-defaults";
 import { motionCuePlanSchema, motionCueIds, visualCompositionSchema } from "./visual-composition";
 import { motionActionsSchema } from "./motion-director";
+import { sceneMediaSchema } from "./scene-media";
 
 export const categories = [
   "Fakta Unik", "Sains & Antariksa", "Sejarah & Misteri", "Tubuh Manusia", "Hewan & Alam", "Teknologi", "Geografi",
@@ -47,6 +48,7 @@ const sceneV11Schema = z.object({
   motionPlan: z.array(motionCuePlanSchema).max(8),
   motionActions: motionActionsSchema.default([]),
   captionSegments: captionSegmentsSchema.optional(),
+  sceneMedia: sceneMediaSchema.optional(),
 }).strict().superRefine((scene, ctx) => {
   if (scene.motionCues.length !== scene.motionPlan.length || scene.motionCues.some((cue, index) => cue !== scene.motionPlan[index]?.cue)) {
     ctx.addIssue({ code: "custom", message: "motionPlan harus memiliki satu konfigurasi untuk setiap motionCue dan urutan yang sama", path: ["motionPlan"] });

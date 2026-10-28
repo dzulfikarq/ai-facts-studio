@@ -1,9 +1,14 @@
-export function validateAudioQuality(input: { expected: boolean; codec: string | null; videoDurationSec: number; audioDurationSec: number | null; expectedAudioDurationSec?: number; meanVolumeDb: number | null; maxVolumeDb: number | null }) {
+export function validateAudioQuality(input: { expected: boolean; source?: "narration" | "scene-media"; codec: string | null; videoDurationSec: number; audioDurationSec: number | null; expectedAudioDurationSec?: number; meanVolumeDb: number | null; maxVolumeDb: number | null }) {
   if (!input.expected) {
     if (input.meanVolumeDb !== null && input.meanVolumeDb > -50) throw new Error("Audio validation gagal: render tanpa narasi menghasilkan audio non-senyap.");
     return { audioValidation: "silent-expected" as const, audioLevelWarning: null };
   }
   if (input.codec !== "aac") throw new Error("Audio validation gagal: track narasi tidak memakai AAC.");
+  if (input.source === "scene-media") {
+    if (input.audioDurationSec === null || input.audioDurationSec <= 0) throw new Error("Audio validation gagal: track audio klip tidak dapat dibaca.");
+    if (input.maxVolumeDb !== null && input.maxVolumeDb >= -0.1) throw new Error("Audio validation gagal: puncak audio klip mendekati 0 dB; potensi clipping signifikan.");
+    return { audioValidation: "pass-media" as const, audioLevelWarning: "Audio klip aktif; dengarkan isi dan sinkronisasi sebelum dipakai." };
+  }
   if (input.audioDurationSec === null || Math.abs(input.audioDurationSec - input.videoDurationSec) > 0.25) {
     throw new Error("Audio validation gagal: durasi track AAC tidak cocok dengan durasi video; periksa kemungkinan narasi terpotong.");
   }

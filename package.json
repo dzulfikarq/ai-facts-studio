@@ -19,6 +19,7 @@
     "smoke:render": "tsx scripts/render-smoke.ts",
     "smoke:visual-storyboard": "tsx scripts/video-editor-smoke.ts",
     "smoke:video-editor": "tsx scripts/video-editor-smoke.ts",
+    "smoke:scene-media": "tsx scripts/scene-media-smoke.ts",
     "smoke:ai-image": "tsx scripts/ai-image-smoke.ts",
     "poc:illustrations": "tsx scripts/illustration-poc.ts",
     "poc:google-flow": "tsx scripts/google-flow-poc.ts",

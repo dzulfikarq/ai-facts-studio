@@ -71,6 +71,14 @@
 .editor-track-clip.selected { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
 .editor-track-clip strong { font-size: 10px; }
 .editor-track-clip small { color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
+.editor-media-rail { background: var(--surface-muted); }
+.editor-media-clip { position: absolute; inset-block: 0; min-width: 8px; display: flex; align-items: center; justify-content: space-between; gap: 4px; overflow: hidden; padding: 0 5px; border: 1px solid var(--success); border-radius: 4px; background: var(--success-soft); color: var(--success); text-align: left; }
+.editor-media-clip.selected { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.editor-media-clip strong,.editor-media-clip small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.editor-media-clip:focus-visible { z-index: 3; outline: 3px solid var(--focus); outline-offset: 1px; }
+.editor-scene-media-controls { display: grid; gap: 10px; }
+.editor-media-audio { display: flex; align-items: center; gap: 8px; }
+.editor-field.editor-media-audio input[type="checkbox"] { width: 18px; min-height: 18px; margin: 0; accent-color: var(--primary); }
 .editor-motion-rail { position: relative; min-width: 0; height: 30px; overflow: hidden; border-radius: 4px; background: var(--surface-muted); }
 .editor-motion-clip { position: absolute; top: 3px; bottom: 3px; min-width: 7px; overflow: hidden; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--warning-soft); color: var(--warning); text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: grab; touch-action: none; }
 .editor-motion-clip.selected { z-index: 1; border-color: var(--primary); background: var(--primary-soft); color: var(--primary-text); box-shadow: inset 0 0 0 1px var(--primary); }
@@ -210,7 +218,7 @@
 .google-flow-drop,.google-flow-batch-drop { display: grid; justify-items: center; gap: 7px; padding: 11px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-secondary); text-align: center; font-size: 12px; line-height: 1.45; }
 .google-flow-drop input,.google-flow-batch-drop input { width: 100%; max-width: 100%; font-size: 12px; }
 .google-flow-file-preview { min-width: 0; display: grid; grid-template-columns: minmax(64px,90px) minmax(0,1fr); gap: 11px; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
-.google-flow-file-preview img { width: 100%; max-height: 160px; aspect-ratio: 9/16; object-fit: contain; border-radius: 5px; background: var(--surface-muted); }
+.google-flow-file-preview img,.google-flow-file-preview video { width: 100%; max-height: 160px; aspect-ratio: 9/16; object-fit: contain; border-radius: 5px; background: var(--surface-muted); }
 .google-flow-file-preview>div { display: grid; align-content: start; gap: 7px; min-width: 0; }
 .google-flow-file-preview strong,.google-flow-file-preview small { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .google-flow-file-preview small { color: var(--text-secondary); font-size: 12px; }
@@ -243,7 +251,7 @@
 .google-flow-batch-row>[role="cell"] { min-width: 0; }
 .google-flow-batch-head { position: sticky; top: 0; z-index: 1; min-height: 42px; padding-block: 7px; border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; font-weight: 750; }
 .google-flow-batch-file { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.google-flow-batch-file img { width: 42px; height: 56px; flex: none; object-fit: cover; border-radius: 6px; background: var(--surface-muted); }
+.google-flow-batch-file img,.google-flow-batch-file video { width: 42px; height: 56px; flex: none; object-fit: cover; border-radius: 6px; background: var(--surface-muted); }
 .google-flow-batch-file span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .google-flow-batch-file small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 12px; }
 .google-flow-batch-row select { width: 100%; min-width: 0; min-height: 40px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
@@ -275,7 +283,7 @@
 @media (max-width: 620px) {
   .google-flow-style-fields { grid-template-columns: minmax(0,1fr); }
   .google-flow-file-preview { grid-template-columns: minmax(0,1fr); }
-  .google-flow-file-preview img { width: min(100%,180px); max-height: 220px; justify-self: center; }
+  .google-flow-file-preview img,.google-flow-file-preview video { width: min(100%,180px); max-height: 220px; justify-self: center; }
   .google-flow-batch-dialog { width: calc(100vw - 16px); max-height: 92dvh; padding: 12px; }
   .google-flow-batch-dialog>header { align-items: flex-start; }
   .google-flow-batch-dialog>header h3 { font-size: 17px; }

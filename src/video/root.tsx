@@ -4,7 +4,7 @@ import { durationInFrames } from "../domain/timeline";
 import { defaultMotionPlan, defaultVisualComposition } from "../domain/visual-defaults";
 import { LegacyVideo } from "./legacy-video";
 import { MotionGraphicsVideo } from "./video";
-import { LEGACY_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "./renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "./renderer-version";
 import type { VideoProps } from "./types";
 import { visualCompositionSchema } from "../domain/visual-composition";
 
@@ -28,7 +28,7 @@ const defaultProps: VideoProps = {
 export const VersionedVideo: React.FC<VideoProps> = (props) => {
   const rendererVersion = props.rendererVersion ?? LEGACY_RENDERER_VERSION;
   if (rendererVersion === LEGACY_RENDERER_VERSION) return <LegacyVideo {...props}/>;
-  if (rendererVersion === PREVIOUS_RENDERER_VERSION || rendererVersion === RENDERER_VERSION) return <MotionGraphicsVideo {...props}/>;
+  if (rendererVersion === OLDER_RENDERER_VERSION || rendererVersion === PREVIOUS_RENDERER_VERSION || rendererVersion === RENDERER_VERSION) return <MotionGraphicsVideo {...props}/>;
   throw new Error(`Unsupported renderer version: ${rendererVersion}`);
 };
 

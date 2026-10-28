@@ -3,12 +3,13 @@ import type { VisualStoryboard, VisualStoryboardScene } from "./visual-storyboar
 import { visualObjectLibrary } from "./visual-objects";
 import { defaultGoogleFlowStyleLock, type GoogleFlowStyleLock } from "./google-flow";
 
-export function buildIllustrationPrompt({ research, storyboard, scene, styleLock, previousReference }: {
+export function buildIllustrationPrompt({ research, storyboard, scene, styleLock, previousReference, mode = "still-image" }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
   scene: VisualStoryboardScene;
   styleLock?: GoogleFlowStyleLock;
   previousReference?: { sceneNumber: number; name: string; style: string };
+  mode?: "still-image" | "animated-video";
 }) {
   const lock = styleLockFor(styleLock ?? storyboard.styleLock);
   const objectLabels = scene.objects.map((object) => `${object.label} (${object.role})`);
@@ -18,7 +19,9 @@ export function buildIllustrationPrompt({ research, storyboard, scene, styleLock
   const palette = Object.entries(storyboard.palette).map(([name, color]) => `${name} ${color}`).join(", ");
   const semantic = scene.semanticPlan;
   return [
-    `Create exactly one finished still illustration for one educational short-video scene. Style: ${lock.illustrationStyle}. Portrait 9:16. This is one full-scene illustration, never a multi-panel storyboard or collage.`,
+    mode === "animated-video"
+      ? `Create one continuous animated video clip for one educational short-video scene. Style: ${lock.illustrationStyle}; premium 2D editorial educational illustration. Portrait 9:16. Show one clear educational process from beginning to end; keep subject, environment, palette, and character design consistent throughout.`
+      : `Create exactly one finished still illustration for one educational short-video scene. Style: ${lock.illustrationStyle}. Portrait 9:16. This is one full-scene illustration, never a multi-panel storyboard or collage.`,
     `Video topic: ${research.title}.`,
     `Broader project scientific context (background only; include only facts relevant to this scene and do not combine separate mechanisms): ${research.narration}`,
     `Scene headline (context only; do not render as text): ${scene.headline}.`,
@@ -30,6 +33,12 @@ export function buildIllustrationPrompt({ research, storyboard, scene, styleLock
     `Required relationships and direction: ${relationships.length ? relationships.join("; ") : semantic?.relationships.map((relation) => `${relation.from} ${relation.relation} ${relation.to}`).join("; ") || "Show only relationships explicitly supported by the scene narration and description; do not invent scientific processes."}`,
     `Environment: ${semantic?.environment ?? "Use the environment explicitly described by the scene; do not invent a contradictory setting."}`,
     `Scientific process/explanation: ${semantic?.processAction ?? scene.narrationText}. Preserve scale, cause-and-effect, and spatial relationships accurately; do not add unsupported science.`,
+    ...(mode === "animated-video" ? [
+      `Main subject: ${focus}. Keep its identity, shape, materials, and position coherent for the whole shot.`,
+      `Primary motion/process: ${semantic?.processAction ?? scene.narrationText}. Animate the process itself with clear direction and gradual cause-and-effect; do not substitute cinematic zoom for subject motion.`,
+      `Beginning-to-ending change: Begin with the process in its initial state; show the stated action progressing in visible stages; end with the described result. Do not add a new scene or unsupported event.`,
+      "Camera: stable portrait composition; use only subtle, purposeful camera movement when it helps explain the process. One focal process per clip.",
+    ] : []),
     `Project visual palette: ${palette}. Global palette lock: ${lock.colorPalette}.`,
     `Global lighting lock: ${lock.lighting}.`,
     `Global complexity lock: ${lock.visualComplexity}.`,
@@ -38,7 +47,9 @@ export function buildIllustrationPrompt({ research, storyboard, scene, styleLock
     `Cross-scene consistency lock: ${lock.consistencyInstructions}`,
     "Render attractive, detailed, premium editorial 2D artwork with a clear focal point and cohesive foreground, midground, and background. Keep the educational subject visually rich but legible at phone size. Use one connected environment, not generic icon cards or unrelated floating objects.",
     "Portrait 9:16 for YouTube Shorts, Reels, and TikTok. Keep headline-safe space in the upper area and subtitle-safe space in the lower area; keep essential subject details inside central safe area. Do not add typography because AI Facts Studio renders headline and subtitles separately.",
-    "NEGATIVE INSTRUCTIONS: no text, letters, labels, captions, subtitles, or scene numbering; no watermark or logo; no collage; no multi-panel storyboard, split screen, or comic panels; no generic icon cards or UI panels; no oversized empty background or unrelated detached icons; no scientifically incorrect scale/relationships or invented causal steps.",
+    mode === "animated-video"
+      ? "NEGATIVE INSTRUCTIONS: no text; no captions; no labels; no logos; no watermark; no split panels; no abrupt scene changes; no unnecessary camera movement; no unrelated actions; no unexplained object morphing; no scientifically incorrect scale/relationships or invented causal steps."
+      : "NEGATIVE INSTRUCTIONS: no text, letters, labels, captions, subtitles, or scene numbering; no watermark or logo; no collage; no multi-panel storyboard, split screen, or comic panels; no generic icon cards or UI panels; no oversized empty background or unrelated detached icons; no scientifically incorrect scale/relationships or invented causal steps.",
     lock.referenceAssetIds.length ? `Project visual reference asset IDs: ${lock.referenceAssetIds.join(", ")}. These are stored locally only and are NOT attached to Google Flow. Upload them manually to Flow as visual references if useful; use them only for style/palette, never copy their subject.` : "No project reference image attached. Text-only style consistency is approximate and cannot guarantee identical output across scenes.",
     previousReference
       ? `Optional previous-scene style reference: scene ${previousReference.sceneNumber}, “${previousReference.name}”, style ${previousReference.style}. If manually supplied to Flow, use only as a palette, lighting, outline, and texture guide; do not copy its subject. Consistency is approximate, not guaranteed.`

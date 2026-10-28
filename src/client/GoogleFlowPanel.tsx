@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Copy, Download, ExternalLink, FileImage, RefreshCw, Upload, X } from "lucide-react";
+import { Copy, Download, ExternalLink, FileImage, FileVideo, RefreshCw, Upload, X } from "lucide-react";
 import type { ResearchPackage } from "../domain/research";
 import type { GoogleFlowStyleLock, GoogleFlowMatchScene } from "../domain/google-flow";
 import { googleFlowPromptPack, matchGoogleFlowFiles, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken, validGoogleFlowAssignments } from "../domain/google-flow";
@@ -8,15 +8,17 @@ import { buildIllustrationPrompt } from "../domain/illustration-prompt";
 import type { VisualAsset } from "../domain/visual-assets";
 import type { VisualStoryboard, VisualStoryboardScene } from "../domain/visual-storyboard";
 import { compositionForVisualScene } from "../domain/visual-storyboard";
+import { isAnimatedMediaFile, type SceneMedia } from "../domain/scene-media";
 
 const GOOGLE_FLOW_URL = "https://flow.google.com/";
 type BatchRow = { id: string; file: File; previewUrl: string; sceneId: string | null; reason: string; matchStatus: string; skipped: boolean; manual: boolean; validationError?: string; duplicateOf?: string; serverError?: string };
 export type FlowBatchItem = { id: string; file: File; sceneId: string; prompt: string };
+type FlowVisualMode = "still-image" | "animated-video";
 export type FlowBatchProgress =
   | { stage: "uploading"; percent: number; completedFiles?: number; totalFiles?: number; batchNumber?: number; batchCount?: number }
   | { stage: "processing"; completedFiles?: number; totalFiles?: number; batchNumber?: number; batchCount?: number };
 
-export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, showPanel, onFlowPromptChange, onStyleLockChange, onPreparePrompts, onApplyStyleLock, onUploadReference, onUploadIllustration, onApplyBatch, onRegisterBatchLauncher }: {
+export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, showPanel, onFlowPromptChange, onFlowVisualModeChange, onStyleLockChange, onPreparePrompts, onApplyStyleLock, onUploadReference, onUploadIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyBatch, onRegisterBatchLauncher }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
   scene: VisualStoryboardScene;
@@ -24,17 +26,21 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
   busy: boolean;
   showPanel: boolean;
   onFlowPromptChange: (sceneId: string, prompt: string) => void;
+  onFlowVisualModeChange: (sceneId: string, mode: FlowVisualMode) => void;
   onStyleLockChange: (styleLock: GoogleFlowStyleLock) => void;
   onPreparePrompts: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
   onApplyStyleLock: (prompts: Array<{ sceneId: string; prompt: string }>) => void;
   onUploadReference: (file: File) => Promise<VisualAsset | null>;
   onUploadIllustration: (sceneId: string, file: File, metadata: { source: "ai-generated"; prompt: string; license: string; provider: string; model: string }) => Promise<boolean>;
+  onPrepareSceneMedia: (sceneId: string, file: File) => Promise<SceneMedia | null>;
+  onApplySceneMedia: (sceneId: string, media: SceneMedia) => Promise<boolean>;
   onApplyBatch: (items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) => Promise<{ appliedIds: string[]; failures: Array<{ id: string; fileName: string; message: string }> }>;
   onRegisterBatchLauncher: (open: (() => void) | null) => void;
 }) {
   const [promptDraft, setPromptDraft] = useState<{ sceneId: string; value: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [stagedFile, setStagedFile] = useState<File | null>(null);
+  const [validatedMedia, setValidatedMedia] = useState<SceneMedia | null>(null);
   const [uploading, setUploading] = useState(false);
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
@@ -51,8 +57,8 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
   const referenceInput = useRef<HTMLInputElement>(null);
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const [singlePreview, setSinglePreview] = useState<{ file: File; url: string } | null>(null);
-  const promptReady = Boolean(scene.flowPrompt || promptDraft?.sceneId === scene.sceneId);
-  const prompt = promptDraft?.sceneId === scene.sceneId ? promptDraft.value : scene.flowPrompt ?? "";
+  const promptReady = Boolean(promptDraft?.sceneId === scene.sceneId || scene.flowPrompt && scene.flowPromptMode === scene.flowVisualMode);
+  const prompt = promptDraft?.sceneId === scene.sceneId ? promptDraft.value : scene.flowPromptMode === scene.flowVisualMode ? scene.flowPrompt ?? "" : "";
   const sceneIdentities = storyboard.scenes.map((item): GoogleFlowMatchScene => ({
     sceneId: item.sceneId, sceneNumber: item.sceneNumber, headline: item.headline,
     sceneToken: item.sceneToken ?? stableGoogleFlowSceneToken(item.sceneId),
@@ -65,6 +71,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
 
   useEffect(() => {
     if (!stagedFile) { setSinglePreview(null); return; }
+    setValidatedMedia(null);
     const url = URL.createObjectURL(stagedFile);
     setSinglePreview({ file: stagedFile, url });
     return () => URL.revokeObjectURL(url);
@@ -94,10 +101,10 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
     onFlowPromptChange(scene.sceneId, value);
   };
   const makeAllPrompts = () => storyboard.scenes.map((item) => ({ sceneId: item.sceneId, prompt: buildPrompt(item) }));
-  const buildPrompt = (target: VisualStoryboardScene) => {
+  const buildPrompt = (target: VisualStoryboardScene, mode: FlowVisualMode = target.flowVisualMode) => {
     const index = storyboard.scenes.findIndex((item) => item.sceneId === target.sceneId);
     const previous = storyboard.scenes.slice(0, index).reverse().find((item) => item.flowPrompt || compositionForVisualScene(storyboard, item).layers.some((layer) => layer.nodes.some((node) => node.type === "image")));
-    return buildIllustrationPrompt({ research, storyboard, scene: target, styleLock: storyboard.styleLock,
+    return buildIllustrationPrompt({ research, storyboard, scene: target, styleLock: storyboard.styleLock, mode,
       ...(previous ? { previousReference: { sceneNumber: previous.sceneNumber, name: previous.headline, style: storyboard.styleLock.illustrationStyle } } : {}),
     });
   };
@@ -105,7 +112,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
     const generated = buildPrompt(scene);
     setPromptDraft({ sceneId: scene.sceneId, value: generated });
     onFlowPromptChange(scene.sceneId, generated);
-    setFlowNotice("Prompt scene disiapkan; ilustrasi saat ini tetap.");
+    setFlowNotice(`${scene.flowVisualMode === "animated-video" ? "Prompt animasi" : "Prompt ilustrasi"} disiapkan; visual saat ini tetap.`);
   };
   const editPrompt = () => {
     setPromptExpanded(true);
@@ -114,7 +121,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
   const makePack = () => googleFlowPromptPack(research.title, storyboard.styleLock, storyboard.scenes.map((item) => ({
     sceneId: item.sceneId, sceneNumber: item.sceneNumber, sceneToken: item.sceneToken ?? stableGoogleFlowSceneToken(item.sceneId),
     recommendedFilename: item.recommendedFilename ?? recommendedGoogleFlowFilename(item), headline: item.headline,
-    narrationText: item.narrationText, prompt: item.flowPrompt || buildPrompt(item),
+    narrationText: item.narrationText, prompt: item.flowPrompt && item.flowPromptMode === item.flowVisualMode ? item.flowPrompt : buildPrompt(item),
   })));
   const copy = async (value: string) => {
     try { await navigator.clipboard.writeText(value); setCopied(true); setFlowNotice("Prompt disalin."); }
@@ -135,14 +142,18 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
     setBatchProgress(null);
     if (batchRows.length + files.length > 30) { setBatchError("Maksimal 30 file per batch; tidak ada file yang ditambahkan."); return; }
     const candidates = [...files];
+    const expectedAnimated = batchRows.length ? isAnimatedMediaFile(batchRows[0]!.file) : isAnimatedMediaFile(candidates[0]!);
     const matches = matchGoogleFlowFiles(candidates, sceneIdentities);
     const rows = candidates.map((file, index): BatchRow => {
       const previewUrl = URL.createObjectURL(file);
       urls.current.add(previewUrl);
       const match = matches[index]!;
-      const validationError = !["image/png", "image/jpeg", "image/webp"].includes(file.type) ? "Format tidak didukung. Pilih PNG, JPEG, atau WebP."
-        : file.size <= 0 ? "File kosong. Ekspor ulang gambar dari Google Flow."
-          : file.size > 10 * 1024 * 1024 ? "Ukuran melebihi 10 MB. Kompres/ekspor ulang file ini; file lain tetap bisa diimpor." : undefined;
+      const animation = isAnimatedMediaFile(file);
+      const validStill = ["image/png", "image/jpeg", "image/webp"].includes(file.type);
+      const validationError = animation !== expectedAnimated ? "Pisahkan gambar statis dan klip animasi ke batch berbeda."
+        : !animation && !validStill ? "Format tidak didukung. Pilih PNG, JPEG, WebP, MP4, atau GIF."
+        : file.size <= 0 ? "File kosong. Ekspor ulang media dari Google Flow."
+          : file.size > (animation ? 100 : 10) * 1024 * 1024 ? `Ukuran melebihi ${animation ? "100" : "10"} MB; file lain tetap bisa diimpor.` : undefined;
       return { id: crypto.randomUUID(), file, previewUrl, sceneId: match.status === "matched" ? match.sceneId : null, reason: match.reason, matchStatus: match.status, skipped: false, manual: false, ...(validationError ? { validationError } : {}) };
     });
     const nextRows = [...batchRows, ...rows];
@@ -164,7 +175,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
   };
   const updateBatchRow = (id: string, change: Partial<Pick<BatchRow, "sceneId" | "skipped">>) => setBatchRows((rows) => rows.map((row) => row.id === id ? { ...row, ...change, manual: change.sceneId !== undefined ? true : row.manual } : row));
   const applyBatch = async () => {
-    const items = batchRows.flatMap((row, index) => assignments[index] && row.sceneId && !row.validationError ? [{ id: row.id, file: row.file, sceneId: row.sceneId, prompt: buildPrompt(storyboard.scenes.find((item) => item.sceneId === row.sceneId)!) }] : []);
+    const items = batchRows.flatMap((row, index) => assignments[index] && row.sceneId && !row.validationError ? [{ id: row.id, file: row.file, sceneId: row.sceneId, prompt: buildPrompt(storyboard.scenes.find((item) => item.sceneId === row.sceneId)!, isAnimatedMediaFile(row.file) ? "animated-video" : "still-image") }] : []);
     if (!items.length) return;
     setBatchApplying(true);
     setBatchError("");
@@ -185,6 +196,15 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
     if (!stagedFile) return;
     setUploading(true);
     try {
+      if (scene.flowVisualMode === "animated-video") {
+        if (!validatedMedia) {
+          const media = await onPrepareSceneMedia(scene.sceneId, stagedFile);
+          if (media) { setValidatedMedia(media); setFlowNotice("Klip lolos validasi dan normalisasi. Tinjau preview lalu terapkan ke scene."); }
+          return;
+        }
+        if (await onApplySceneMedia(scene.sceneId, validatedMedia)) { setStagedFile(null); setValidatedMedia(null); }
+        return;
+      }
       const applied = await onUploadIllustration(scene.sceneId, stagedFile, {
         source: "ai-generated", prompt: prompt || buildPrompt(scene), license: "User-provided; Google Flow output imported manually",
         provider: "Google Flow (manual import)", model: "Google Flow",
@@ -203,32 +223,41 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, busy, sho
   const styleField = (key: keyof Omit<GoogleFlowStyleLock, "referenceAssetIds">, label: string, rows = 2) => <label className="editor-field" key={key}>{label}<textarea rows={rows} value={storyboard.styleLock[key]} onChange={(event) => onStyleLockChange({ ...storyboard.styleLock, [key]: event.target.value })}/></label>;
 
   return <><section className={`google-flow-panel ${showPanel ? "" : "google-flow-panel-hidden"}`} aria-label="Google Flow illustration workflow">
-    <header className="google-flow-heading"><div><span className="status-chip">WORKFLOW MANUAL</span><h3>Google Flow</h3><p>Buat ilustrasi dengan Google Flow, lalu impor hasilnya ke scene ini.</p></div></header>
+    <header className="google-flow-heading"><div><span className="status-chip">WORKFLOW MANUAL</span><h3>Google Flow</h3><p>Buat ilustrasi statis atau animasi video dengan Google Flow, lalu impor hasilnya ke scene ini.</p></div></header>
     <div className="google-flow-identity"><strong>Scene {String(scene.sceneNumber).padStart(2, "0")} · {scene.headline}</strong><span>Status: {flowStatusLabel(scene.flowStatus)}</span><small>Nama file: {scene.recommendedFilename ?? recommendedGoogleFlowFilename(scene)}</small></div>
-    {!promptReady ? <button type="button" className="button button-primary full-button" onClick={preparePrompt} disabled={busy}><FileImage size={15} aria-hidden="true"/> Buat Prompt Ilustrasi</button> : <div className="google-flow-actions">
+    <label className="editor-field">Jenis Visual<select value={scene.flowVisualMode} onChange={(event) => { const mode = event.target.value as FlowVisualMode; setPromptDraft(null); setValidatedMedia(null); onFlowVisualModeChange(scene.sceneId, mode); }}>
+      <option value="still-image">Gambar Statis</option><option value="animated-video">Animasi Video (Recommended)</option>
+    </select></label>
+    {!promptReady ? <button type="button" className="button button-primary full-button" onClick={preparePrompt} disabled={busy}>{scene.flowVisualMode === "animated-video" ? <FileVideo size={15} aria-hidden="true"/> : <FileImage size={15} aria-hidden="true"/>} Buat Prompt {scene.flowVisualMode === "animated-video" ? "Animasi" : "Ilustrasi"}</button> : <div className="google-flow-actions">
       <button type="button" className="button button-light" onClick={editPrompt}>Edit Prompt</button>
       <button type="button" className="button button-light" onClick={() => void copy(prompt)}><Copy size={15} aria-hidden="true"/> Salin Prompt</button>
       <a className="button button-light" href={GOOGLE_FLOW_URL} target="_blank" rel="noreferrer noopener"><ExternalLink size={15} aria-hidden="true"/> Buka Google Flow</a>
-      <button type="button" className="button button-primary" onClick={() => singleInput.current?.click()} disabled={busy || uploading}><Upload size={15} aria-hidden="true"/> Import Hasil</button>
+      <button type="button" className="button button-primary" onClick={() => singleInput.current?.click()} disabled={busy || uploading}><Upload size={15} aria-hidden="true"/> {scene.flowVisualMode === "animated-video" ? scene.sceneMedia ? "Replace Media" : "Import Animasi Google Flow" : "Import Hasil"}</button>
     </div>}
     {promptReady && <details className="google-flow-prompt-details" open={promptExpanded} onToggle={(event) => setPromptExpanded(event.currentTarget.open)}>
-      <summary>Prompt ilustrasi · satu scene</summary>
+       <summary>Prompt {scene.flowVisualMode === "animated-video" ? "animasi" : "ilustrasi"} · satu scene</summary>
       <label className="editor-field"><span className="sr-only">Prompt Google Flow scene</span><textarea ref={promptInput} className="google-flow-prompt" rows={7} maxLength={12000} value={prompt} onChange={(event) => setPrompt(event.target.value)} aria-label="Prompt Google Flow scene"/></label>
       <button type="button" className="button button-light full-button" onClick={preparePrompt}><RefreshCw size={14} aria-hidden="true"/> Generate Ulang Prompt</button>
     </details>}
-    <p className="google-flow-note">Satu ilustrasi editorial 2D portrait 9:16 per scene. Style Lock membantu konsistensi, bukan jaminan identik. Google Flow dibuka manual; tidak ada API atau otomasi browser.</p>
+    <p className="google-flow-note">{scene.flowVisualMode === "animated-video" ? "Satu proses bergerak dalam klip portrait 9:16; normalisasi lokal mempertahankan gerakan." : "Satu ilustrasi editorial 2D portrait 9:16 per scene."} Style Lock membantu konsistensi, bukan jaminan identik. Google Flow dibuka manual; tidak ada API atau otomasi browser.</p>
     <div className="google-flow-single-import">
-      <div className="google-flow-drop" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const files = [...event.dataTransfer.files]; if (files.length === 1 && validImageFile(files[0]!)) setStagedFile(files[0]!); else if (files.length > 1) addBatchFiles(files); else setFlowNotice("Pilih satu PNG, JPEG, atau WebP hingga 10 MB."); }}>
-        <Upload size={17} aria-hidden="true"/><strong>Impor hasil untuk scene ini</strong><span>Drop PNG, JPEG, atau WebP. Preview muncul sebelum diterapkan.</span>
-        <input ref={singleInput} type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={busy || uploading} onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file && validImageFile(file)) setStagedFile(file); else if (file) setFlowNotice("Pilih PNG, JPEG, atau WebP hingga 10 MB."); event.currentTarget.value = ""; }}/>
-        <button type="button" className="button button-light" onClick={() => singleInput.current?.click()} disabled={busy || uploading}>Pilih file</button>
-      </div>
-      {stagedFile && singlePreview?.file === stagedFile && <div className="google-flow-file-preview"><img src={singlePreview.url} alt={`Preview ${stagedFile.name}`}/><div><strong>{stagedFile.name}</strong><small>{(stagedFile.size / 1024).toFixed(0)} KB · provenance Flow dilaporkan pengguna</small><button type="button" className="button button-primary full-button" onClick={() => void uploadOne()} disabled={busy || uploading}>{uploading ? "Mengimpor…" : "Gunakan Ilustrasi"}</button><button type="button" className="button button-light full-button" onClick={() => setStagedFile(null)} disabled={uploading}>Batal</button></div></div>}
+       <div className="google-flow-drop" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const files = [...event.dataTransfer.files]; if (files.length === 1 && validFlowFile(files[0]!, scene.flowVisualMode)) setStagedFile(files[0]!); else if (files.length > 1) addBatchFiles(files); else setFlowNotice(scene.flowVisualMode === "animated-video" ? "Pilih MP4 atau GIF animasi hingga 100 MB." : "Pilih PNG, JPEG, atau WebP hingga 10 MB."); }}>
+         <Upload size={17} aria-hidden="true"/><strong>{scene.flowVisualMode === "animated-video" ? "Import animasi untuk scene ini" : "Impor hasil untuk scene ini"}</strong><span>{scene.flowVisualMode === "animated-video" ? "MP4/GIF · validasi codec, dimensi, durasi, fps, dan integritas sebelum diterapkan." : "PNG, JPEG, atau WebP. Preview muncul sebelum diterapkan."}</span>
+         <input ref={singleInput} type="file" accept={scene.flowVisualMode === "animated-video" ? "video/mp4,image/gif,.mp4,.gif" : "image/png,image/jpeg,image/webp"} hidden disabled={busy || uploading} onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file && validFlowFile(file, scene.flowVisualMode)) setStagedFile(file); else if (file) setFlowNotice(scene.flowVisualMode === "animated-video" ? "Pilih MP4 atau GIF animasi hingga 100 MB." : "Pilih PNG, JPEG, atau WebP hingga 10 MB."); event.currentTarget.value = ""; }}/>
+         <button type="button" className="button button-light" onClick={() => singleInput.current?.click()} disabled={busy || uploading}>Pilih file</button>
+       </div>
+       {stagedFile && singlePreview?.file === stagedFile && <div className="google-flow-file-preview">
+          {scene.flowVisualMode === "animated-video" && (stagedFile.type === "video/mp4" || validatedMedia) ? <video className="google-flow-video-preview" src={validatedMedia ? `/scene-media/${encodeURIComponent(validatedMedia.file)}` : singlePreview.url} controls muted playsInline preload="metadata" aria-label={`Preview animasi ${stagedFile.name}`}/> : <img src={singlePreview.url} alt={`Preview ${stagedFile.name}`}/>}
+         <div><strong>{stagedFile.name}</strong><small>{(stagedFile.size / 1024 / 1024).toFixed(1)} MB · provenance Flow dilaporkan pengguna</small>
+           {validatedMedia && <small>{validatedMedia.sourceWidth}×{validatedMedia.sourceHeight} · {validatedMedia.sourceDurationSec.toFixed(2)}s asli · {validatedMedia.sourceFrameRate.toFixed(2)} fps · {validatedMedia.sourceVideoCodec}</small>}
+           <button type="button" className="button button-primary full-button" onClick={() => void uploadOne()} disabled={busy || uploading}>{uploading ? validatedMedia ? "Menerapkan…" : "Validasi & normalisasi…" : scene.flowVisualMode === "animated-video" ? validatedMedia ? "Terapkan ke Scene" : "Validasi & Preview Animasi" : "Gunakan Ilustrasi"}</button>
+           <button type="button" className="button button-light full-button" onClick={() => { setStagedFile(null); setValidatedMedia(null); }} disabled={uploading}>Batal</button></div>
+       </div>}
     </div>
     <details className="editor-advanced google-flow-project-tools">
       <summary>Advanced · prompt pack, Style Lock, batch import</summary>
       <div className="google-flow-project-actions">
-        <button type="button" className="button button-light" onClick={() => onPreparePrompts(storyboard.scenes.filter((item) => !item.flowPrompt).map((item) => ({ sceneId: item.sceneId, prompt: buildPrompt(item) })))} disabled={busy}><FileImage size={15} aria-hidden="true"/> Siapkan Semua Prompt Google Flow</button>
+         <button type="button" className="button button-light" onClick={() => onPreparePrompts(storyboard.scenes.filter((item) => !item.flowPrompt || item.flowPromptMode !== item.flowVisualMode).map((item) => ({ sceneId: item.sceneId, prompt: buildPrompt(item) })))} disabled={busy}><FileImage size={15} aria-hidden="true"/> Siapkan Semua Prompt Google Flow</button>
         <button type="button" className="button button-light" onClick={() => void copy(makePack().markdown)}><Copy size={15} aria-hidden="true"/> Copy Semua Prompt</button>
         <button type="button" className="button button-light" onClick={() => download("md")}><Download size={15} aria-hidden="true"/> Export Markdown</button>
         <button type="button" className="button button-light" onClick={() => download("json")}><Download size={15} aria-hidden="true"/> Export JSON</button>
@@ -282,8 +311,8 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
   return <dialog ref={ref} className="google-flow-batch-dialog" aria-labelledby="google-flow-batch-title" aria-busy={applying} onClose={onClose} onCancel={(event) => { if (applying) event.preventDefault(); }}>
       <header><div><span className="google-flow-batch-eyebrow">GOOGLE FLOW · BATCH</span><h3 id="google-flow-batch-title">Tinjau impor ilustrasi</h3><p>{rows.length} file dipilih <span aria-hidden="true">·</span> {validCount} siap diterapkan <span aria-hidden="true">·</span> {missingScenes.length} scene belum dipasangkan</p></div><button type="button" className="button button-light icon-button" onClick={onClose} disabled={applying} aria-label="Tutup batch import"><X size={16} aria-hidden="true"/></button></header>
       <div className={`google-flow-batch-drop ${applying ? "is-disabled" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!applying) onFiles([...event.dataTransfer.files]); }}>
-        <FileImage size={21} aria-hidden="true"/><div><strong>Lepas gambar di sini atau pilih file</strong><span>PNG, JPEG, atau WebP · maksimal 30 file, 10 MB per file</span></div>
-        <input ref={inputRef} type="file" multiple accept="image/png,image/jpeg,image/webp" hidden disabled={applying} aria-label="Pilih gambar untuk batch import" onChange={(event) => { if (event.currentTarget.files?.length) onFiles(event.currentTarget.files); event.currentTarget.value = ""; }}/>
+         <FileVideo size={21} aria-hidden="true"/><div><strong>Lepas media di sini atau pilih file</strong><span>PNG/JPEG/WebP ≤10 MB · MP4/GIF ≤100 MB · maksimal 30 file</span></div>
+         <input ref={inputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,image/gif,.mp4,.gif" hidden disabled={applying} aria-label="Pilih gambar atau klip animasi untuk batch import" onChange={(event) => { if (event.currentTarget.files?.length) onFiles(event.currentTarget.files); event.currentTarget.value = ""; }}/>
         <button type="button" className="button button-light" onClick={() => inputRef.current?.click()} disabled={applying}>Pilih file</button>
       </div>
       {progress && <div className={`google-flow-batch-progress ${progress.stage}`}>
@@ -299,7 +328,7 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
           const duplicateHint = row.duplicateOf ? ` · duplikat konten, aset dapat dipakai ulang (file ${rows.findIndex((candidate) => candidate.id === row.duplicateOf) + 1})` : "";
           const matchStatus = row.serverError ? `Gagal: ${row.serverError}` : row.validationError ?? (row.skipped ? "Dilewati" : `${valid ? row.manual ? "Assignment manual" : row.reason : sceneConflict ? "Konflik: target scene ganda" : row.reason}${duplicateHint}`);
           return <div className={`google-flow-batch-row ${valid ? "valid" : sceneConflict || row.validationError || row.serverError ? "conflict" : ""}`} role="row" key={row.id}>
-            <div role="cell" className="google-flow-batch-file"><img src={row.previewUrl} alt=""/><span title={row.file.name}>{row.file.name}<small>{(row.file.size / 1024).toFixed(0)} KB</small></span></div>
+             <div role="cell" className="google-flow-batch-file">{row.file.type === "video/mp4" ? <video src={row.previewUrl} muted playsInline preload="metadata" aria-label={`Preview ${row.file.name}`}/> : <img src={row.previewUrl} alt=""/>}<span title={row.file.name}>{row.file.name}<small>{(row.file.size / 1024 / 1024).toFixed(1)} MB</small></span></div>
             <div role="cell"><label className="sr-only" htmlFor={`flow-assignment-${row.id}`}>Pasangkan {row.file.name} ke scene</label>
               <select id={`flow-assignment-${row.id}`} value={row.sceneId ?? ""} disabled={applying || row.skipped} onChange={(event) => onRowChange(row.id, { sceneId: event.target.value || null })}>
                 <option value="">Pilih scene…</option>{scenes.map((scene) => <option key={scene.sceneId} value={scene.sceneId}>Scene {String(scene.sceneNumber).padStart(2, "0")} · {scene.headline}</option>)}
@@ -312,9 +341,13 @@ const GoogleFlowBatchDialog = React.forwardRef<HTMLDialogElement, {
       </div> : <div className="google-flow-batch-empty"><FileImage size={25} aria-hidden="true"/><strong>Belum ada file</strong><span>Pilih beberapa file atau lepas di area impor.</span></div>}
       <div className={`google-flow-batch-missing ${missingScenes.length ? "needs-match" : "all-matched"}`}><strong>{missingScenes.length ? "Scene belum dipasangkan" : "Semua scene terpasang"}</strong><span>{missingScenes.length ? missingScenes.map((scene) => `Scene ${scene.sceneNumber}`).join(", ") : "Semua file valid punya tujuan unik."}</span></div>
       {error && <p className="google-flow-batch-error" role="alert">{error}</p>}
-      <footer><button type="button" className="button button-light" onClick={onClose} disabled={applying}>Batal</button><button type="button" className="button button-primary" onClick={onApply} disabled={!validCount || applying}>{applying ? "Mengimpor…" : `Terapkan Ilustrasi${validCount ? ` (${validCount})` : ""}`}</button></footer>
+       <footer><button type="button" className="button button-light" onClick={onClose} disabled={applying}>Batal</button><button type="button" className="button button-primary" onClick={onApply} disabled={!validCount || applying}>{applying ? "Mengimpor…" : `Terapkan Media${validCount ? ` (${validCount})` : ""}`}</button></footer>
   </dialog>;
 });
+
+function validFlowFile(file: File, mode: FlowVisualMode) {
+  return mode === "animated-video" ? isAnimatedMediaFile(file) && file.size > 0 && file.size <= 100 * 1024 * 1024 : validImageFile(file);
+}
 
 function validImageFile(file: File) {
   return ["image/png", "image/jpeg", "image/webp"].includes(file.type) && file.size > 0 && file.size <= 10 * 1024 * 1024;

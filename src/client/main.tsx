@@ -10,8 +10,9 @@ import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captio
 import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { defaultMotionPlan } from "../domain/visual-defaults";
-import { motionCuePlanSchema, visualCompositionSchema } from "../domain/visual-composition";
+import { motionCuePlanSchema, visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
 import type { VisualAsset } from "../domain/visual-assets";
+import { isAnimatedMediaFile, type SceneMedia } from "../domain/scene-media";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { AssetPlacement, ReusableSceneEntry } from "./SmartAssetLibraryDialog";
@@ -51,7 +52,7 @@ type Job = {
   progress: number;
   attemptCount: number;
   rendererVersion: number;
-  manifest: { width: number; height: number; durationSec: number; videoCodec: string; audioCodec: string | null; audioDurationSec?: number | null; audioMeanVolumeDb?: number | null; audioMaxVolumeDb?: number | null; audioValidation?: "silent-expected" | "pass" | "pass-low-level"; audioLevelWarning?: string | null; audioSource?: string | null; audioSha256?: string | null; audioProvider?: string | null; audioModel?: string | null; audioCacheKey?: string | null; audioScriptSha256?: string | null; audioVoiceId?: string | null; audioVoice?: string | null; audioLocale?: string | null; audioStyle?: string | null; audioSpeakingRate?: number | null; audioApprovedAt?: string | null; bytes: number; sha256: string; rendererVersion?: number } | null;
+  manifest: { width: number; height: number; durationSec: number; videoCodec: string; audioCodec: string | null; audioDurationSec?: number | null; audioMeanVolumeDb?: number | null; audioMaxVolumeDb?: number | null; audioValidation?: "silent-expected" | "pass" | "pass-low-level" | "pass-media"; audioLevelWarning?: string | null; audioSource?: string | null; audioSha256?: string | null; audioProvider?: string | null; audioModel?: string | null; audioCacheKey?: string | null; audioScriptSha256?: string | null; audioVoiceId?: string | null; audioVoice?: string | null; audioLocale?: string | null; audioStyle?: string | null; audioSpeakingRate?: number | null; audioApprovedAt?: string | null; bytes: number; sha256: string; rendererVersion?: number } | null;
   downloadUrl: string | null;
 } | null;
 
@@ -115,12 +116,12 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-function apiWithUploadProgress<T>(url: string, body: FormData, onProgress: (progress: FlowBatchProgress) => void): Promise<T> {
+function apiWithUploadProgress<T>(url: string, body: FormData, onProgress: (progress: FlowBatchProgress) => void, timeoutMs = 120_000): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     let lastPercent = -1;
     xhr.open("POST", url);
-    xhr.timeout = 120_000;
+    xhr.timeout = timeoutMs;
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable && event.total > 0) {
         const percent = Math.round(event.loaded / event.total * 100);
@@ -720,7 +721,7 @@ function App() {
           ...(!("warnings" in change) && prior.motionActions.length ? { warnings: [...prior.warnings.slice(0, 6), "Ilustrasi berubah; Motion Beat dipertahankan untuk ditinjau. Target yang hilang perlu diperbaiki."] } : {}),
         }
       : change;
-    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionOverride", "compositionSource", "illustrationSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
+    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionOverride", "compositionSource", "illustrationSource", "sceneMedia", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
     const artworkChanged = artworkFields.some((field) => field in effectiveChange);
     const copyChanged = effectiveChange.headline !== undefined && effectiveChange.headline !== prior.headline || effectiveChange.narrationText !== undefined && effectiveChange.narrationText !== prior.narrationText;
     const statusAfterReview = effectiveChange.approved === true && prior.authoringStatus === "needs_review" ? "ready_for_review"
@@ -1025,7 +1026,7 @@ function App() {
     const currentComposition = compositionForVisualScene(project.visualStoryboard, current);
     const currentImageId = currentComposition.layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset;
     const replacingImage = currentImageId !== undefined && currentImageId !== assetId;
-    if (!confirmationDone && (current.approved || current.authoringConfirmed || replacingImage) && !await askConfirmation({
+    if (!confirmationDone && (current.approved || current.authoringConfirmed || current.sceneMedia || replacingImage) && !await askConfirmation({
       title: "Ganti ilustrasi scene?",
       message: "Ilustrasi baru mengganti komposisi sekarang dan membatalkan approval. Tinjau hasil baru sebelum approve ulang.",
       confirmLabel: "Ganti ilustrasi",
@@ -1058,6 +1059,7 @@ function App() {
       layers: addToExisting ? [...existingLayers, sourceLayer] : [sourceLayer],
     });
     updateVisualScene(sceneId, {
+      sceneMedia: undefined, flowVisualMode: "still-image",
       composition, compositionType: addToExisting ? current.compositionType : "hero-object-focus", layout: addToExisting ? current.layout : "existing-composition", compositionSource: fromLibrary || !asset || asset.source === "ai-generated" ? "library" : "manual", illustrationSource: source,
       illustrationWorkflow: workflow ?? (fromLibrary ? "asset-library" : asset?.source === "ai-generated" ? "ai-image-api" : "upload-image"),
       objects: addToExisting ? current.objects : [], relationships: addToExisting ? current.relationships : [], visualFocus: addToExisting ? current.visualFocus : null,
@@ -1073,7 +1075,7 @@ function App() {
     if (!project || busy) return false;
     const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
     const currentImageId = scene ? compositionForVisualScene(project.visualStoryboard, scene).layers.flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node])).find((node) => node.type === "image")?.asset : undefined;
-    if (scene && (scene.approved || scene.authoringConfirmed || currentImageId !== undefined) && !await askConfirmation({
+    if (scene && (scene.approved || scene.authoringConfirmed || scene.sceneMedia || currentImageId !== undefined) && !await askConfirmation({
       title: "Ganti ilustrasi scene?",
       message: "File baru mengganti komposisi dan membatalkan approval. Aset tersimpan di library project.",
       confirmLabel: "Unggah & ganti",
@@ -1109,7 +1111,7 @@ function App() {
     setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
       if (scene.sceneId !== sceneId) return scene;
       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-      return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
+       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
   }
@@ -1126,7 +1128,7 @@ function App() {
       const prompt = byScene.get(scene.sceneId);
       if (!prompt || scene.flowPrompt) return scene;
       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-      return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
+       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
     setMessage(`${prompts.length} prompt Flow disiapkan; ilustrasi yang sudah ada tidak diubah.`);
@@ -1146,7 +1148,7 @@ function App() {
       const prompt = byScene.get(scene.sceneId);
       if (!prompt) return scene;
       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-      return { ...scene, flowPrompt: prompt, flowStatus: hasImage ? scene.flowStatus : "prompt-ready" };
+       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
     setMessage("Style Lock diterapkan ke prompt semua scene. Ilustrasi tidak berubah.");
@@ -1171,14 +1173,162 @@ function App() {
     finally { setBusy(false); }
   }
 
+  async function prepareFlowSceneMedia(sceneId: string, file: File): Promise<SceneMedia | null> {
+    if (!project || busy || !isAnimatedMediaFile(file)) return null;
+    const form = new FormData();
+    form.append("media", file, file.name);
+    setBusy(true);
+    try {
+      const result = await apiWithUploadProgress<{ media: SceneMedia }>(
+        `/api/projects/${project.id}/scenes/${encodeURIComponent(sceneId)}/media`, form, () => {}, 300_000,
+      );
+      setMessage("Klip lolos validasi signature, codec, dimensi, durasi, frame rate, dan kerusakan. Tinjau preview sebelum menerapkan.");
+      return result.media;
+    } catch (error) { setMessage(friendlyError(error)); return null; }
+    finally { setBusy(false); }
+  }
+
+  async function applyFlowSceneMedia(sceneId: string, media: SceneMedia): Promise<boolean> {
+    if (!project || busy) return false;
+    const current = project.visualStoryboard.scenes.find((scene) => scene.sceneId === sceneId);
+    if (!current) return false;
+    const hasIllustration = visualImageNodes(compositionForVisualScene(project.visualStoryboard, current)).length > 0;
+    if ((current.sceneMedia || current.approved || current.authoringConfirmed || hasIllustration) && !await askConfirmation({
+      title: "Terapkan atau ganti klip scene?",
+      message: "Klip video menjadi sumber visual utama scene ini. Komposisi gambar dan Motion Beat lama tetap tersimpan, tetapi approval dibatalkan. Scene lain tidak berubah.",
+      confirmLabel: "Terapkan klip",
+      cancelLabel: "Pertahankan visual",
+      tone: "warning",
+    })) return false;
+    updateVisualScene(sceneId, {
+      sceneMedia: media,
+      flowVisualMode: "animated-video",
+      illustrationWorkflow: "google-flow",
+      illustrationSource: "video-clip",
+      authoringConfirmed: false,
+      authoringStatus: "needs_review",
+      flowStatus: "illustration-imported",
+      approved: false,
+      warnings: ["Klip Google Flow diimpor manual; tinjau gerakan, crop, durasi, dan audio sebelum approval.", ...(current.motionActions.length ? ["Motion Beat dipertahankan, tidak ditumpuk otomatis di atas klip video."] : [])],
+    });
+    setMessage("Klip diterapkan ke scene aktif. Komposisi dan Motion Beat lain tetap; tinjau lalu simpan.");
+    return true;
+  }
+
+  async function removeFlowSceneMedia(sceneId: string) {
+    if (!project || busy) return;
+    const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+    if (!scene?.sceneMedia || !await askConfirmation({
+      title: "Gunakan visual statis scene?",
+      message: "Klip dilepas sebagai sumber aktif. File tetap tersimpan; komposisi, gambar, dan Motion Beat lama dipulihkan tanpa mengubah scene lain.",
+      confirmLabel: "Gunakan visual statis",
+      cancelLabel: "Pertahankan klip",
+      tone: "warning",
+    })) return;
+    const composition = compositionForVisualScene(project.visualStoryboard, scene);
+    const image = visualImageNodes(composition)[0]?.node;
+    const asset = image ? project.visualAssets.find((item) => item.id === image.asset) : undefined;
+    const source: VisualStoryboardScene["illustrationSource"] = asset?.source === "ai-generated" ? "ai-image"
+      : image?.asset.startsWith("upload-") ? "upload-image" : image ? "asset-library" : scene.compositionSource === "ai-vector" ? "ai-vector" : "procedural";
+    const workflow: VisualStoryboardScene["illustrationWorkflow"] = source === "ai-image" ? "ai-image-api"
+      : source === "asset-library" ? "asset-library" : source === "ai-vector" ? "ai-vector" : source === "procedural" ? "google-flow" : "upload-image";
+    updateVisualScene(sceneId, {
+      sceneMedia: undefined,
+      flowVisualMode: "still-image",
+      illustrationSource: source,
+      illustrationWorkflow: workflow,
+      authoringConfirmed: false,
+      authoringStatus: "needs_review",
+      flowStatus: image || source === "ai-vector" ? "illustration-imported" : "awaiting-illustration",
+      approved: false,
+      warnings: ["Visual statis dipulihkan; tinjau komposisi dan approval ulang."],
+    });
+    setMessage("Klip dilepas sebagai visual aktif. Komposisi statis lama dipulihkan; simpan perubahan.");
+  }
+
+  async function applyAnimatedFlowBatch(items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) {
+    const empty = { appliedIds: [] as string[], failures: [] as Array<{ id: string; fileName: string; message: string }> };
+    if (!project || busy || !items.length) return empty;
+    const targets = items.map((item) => project.visualStoryboard.scenes.find((scene) => scene.sceneId === item.sceneId));
+    if (items.some((item) => !isAnimatedMediaFile(item.file)) || targets.some((scene) => !scene) || new Set(items.map((item) => item.sceneId)).size !== items.length) {
+      return { ...empty, failures: items.map((item) => ({ id: item.id, fileName: item.file.name, message: "Pilih MP4/GIF dengan assignment scene unik." })) };
+    }
+    const replacing = targets.filter((scene) => scene!.sceneMedia || scene!.approved || scene!.authoringConfirmed || visualImageNodes(compositionForVisualScene(project.visualStoryboard, scene!)).length > 0);
+    if (replacing.length && !await askConfirmation({
+      title: "Terapkan klip animasi ke scene?",
+      message: `${replacing.length} scene memiliki visual atau approval. Klip menjadi sumber aktif; komposisi dan Motion Beat tetap tersimpan, scene lain tidak berubah.`,
+      confirmLabel: "Impor klip",
+      cancelLabel: "Batal",
+      tone: "warning",
+    })) return empty;
+
+    setBusy(true);
+    const failures: Array<{ id: string; fileName: string; message: string }> = [];
+    const imported: Array<{ item: FlowBatchItem; scene: VisualStoryboardScene; media: SceneMedia }> = [];
+    try {
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index]!;
+        const scene = targets[index]!;
+        const form = new FormData();
+        form.append("media", item.file, item.file.name);
+        try {
+          const result = await apiWithUploadProgress<{ media: SceneMedia }>(
+            `/api/projects/${project.id}/scenes/${encodeURIComponent(item.sceneId)}/media`, form,
+            (progress) => onProgress(progress.stage === "uploading"
+              ? { ...progress, percent: Math.round((index + progress.percent / 100) / items.length * 100), completedFiles: index, totalFiles: items.length, batchNumber: index + 1, batchCount: items.length }
+              : { stage: "processing", completedFiles: index + 1, totalFiles: items.length, batchNumber: index + 1, batchCount: items.length }),
+            300_000,
+          );
+          imported.push({ item, scene, media: result.media });
+        } catch (error) {
+          failures.push({ id: item.id, fileName: item.file.name, message: error instanceof Error ? error.message : "Klip gagal divalidasi." });
+        }
+        onProgress({ stage: "processing", completedFiles: index + 1, totalFiles: items.length, batchNumber: index + 1, batchCount: items.length });
+      }
+      if (imported.length) {
+        const importedByScene = new Map(imported.map((entry) => [entry.scene.sceneId, entry]));
+        const scenes = project.visualStoryboard.scenes.map((scene) => {
+          const entry = importedByScene.get(scene.sceneId);
+          if (!entry) return scene;
+          return {
+            ...scene,
+            sceneMedia: entry.media,
+            flowVisualMode: "animated-video" as const,
+            flowPrompt: entry.item.prompt,
+            flowPromptMode: "animated-video" as const,
+            illustrationWorkflow: "google-flow" as const,
+            illustrationSource: "video-clip" as const,
+            authoringConfirmed: false,
+            authoringStatus: "needs_review" as const,
+            approved: false,
+            approvedFingerprint: null,
+            flowStatus: "illustration-imported" as const,
+            warnings: ["Klip Google Flow diimpor manual; tinjau gerakan, crop, durasi, dan audio sebelum approval.", ...(scene.motionActions.length ? ["Motion Beat dipertahankan, tidak ditumpuk otomatis di atas klip video."] : [])],
+          };
+        });
+        const storyboard: VisualStoryboard = { ...project.visualStoryboard, scenes };
+        setProject((current) => current ? { ...current, visualStoryboard: storyboard } : current);
+        setResearch((current) => current ? applyVisualStoryboard(current, storyboard) : current);
+        setSaved(false);
+        setPreviewReviewed(false);
+        setPreviewStarted(false);
+      }
+      setMessage(`${imported.length} klip diterapkan ke scene${failures.length ? `; ${failures.length} gagal—file sukses tetap tersedia` : ""}. Tinjau lalu simpan.`);
+      return { appliedIds: imported.map(({ item }) => item.id), failures };
+    } finally { setBusy(false); }
+  }
+
   async function applyFlowBatch(items: FlowBatchItem[], onProgress: (progress: FlowBatchProgress) => void) {
     const empty = { appliedIds: [] as string[], failures: [] as Array<{ id: string; fileName: string; message: string }> };
     if (!project || busy || !items.length) return empty;
+    const animated = items.some((item) => isAnimatedMediaFile(item.file));
+    if (animated && items.some((item) => !isAnimatedMediaFile(item.file))) return { ...empty, failures: items.map((item) => ({ id: item.id, fileName: item.file.name, message: "Jangan campur gambar statis dan klip animasi dalam satu batch." })) };
+    if (animated) return applyAnimatedFlowBatch(items, onProgress);
     const targets = items.map((item) => project.visualStoryboard.scenes.find((scene) => scene.sceneId === item.sceneId));
     if (targets.some((scene) => !scene) || new Set(items.map((item) => item.sceneId)).size !== items.length) {
       return { ...empty, failures: items.map((item) => ({ id: item.id, fileName: item.file.name, message: "Assignment scene tidak valid atau duplikat." })) };
     }
-    const replacing = targets.filter((scene) => scene!.approved || scene!.motionActions.length > 0 || compositionForVisualScene(project.visualStoryboard, scene!).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
+    const replacing = targets.filter((scene) => scene!.sceneMedia || scene!.approved || scene!.motionActions.length > 0 || compositionForVisualScene(project.visualStoryboard, scene!).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image"))));
     const sharedWorld = project.visualStoryboard.visualWorld;
     if (replacing.length && !await askConfirmation({
       title: sharedWorld ? "Buat override ilustrasi per scene?" : "Ganti ilustrasi scene?",
@@ -1250,7 +1400,7 @@ function App() {
               layers: [{ id: `flow-${imported.asset.sha256.slice(0, 12)}`, depth: 0.05, nodes: [{ type: "image", asset: imported.asset.id, x: 0, y: 0, width: 1080, height: 1920, fit: "cover", position: "center" }] }],
             });
             return {
-              ...withoutSemanticPlan, composition, compositionOverride: sharedWorld ? composition : undefined, compositionType: "hero-object-focus" as const, layout: "existing-composition" as const,
+              ...withoutSemanticPlan, sceneMedia: undefined, flowVisualMode: "still-image" as const, composition, compositionOverride: sharedWorld ? composition : undefined, compositionType: "hero-object-focus" as const, layout: "existing-composition" as const,
               objects: [], relationships: [], visualFocus: null, illustrationIntent: imported.asset.name, motionIntent: "gentle-reveal" as const,
               motionSummary: imported.scene.motionActions.length ? "Ilustrasi berubah; Motion Beat dipertahankan untuk ditinjau. Objek raster bergerak sebagai satu gambar." : "Ilustrasi Google Flow raster bergerak sebagai satu gambar; objek internal tidak dipisah.", motionStatus: imported.scene.motionActions.length ? "needs_review" as const : "not_prepared" as const, motionActions: imported.scene.motionActions,
               compositionSource: "library" as const, illustrationSource: "ai-image" as const, missingVisuals: [],
@@ -1665,7 +1815,7 @@ function App() {
         const updatedJob = await api<NonNullable<Job>>(`/api/jobs/${job.id}`);
         setProject((current) => current ? { ...current, latestJob: updatedJob } : current);
         if (updatedJob.state !== "rendering") {
-          setMessage(updatedJob.state !== "rendered" ? updatedJob.error ?? "Render gagal." : updatedJob.manifest?.audioValidation === "silent-expected" ? "MP4 selesai: video tanpa narasi, track senyap terverifikasi." : updatedJob.manifest?.audioValidation === "pass-low-level" ? "MP4 selesai, tetapi level narasi rendah. Dengarkan dan periksa sebelum dipakai." : updatedJob.manifest?.audioValidation === "pass" ? "MP4 selesai; AAC non-senyap terverifikasi. Dengarkan untuk verifikasi isi narasi." : "MP4 selesai, tetapi metadata validasi audio lama tidak tersedia. Dengarkan sebelum dipakai.");
+          setMessage(updatedJob.state !== "rendered" ? updatedJob.error ?? "Render gagal." : updatedJob.manifest?.audioValidation === "silent-expected" ? "MP4 selesai: video tanpa narasi, track senyap terverifikasi." : updatedJob.manifest?.audioValidation === "pass-media" ? "MP4 selesai; audio klip aktif. Dengarkan isi dan sinkronisasi." : updatedJob.manifest?.audioValidation === "pass-low-level" ? "MP4 selesai, tetapi level narasi rendah. Dengarkan dan periksa sebelum dipakai." : updatedJob.manifest?.audioValidation === "pass" ? "MP4 selesai; AAC non-senyap terverifikasi. Dengarkan untuk verifikasi isi narasi." : "MP4 selesai, tetapi metadata validasi audio lama tidak tersedia. Dengarkan sebelum dipakai.");
           await refresh();
           return;
         }
@@ -1879,11 +2029,15 @@ function App() {
             onSelectAiImageSource={selectAiImageSource}
             onGenerateAiImage={generateAiImage}
             onFlowPromptChange={saveFlowPrompt}
+            onFlowVisualModeChange={(sceneId, mode) => updateVisualScene(sceneId, { flowVisualMode: mode })}
+            onRemoveSceneMedia={(sceneId) => void removeFlowSceneMedia(sceneId)}
             onStyleLockChange={saveFlowStyleLock}
             onPrepareFlowPrompts={prepareFlowPrompts}
             onApplyStyleLock={(prompts) => void applyFlowStyleLock(prompts)}
             onUploadFlowReference={uploadFlowReference}
             onImportFlowIllustration={uploadVisualIllustration}
+            onPrepareSceneMedia={prepareFlowSceneMedia}
+            onApplySceneMedia={applyFlowSceneMedia}
             onApplyFlowBatch={applyFlowBatch}
             imageProviderCatalog={aiImageProviders}
             preparation={project.visualPreparation}
@@ -2424,9 +2578,9 @@ function jobLabel(state?: string) {
 function audioManifestLabel(manifest: NonNullable<Job>["manifest"]) {
   if (!manifest) return "audio belum divalidasi";
   if (manifest.audioValidation === "silent-expected") return "Video tanpa narasi · track senyap";
-  const source = manifest.audioProvider === "mock-gemini" ? "Mock tone (bukan ucapan)" : manifest.audioProvider ? "Gemini TTS" : manifest.audioSource === "upload" ? "Upload manual" : "Audio snapshot";
+  const source = manifest.audioValidation === "pass-media" ? "Audio klip" : manifest.audioProvider === "mock-gemini" ? "Mock tone (bukan ucapan)" : manifest.audioProvider ? "Gemini TTS" : manifest.audioSource === "upload" ? "Upload manual" : "Audio snapshot";
   const level = manifest.audioMeanVolumeDb === null || manifest.audioMeanVolumeDb === undefined ? "level tidak diukur" : `mean ${manifest.audioMeanVolumeDb.toFixed(1)} dB`;
-  const status = manifest.audioValidation === "pass" ? "non-senyap; dengarkan isi" : manifest.audioValidation === "pass-low-level" ? "non-senyap; level rendah" : "validasi belum tersedia";
+  const status = manifest.audioValidation === "pass-media" ? "aktif; dengarkan isi/sinkronisasi" : manifest.audioValidation === "pass" ? "non-senyap; dengarkan isi" : manifest.audioValidation === "pass-low-level" ? "non-senyap; level rendah" : "validasi belum tersedia";
   return `${source} · ${manifest.audioCodec?.toUpperCase() ?? "audio"} · ${status} · ${level}`;
 }
 

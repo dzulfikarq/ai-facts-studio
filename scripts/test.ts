@@ -813,6 +813,7 @@ for (const topic of aiTopics) {
   assert.equal(generatedDraft.researchPackage.scenes.length, 3);
   assert.equal(generatedDraft.researchPackage.scenes.at(-1)!.endSec, input.targetDurationSec);
   assert.equal(generatedDraft.researchPackage.references.length, 0, "unverified user sources are not auto-attached to project references");
+  assert.ok(generatedDraft.researchPackage.scenes.every((scene) => scene.motionCues.length === 1 && scene.motionCues[0] === "cut" && scene.motionPlan.length === 1 && scene.motionPlan[0]!.cue === "cut"), "new AI scenes default to Cut without added Motion Direction effects");
   assert.equal(generatedDraft.review.facts[0]!.verification, "referenced-unverified", "source association never claims an independent fact-check");
 }
 assert.match(buildDevelopmentPrompt(aiInput), /Kenapa air laut asin\?/);
@@ -842,7 +843,9 @@ const fabricatedSourceContent = { ...makeAiContent(aiInput.topic), keyFacts: [{ 
 const fabricatedSourceDraft = buildAiGenerationDraft(aiInput, fabricatedSourceContent, "no-model-reference");
 assert.equal(fabricatedSourceDraft.sourceCandidates.some((source) => source.url.includes("invented.example")), false, "model-invented URLs are never promoted to source candidates");
 assert.equal(fabricatedSourceDraft.review.facts[0]!.verification, "unverified");
-assert.equal(parseManualAiResult(mountain, aiInput, "manual-v1-package").success, true, "manual result accepts existing Research Package v1.0 after migration");
+const manualLegacyPackage = parseManualAiResult(mountain, aiInput, "manual-v1-package");
+assert.equal(manualLegacyPackage.success, true, "manual result accepts existing Research Package v1.0 after migration");
+if (manualLegacyPackage.success) assert.deepEqual(manualLegacyPackage.draft.researchPackage.scenes[0]!.motionPlan, mountain.scenes[0]!.motionPlan, "manual/legacy package retains authored motion configuration");
 assert.equal(aiGenerationInputSchema.safeParse({ ...aiInput, sourceUrls: ["javascript:alert(1)"] }).success, false, "AI source URLs allow HTTP(S) only");
 assert.equal(aiGenerationInputSchema.safeParse({ ...aiInput, sourceUrls: ["https://user:pass@source.example/article"] }).success, false, "AI source URLs reject embedded credentials");
 

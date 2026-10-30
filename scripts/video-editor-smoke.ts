@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { openBrowser } from "@remotion/renderer";
-import { visualStoryboardQualityGate } from "../src/domain/visual-storyboard";
+import { applyVisualStoryboard, visualStoryboardQualityGate } from "../src/domain/visual-storyboard";
 
 const root = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-video-editor-"));
@@ -108,6 +108,22 @@ try {
   const retryFixturePath = path.join(tempDir, "flow-scene-04-retry.png");
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${fixtureColor(4)}:s=720x1280:d=1`, "-frames:v", "1", "-y", retryFixturePath]);
   const retryFixtureBytes = await readFile(retryFixturePath);
+  const flowMotionClipPath = path.join(tempDir, "flow-motion-fixture.mp4");
+  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x2288cc:s=720x1280:r=30:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", "-y", flowMotionClipPath]);
+  const flowMotionProject = await createProject(oneScene);
+  const flowMotionUpload = new FormData();
+  flowMotionUpload.append("media", new Blob([Uint8Array.from(await readFile(flowMotionClipPath))], { type: "video/mp4" }), "flow-motion-fixture.mp4");
+  const flowMotionUploadResponse = await fetch(`${apiUrl}/api/projects/${flowMotionProject.id}/scenes/${flowMotionProject.researchPackage.scenes[0].id}/media`, { method: "POST", body: flowMotionUpload });
+  assert.equal(flowMotionUploadResponse.status, 201, `synthetic Flow clip passes media validation: ${await flowMotionUploadResponse.clone().text()}`);
+  const flowMotionMedia = (await flowMotionUploadResponse.json()).media;
+  const flowMotionBoard = structuredClone(flowMotionProject.visualStoryboard);
+  flowMotionBoard.scenes[0].sceneMedia = flowMotionMedia;
+  flowMotionBoard.scenes[0].flowStatus = "illustration-imported";
+  const flowMotionResearch = applyVisualStoryboard(flowMotionProject.researchPackage, flowMotionBoard);
+  const flowMotionSave = await fetch(`${apiUrl}/api/projects/${flowMotionProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: flowMotionResearch, visualStoryboard: flowMotionBoard, narrationMode: "manual" }),
+  });
+  assert.equal(flowMotionSave.status, 200, `synthetic Flow clip attaches to its stable scene: ${await flowMotionSave.clone().text()}`);
 
   browser = await openBrowser("chrome", { logLevel: "error" });
   const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: () => {}, onLog: () => {} } as never);
@@ -174,6 +190,14 @@ try {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }, { query: selector, nextValue: value });
+  const setFormValue = async (selector: string, value: string) => page.evaluate(({ query, nextValue }) => {
+    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(query);
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, "value")?.set?.call(input, nextValue);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, { query: selector, nextValue: value });
   const captureViewport = async (filename: string) => {
     const client = (page as unknown as { _client: () => { send: (method: string, params?: Record<string, unknown>) => Promise<{ value: any }> } })._client();
     const viewport = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight }));
@@ -204,6 +228,27 @@ try {
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && document.querySelector(".ai-generate-panel") !== null), "Create Video route");
   await captureViewport("create-light-desktop.png");
   await assertResponsiveNoOverflow("Create Video");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLInputElement>(".ai-topic-field input") && !document.querySelector<HTMLInputElement>(".ai-topic-field input")!.disabled && document.querySelector(".ai-advanced-flow"))), "manual AI workflow controls are ready");
+  const generatedSmokeTitle = `Auto-create smoke ${randomUUID().slice(0, 8)}`;
+  assert.equal(await setFormValue(".ai-topic-field input", generatedSmokeTitle), true, "manual AI workflow accepts topic input");
+  await page.evaluate(() => { const details = document.querySelector<HTMLDetailsElement>(".ai-advanced-flow"); if (details) details.open = true; });
+  await clickButton(".ai-manual-actions button", "manual prompt");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".manual-prompt") && document.querySelector(".workflow-alert.attention")?.textContent?.includes("Menunggu output AI"))), "manual prompt enters waiting state");
+  assert.equal(await setFormValue(".manual-prompt-result", "{"), true, "invalid output can be pasted");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".ai-manual-flow button")].find((button) => button.textContent?.includes("Validate & Create Project"))?.click());
+  await waitFor(() => page.evaluate(() => Boolean(location.pathname === "/create" && document.querySelector(".workflow-alert.danger")?.textContent?.includes("Validation Failed"))), "invalid AI output stays in Generate with validation error");
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector(".ai-generation-form") && document.querySelector(".manual-prompt-result"))), true, "invalid output does not create a project or leave the form");
+  assert.equal(await setFormValue(".manual-prompt-result", JSON.stringify(mountain)), true, "valid package can replace invalid output");
+  await page.evaluate(() => {
+    const submit = [...document.querySelectorAll<HTMLButtonElement>(".ai-manual-flow button")].find((button) => button.textContent?.includes("Validate & Create Project"));
+    submit?.click();
+    submit?.click();
+  });
+  await waitFor(() => page.evaluate(() => location.pathname.startsWith("/projects/") && document.querySelector(".workflow-stepper") !== null), "valid manual output auto-creates project and opens Materials");
+  assert.notEqual(await page.evaluate(() => new URLSearchParams(location.search).get("step")), "visual", "AI auto-create opens Materials rather than Visual Storyboard");
+  const generatedSmokeProjects = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<{ id: string; researchPackage: { title: string } }>) => projects.filter((project) => project.researchPackage.title === generatedSmokeTitle));
+  assert.equal(generatedSmokeProjects.length, 1, "double submit creates only one project");
+  projectIds.push(generatedSmokeProjects[0]!.id);
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-icon[aria-label="Pengaturan"]')?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/settings" && document.querySelector(".ai-generation-settings") !== null), "Settings route");
@@ -265,9 +310,10 @@ try {
     duplicateCueEditor: Boolean(document.querySelector(".motion-cue-grid")),
     motionJsonEditor: [...document.querySelectorAll(".visual-json-editor summary")].some((summary) => summary.textContent?.includes("Motion plan")),
   }));
-  assert.deepEqual(materialsMotionControls, { motionTab: false, duplicateCueEditor: false, motionJsonEditor: false }, "Materials step keeps motion controls in Edit Video");
+  assert.deepEqual(materialsMotionControls, { motionTab: false, duplicateCueEditor: false, motionJsonEditor: false }, "Materials step keeps Motion Direction and Motion Beats out of research editing");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-step-id="visual"]')?.click());
   await waitFor(() => page.evaluate(() => new URLSearchParams(location.search).get("step") === "visual" && document.querySelector(".video-editor-v2") !== null), "Visual Storyboard route opens");
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].map((button) => button.textContent?.trim())), ["Visual", "Gerak"], "Visual Storyboard exposes Motion Direction separately from Materials");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "inspector opens for baseline visual checks");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
@@ -493,7 +539,7 @@ try {
 
   await setIllustrationWorkflow("google-flow");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".google-flow-panel"))), "Google Flow workflow panel");
-  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].map((button) => button.textContent?.trim())), ["Visual"], "Visual Storyboard exposes visual authoring only");
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.editor-inspector-tabs [role="tab"]')].map((button) => button.textContent?.trim())), ["Visual", "Gerak"], "Visual Storyboard exposes visual authoring and Motion Direction");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "false"), "close inspector before testing batch modal");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLButtonElement>(".editor-batch-launch") && !document.querySelector<HTMLButtonElement>(".editor-batch-launch")!.disabled)), "batch launcher remains available with inspector closed");
@@ -748,15 +794,16 @@ try {
   assert.ok(artworkProject.visualStoryboard.scenes.every((scene: { approved: boolean }) => !scene.approved), "Edit Video fixture keeps scene approvals pending");
   await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}?step=visual&scene=${encodeURIComponent(mountainBeforeEditor.visualStoryboard.scenes[0].sceneId)}`, timeout: 90_000 });
   await waitFor(() => page.evaluate((title) => new URLSearchParams(location.search).get("step") === "visual" && document.querySelector(".video-editor-v2") !== null && document.querySelector<HTMLInputElement>(".video-editor-title input")?.value === title, mountainProject.researchPackage.title), "Visual Storyboard reloads before Edit Video");
-  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].map((button) => button.textContent?.trim())), ["Visual"], "Visual Storyboard stays separate from Edit Video controls");
-  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}/editor?scene=${encodeURIComponent(mountainBeforeEditor.visualStoryboard.scenes[0].sceneId)}`, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && [...document.querySelectorAll(".editor-inspector-tabs button")].some((button) => button.textContent?.trim() === "Gerak")), "Visual approval unlocks direct Edit Video route");
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].map((button) => button.textContent?.trim())), ["Visual", "Gerak"], "Visual Storyboard owns artwork and Motion Direction tabs");
+  await clickButton(".editor-inspector-toggle", "Visual Storyboard inspector");
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "Motion Direction inspector opens");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
-  await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "Motion Direction controls load only in Edit Video");
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "Motion Direction loads in Visual Storyboard");
+  assert.equal(await page.evaluate(() => document.querySelector(".editor-motion-transition-panel") === null), true, "Visual Storyboard does not expose inter-scene transitions");
   await captureViewport("motion-direction-controls.png");
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  const mobileMotionLayout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, panelRight: Math.round(document.querySelector<HTMLElement>(".editor-inspector")?.getBoundingClientRect().right ?? 0) }));
+  const mobileMotionLayout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, panelRight: Math.round(document.querySelector<HTMLElement>(".video-editor-inspector")?.getBoundingClientRect().right ?? 0) }));
   assert.ok(mobileMotionLayout.scrollWidth <= mobileMotionLayout.width && mobileMotionLayout.panelRight <= mobileMotionLayout.width + 1, `Motion Direction fits mobile viewport: ${JSON.stringify(mobileMotionLayout)}`);
   await captureViewport("motion-direction-390px.png");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
@@ -768,14 +815,6 @@ try {
   assert.equal(await setMotionCue("pan", true), true, "Pan can be enabled per scene");
   assert.equal(await setMotionControl('[aria-label="Durasi Pan (detik)"]', "2.4"), true, "Pan duration input is editable");
   assert.equal(await setMotionControl('.editor-motion-parameters select', "right"), true, "Pan direction input is editable");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-transition button")].find((button) => button.textContent?.trim() === "Crossfade")?.click());
-  assert.equal(await setMotionControl('[aria-label="Durasi transisi (detik)"]', "1.2"), true, "Crossfade duration input is editable");
-  await page.evaluate(() => {
-    const playhead = document.querySelector<HTMLInputElement>("#editor-playhead")!;
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(playhead, "0");
-    playhead.dispatchEvent(new Event("input", { bubbles: true }));
-    playhead.dispatchEvent(new Event("change", { bubbles: true }));
-  });
   assert.ok(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].some((button) => button.textContent?.includes("Pratinjau Efek · Pan"))), "effect preview names selected Motion Direction");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-direction button")].find((button) => button.textContent?.includes("Pratinjau Efek"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.getAttribute("aria-label") === "Jeda video"), "Remotion effect preview starts scene playback");
@@ -785,20 +824,43 @@ try {
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "Motion Direction draft saves");
-  const savedMotion = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
-  const savedSceneMotion = savedMotion.researchPackage.scenes[0].motionPlan;
+  let savedMotion = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  let savedSceneMotion = savedMotion.researchPackage.scenes[0].motionPlan;
   assert.ok(savedSceneMotion.some((plan: { cue: string }) => plan.cue === "fadeIn"), "enabled Fade In persists");
   assert.deepEqual(savedSceneMotion.find((plan: { cue: string }) => plan.cue === "pan"), { cue: "pan", targetLayer: "all", delayFrames: 0, durationFrames: 72, easing: "linear", direction: "right" }, "Pan direction and duration persist");
-  assert.equal(savedSceneMotion.find((plan: { cue: string }) => plan.cue === "dissolve")?.durationFrames, 36, "Crossfade duration persists");
   assert.deepEqual(savedMotion.researchPackage.scenes[1].motionPlan, untouchedSceneMotion, "editing scene one does not change scene two motion");
-  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}/editor?scene=${mountainBeforeEditor.visualStoryboard.scenes[0].sceneId}`, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && Boolean(document.querySelector(".video-editor-v2"))), "reload Motion Direction project while Visual approval is pending");
+
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}/editor?scene=${mountainBeforeEditor.visualStoryboard.scenes[1].sceneId}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelector(".editor-motion-transition-panel") !== null), "Edit Video exposes transition controls");
+  await clickButton(".editor-inspector-toggle", "Edit Video inspector");
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "transition inspector opens");
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].map((button) => button.textContent?.trim())), ["Klip", "Teks", "Transisi", "Audio"], "Edit Video owns clip, text, transitions, and audio tabs");
+  assert.equal(await page.evaluate(() => document.querySelector(".editor-motion-direction") === null && document.querySelector(".editor-motion-beats") === null), true, "Edit Video hides Motion Direction and Motion Beats");
+  const transitionPair = await page.evaluate(() => document.querySelector(".editor-transition-pair")?.textContent?.trim() ?? "");
+  assert.ok(transitionPair.includes(mountainBeforeEditor.researchPackage.scenes[0].onScreenText) && transitionPair.includes(mountainBeforeEditor.researchPackage.scenes[1].onScreenText), `transition inspector identifies outgoing and incoming scenes: ${transitionPair}`);
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-transition button")].find((button) => button.textContent?.trim() === "Crossfade")?.click());
+  assert.equal(await setMotionControl('[aria-label="Durasi transisi (detik)"]', "1.2"), true, "Crossfade duration input is editable");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-transition-panel button")].find((button) => button.textContent?.includes("Pratinjau transisi"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.getAttribute("aria-label") === "Jeda video"), "two-scene Remotion transition preview starts");
+  assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), mountainBeforeEditor.visualStoryboard.scenes[1].sceneId, "transition playback keeps selected incoming scene stable");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "Edit Video transition draft saves");
+  savedMotion = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  assert.equal(savedMotion.researchPackage.scenes[1].motionPlan.find((plan: { cue: string }) => plan.cue === "dissolve")?.durationFrames, 36, "Crossfade duration persists on incoming scene");
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}/editor?scene=${mountainBeforeEditor.visualStoryboard.scenes[1].sceneId}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelector(".editor-motion-transition-panel") !== null), "transition project reloads in Edit Video");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('[aria-label="Durasi transisi (detik)"]')?.value), "1.2", "Crossfade duration survives save/reload");
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}?step=visual&scene=${mountainBeforeEditor.visualStoryboard.scenes[0].sceneId}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => new URLSearchParams(location.search).get("step") === "visual" && Boolean(document.querySelector(".video-editor-v2"))), "return to Visual Storyboard for Motion Beat authoring");
+  await clickButton(".editor-inspector-toggle", "Motion Beat inspector");
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "Visual Storyboard inspector reopens");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
-  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="pan"] input')?.checked)), "Pan remains active after reload");
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "Motion Direction reloads in Visual Storyboard");
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="pan"] input')?.checked)), true, "Pan remains active after Visual Storyboard reload");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.editor-motion-effect[data-cue="pan"] button')?.click());
-  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('[aria-label="Durasi Pan (detik)"]')?.value), "2.4", "Pan duration reloads into editor");
-  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="fadeIn"] input')?.checked), true, "Fade In reloads into editor");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('[aria-label="Durasi Pan (detik)"]')?.value), "2.4", "Pan duration reloads into Visual Storyboard");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>('.editor-motion-effect[data-cue="fadeIn"] input')?.checked), true, "Fade In reloads into Visual Storyboard");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-content button")].find((button) => button.textContent?.includes("Tambah beat jalur magma"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector('[data-motion-path-point="0"]') !== null), "authored Motion Beat exposes editable canvas handles");
   const initialPoint = await page.evaluate(() => document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')?.getAttribute("aria-valuetext") ?? "");
@@ -821,19 +883,57 @@ try {
   const persistedBeat = motionBeatSaved.visualStoryboard.scenes[0].motionActions[0];
   assert.ok(persistedBeat?.path?.length >= 2 && persistedBeat.path[0].x !== 540, "canvas keyboard edit persists in authored path");
   assert.equal(persistedBeat.startFrame, 40, "timeline keyboard nudge persists scene-relative start frame");
+
+  const clipSceneId = flowMotionProject.visualStoryboard.scenes[0].sceneId;
+  await page.goto({ url: `${viteUrl}/projects/${flowMotionProject.id}?step=visual&scene=${clipSceneId}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2") && document.querySelector(".editor-canvas-shell video"))), "Google Flow clip loads in Remotion preview");
+  await clickButton(".editor-inspector-toggle", "Flow clip inspector");
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-scene-media-controls") !== null), "Flow media controls load in Visual Storyboard");
+  const clipTransformBeforeMotion = await page.evaluate(() => {
+    const video = document.querySelector<HTMLVideoElement>(".editor-canvas-shell video");
+    let parent = video?.parentElement;
+    while (parent && !parent.classList.contains("editor-canvas-shell")) {
+      if (parent.style.transform.includes("scale(")) return parent.style.transform;
+      parent = parent.parentElement;
+    }
+    return "";
+  });
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "Motion Direction controls load for Flow clip");
+  assert.equal(await setMotionCue("pan", true), true, "Motion Direction applies to imported Flow clip scene");
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".editor-motion-parameters label")].find((label) => label.textContent?.trim().startsWith("Target"))?.querySelector("select")?.value), "all", "Flow clip motion targets whole media layer");
+  await waitFor(() => page.evaluate((before) => {
+    const video = document.querySelector<HTMLVideoElement>(".editor-canvas-shell video");
+    let parent = video?.parentElement;
+    while (parent && !parent.classList.contains("editor-canvas-shell")) {
+      if (parent.style.transform.includes("scale(")) return parent.style.transform !== before;
+      parent = parent.parentElement;
+    }
+    return false;
+  }, clipTransformBeforeMotion), "Remotion applies Motion Direction transform to Flow video", 80);
+  await captureViewport("google-flow-clip-motion-direction.png");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "Flow clip Motion Direction saves");
+  const savedFlowMotionProject = await fetch(`${apiUrl}/api/projects/${flowMotionProject.id}`).then((response) => response.json());
+  assert.equal(savedFlowMotionProject.researchPackage.scenes[0].sceneMedia.file, flowMotionMedia.file, "Flow clip identity survives Motion Direction save");
+  assert.ok(savedFlowMotionProject.researchPackage.scenes[0].motionPlan.some((plan: { cue: string }) => plan.cue === "pan"), "Motion Direction plan persists with Flow media");
+  await page.goto({ url: `${viteUrl}/projects/${flowMotionProject.id}/editor?scene=${clipSceneId}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelector(".editor-motion-transition-panel") !== null), "Flow clip opens in Edit Video");
+  await clickButton(".editor-inspector-toggle", "Edit Video clip inspector");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Klip")?.click());
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".editor-scene-media-controls input[type=number]").length), 2, "Edit Video owns trim-in and trim-out controls for Flow media");
+  assert.equal(await page.evaluate(() => document.querySelector(".editor-motion-direction") === null), true, "Flow clip Motion Direction remains in Visual Storyboard");
+
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before Visual World reload check");
-  await clickEditorProject(mountainProject.researchPackage.title);
+  await clickProject(mountainProject.researchPackage.title);
   const sharedWorldAfterReload = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
   assert.ok(sharedWorldAfterReload.visualStoryboard.visualWorld?.elements.length > 0, "Visual World survives editor reload");
   assert.equal(sharedWorldAfterReload.visualStoryboard.scenes[0].motionActions[0].startFrame, 40, "edited Motion Beat survives editor reload");
-  assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length > 0), "reloaded editor timeline shows persisted Motion Beat");
+  assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length > 0), "reloaded Visual Storyboard timeline shows persisted Motion Beat");
 
-  await page.goto({ url: viteUrl, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before export flow");
-  await clickProject(exportProject.researchPackage.title);
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-step-id="visual"]')?.click());
-  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2"))), "short project editor");
+  await page.goto({ url: `${viteUrl}/projects/${exportProject.id}?step=visual&scene=${encodeURIComponent(exportProject.visualStoryboard.scenes[0].sceneId)}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => new URLSearchParams(location.search).get("step") === "visual" && Boolean(document.querySelector(".video-editor-v2"))), "short project Visual Storyboard opens directly");
   const renderCanvas = await page.evaluate(() => ({ imageCount: document.querySelectorAll(".editor-canvas-shell image").length, href: document.querySelector<SVGImageElement>(".editor-canvas-shell image")?.getAttribute("href") ?? document.querySelector<SVGImageElement>(".editor-canvas-shell image")?.getAttribute("xlink:href") ?? "" }));
   assert.ok(renderCanvas.imageCount > 0 && renderCanvas.href.includes(renderFixture.asset.file), `editor preview displays imported local raster fixture: ${JSON.stringify(renderCanvas)}`);
   await captureViewport("mountain-google-flow-render-source.png");
@@ -854,7 +954,7 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "approved scene saves");
   await waitFor(async () => (await fetch(`${apiUrl}/api/projects/${exportProject.id}`).then((response) => response.json())).visualStoryboard.scenes[0].approved, "scene approval persists");
   await page.goto({ url: `${viteUrl}/projects/${exportProject.id}/editor`, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && [...document.querySelectorAll(".editor-inspector-tabs button")].some((button) => button.textContent?.trim() === "Gerak")), "explicit visual approval unlocks Edit Video route");
+  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && [...document.querySelectorAll(".editor-inspector-tabs button")].some((button) => button.textContent?.trim() === "Transisi")), "explicit visual approval unlocks Edit Video route");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-back-button")?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".workflow-stepper"))), "workflow returns to project materials");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-step-id="review"]')?.click());
@@ -926,7 +1026,13 @@ try {
   });
   assert.equal(manualTiming.status, 200, "sample fixture explicitly chooses manual narration timing");
   await page.goto({ url: `${viteUrl}/projects/${volcanoProject!.id}/editor`, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelectorAll(".editor-motion-clip").length === 6), "volcano sample remains editable despite Visual quality issues");
+  await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelector(".editor-motion-transition-panel") !== null), "volcano sample remains directly editable despite Visual quality issues");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length), 0, "Edit Video keeps Motion Beats out of its timeline");
+  await page.goto({ url: `${viteUrl}/projects/${volcanoProject!.id}?step=visual`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => new URLSearchParams(location.search).get("step") === "visual" && document.querySelectorAll(".editor-motion-clip").length === 6), "volcano Visual Storyboard exposes six authored Motion Beats");
+  await clickButton(".editor-inspector-toggle", "volcano Visual Storyboard inspector");
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "volcano inspector opens");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Visual")?.click());
   const volcanoEditor = await page.evaluate(() => ({
     scenes: document.querySelectorAll(".editor-scene-item").length,
     beats: document.querySelectorAll(".editor-motion-clip").length,

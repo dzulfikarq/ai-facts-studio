@@ -1998,7 +1998,6 @@ function App() {
           onCreateProject={createAiProject}
           onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
           onUnsavedChange={setCreateDraftUnsaved}
-          onConfirmDiscard={confirmLeaveCreate}
         /></div>
         {createMode === "import" && <><div className="import-card">
           <div className="import-toolbar"><div><strong>Import Research Package</strong><p>JSON tersimpan lokal. Konten dianggap data, tidak menjalankan script.</p></div>

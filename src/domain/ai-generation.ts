@@ -223,7 +223,7 @@ export function buildAiGenerationDraft(input: AiGenerationInput, content: AiGene
       onScreenText: scene.onScreenText,
       templateId: scene.templateId,
       visualDescription: scene.visualDescription,
-      motionCues: scene.motionCues,
+      motionCues: ["cut"],
       sfxCues: [],
       referenceIds: [],
     })),
@@ -306,7 +306,7 @@ export function buildDevelopmentPrompt(input: AiGenerationInput, repairIssues: r
     "",
     "Jangan mengarang fakta, judul sumber, DOI, atau URL. Bedakan fakta, interpretasi, dan ketidakpastian. Gunakan sourceUrls hanya dari daftar URL yang saya berikan; jika tidak ada sumber cocok, gunakan array kosong dan tandai klaim belum terverifikasi.",
     repairIssues.length ? `Respons sebelumnya gagal validasi schema lokal. Perbaiki struktur saja; jangan tambahkan klaim baru. Masalah:\n${repairIssues.slice(0, 8).join("\n")}` : "",
-    "Buat 3–8 scene konkret dengan narrationText, onScreenText (maks 120 karakter), visualDescription (objek + tindakan + perubahan, maks 500 karakter), templateId dari [mountain-reveal, plate-collision, folding-uplift, himalaya, volcano, infographic, space-orbit, animal-habitat], dan motionCues [\"cut\"] untuk scene baru. Jangan tambahkan efek motion otomatis; pengguna mengatur Motion Direction di editor. visualDescription adalah arahan editorial, bukan janji animasi otomatis.",
+    "Buat 3–8 scene konkret dengan narrationText, onScreenText (maks 120 karakter), visualDescription (objek + tindakan + perubahan, maks 500 karakter), templateId dari [mountain-reveal, plate-collision, folding-uplift, himalaya, volcano, infographic, space-orbit, animal-habitat], dan motionCues [\"cut\"] untuk scene baru. Jangan tambahkan efek motion otomatis; pengguna mengatur Motion Direction di Visual Storyboard. visualDescription adalah arahan editorial, bukan janji animasi otomatis.",
     "Kembalikan hanya satu JSON valid berbentuk { summary, category, visualPreset, keyFacts: [{ claim, classification: 'fact'|'interpretation', sourceUrls, uncertaintyNote? }], uncertainties, narration, scenes: [{ narrationText, onScreenText, visualDescription, templateId, motionCues, sourceUrls }] }. category harus salah satu dari [Fakta Unik, Sains & Antariksa, Sejarah & Misteri, Tubuh Manusia, Hewan & Alam, Teknologi, Geografi]; visualPreset dari [flat-2d-storytelling, animated-infographic, cinematic-parallax].",
     "Aplikasi tidak memverifikasi sumber secara otomatis; semua klaim tetap perlu review manusia sebelum publikasi.",
   ].filter(Boolean).join("\n");
@@ -324,6 +324,7 @@ export function buildProductionResearchPrompt(input: AiGenerationInput, repairIs
     "Do not invent or output URLs, DOIs, article titles, publishers, quotations, or source citations. For each key fact and scene, set sourceUrls only to exact URLs from the user-provided list; otherwise use an empty array and express uncertainty.",
     "Separate factual claims from interpretations. Use uncertainties for missing, disputed, or time-sensitive evidence. These are research leads, not fact-check results.",
     `Create 3–8 scenes sized for ${input.targetDurationSec} seconds. Keep narrationText <= 2000 chars, onScreenText <= 120 chars, visualDescription <= 500 chars; describe concrete objects, actions, and changes. visualDescription is editorial direction, not a promise of generated art.`,
+    "For every new scene, set motionCues to [\"cut\"] only. Do not add Motion Direction effects; users configure those in Visual Storyboard.",
     "Use only schema-allowed category, visualPreset, templateId, and motionCues. Do not output references; app will only attach URLs that user supplied and manually approves.",
     repairIssues.length ? `Previous response failed local schema validation. Repair structure only; do not add new factual claims. Issues:\n${repairIssues.slice(0, 8).join("\n")}` : "",
   ].filter(Boolean).join("\n");

@@ -1,8 +1,8 @@
 export const workspaceSteps = [
   { id: "materials", title: "Materi & Storyboard", description: "Riset, scene, naskah, dan arahan visual" },
   { id: "narration", title: "Narasi", description: "Generate atau upload audio; pilih durasi manual" },
-  { id: "visual", title: "Visual Storyboard", description: "Import media Flow dan approve tiap scene" },
-  { id: "editor", title: "Edit Video", description: "Timing, gerak, transisi, teks, dan preview" },
+  { id: "visual", title: "Visual Storyboard", description: "Artwork, media Flow, Motion Direction, Beats, dan approval" },
+  { id: "editor", title: "Edit Video", description: "Transisi, trim, timing final, judul, subtitle, dan preview" },
   { id: "review", title: "Review & Subtitle", description: "Timeline, frasa, dan fakta" },
   { id: "preview", title: "Preview Video", description: "Tinjau hasil lengkap sebelum render" },
   { id: "render", title: "Render & Download", description: "Buat MP4 final" },

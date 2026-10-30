@@ -39,7 +39,7 @@ type AiImageProviderCatalog = {
   retryAt: string | null;
 };
 type EditorAudio = { file: string; name: string; durationSec: number; timingMode: "scaled" | "estimated"; source: "upload" | "tts"; tts?: { voiceName: string; locale: string } } | null;
-type InspectorTab = "visual" | "text" | "motion" | "audio";
+type InspectorTab = "visual" | "text" | "motion" | "transition" | "clip" | "audio";
 type MotionBeatPreset = "static" | "gentle" | "pan-zoom" | "process" | "particles";
 type MotionEffectCue = Exclude<MotionCuePlan["cue"], "cut" | "dissolve" | "slide-transition" | "wipe">;
 type TransitionCue = "cut" | "dissolve" | "slide-transition" | "wipe";
@@ -149,6 +149,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [scenePreviewEnd, setScenePreviewEnd] = useState<number | null>(null);
+  const transitionPreviewLock = useRef(false);
   const playerRef = useRef<PlayerRef>(null);
   const selectedSceneRef = useRef(selectedSceneId);
   const lastUiFrame = useRef(0);
@@ -227,7 +228,10 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
   };
 
   useEffect(() => { selectedSceneRef.current = selectedSceneId; }, [selectedSceneId]);
-  useEffect(() => { if (workspaceMode === "visual") setTab("visual"); }, [workspaceMode]);
+  useEffect(() => {
+    setTab(workspaceMode === "visual" ? "visual" : "transition");
+    if (workspaceMode === "editor") setSelectedMotionBeatRef(null);
+  }, [workspaceMode]);
   useEffect(() => {
     const images = visualImageNodes(selectedComposition);
     const first = images[0];
@@ -257,17 +261,18 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
         const span = sceneTimes(research, item, previewDurationSec, audio?.timingMode);
         return time >= span.startSec && time < span.endSec;
       }) ?? research.scenes.at(-1);
-      if (scene && scene.id !== selectedSceneRef.current) {
+      if (scene && scene.id !== selectedSceneRef.current && !transitionPreviewLock.current) {
         selectedSceneRef.current = scene.id;
         onSelectScene(scene.id);
       }
       if (scenePreviewEnd !== null && detail.frame >= scenePreviewEnd) {
+        transitionPreviewLock.current = false;
         player.pause();
         setScenePreviewEnd(null);
       }
     };
     const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
+    const onPause = () => { transitionPreviewLock.current = false; setPlaying(false); };
     player.addEventListener("frameupdate", onFrame);
     player.addEventListener("play", onPlay);
     player.addEventListener("pause", onPause);
@@ -288,6 +293,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
   const selectScene = (sceneId: string) => {
     const scene = research.scenes.find((item) => item.id === sceneId);
     if (!scene) return;
+    transitionPreviewLock.current = false;
     setScenePreviewEnd(null);
     onSelectScene(sceneId);
     setInspectorOpen(true);
@@ -316,16 +322,17 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
   }, [onChange, selectedScene]);
   const editorInteractions = useMemo<VideoEditorInteractions>(() => ({
     sceneId: selectedScene.sceneId,
-    selectedImageId,
-    onSelectImage: setSelectedImageId,
-    onTransformImage: (nodeId, transform) => editImage(nodeId, transform),
-    selectedMotionPath: selectedPathAction?.path ? { actionId: selectedPathAction.id, points: selectedPathAction.path, pathStyle: selectedPathAction.pathStyle } satisfies EditorMotionPath : null,
+    selectedImageId: workspaceMode === "visual" ? selectedImageId : null,
+    onSelectImage: workspaceMode === "visual" ? setSelectedImageId : () => undefined,
+    onTransformImage: (nodeId, transform) => { if (workspaceMode === "visual") editImage(nodeId, transform); },
+    selectedMotionPath: workspaceMode === "visual" && selectedPathAction?.path ? { actionId: selectedPathAction.id, points: selectedPathAction.path, pathStyle: selectedPathAction.pathStyle } satisfies EditorMotionPath : null,
     onTransformMotionPathPoint: (index, point) => {
+      if (workspaceMode !== "visual") return;
       if (!selectedMotionAction?.path || index >= selectedMotionAction.path.length) return;
       const path = selectedMotionAction.path.map((entry, pointIndex) => pointIndex === index ? point : entry);
       editMotionBeat(selectedMotionAction.id, { path });
     },
-  }), [editImage, editMotionBeat, selectedImageId, selectedPathAction, selectedScene.sceneId]);
+  }), [editImage, editMotionBeat, selectedImageId, selectedPathAction, selectedScene.sceneId, selectedMotionAction, workspaceMode]);
   const playerInputProps = useMemo<VideoProps>(() => ({
     ...previewInputProps(visualResearch, audio?.file, audio?.durationSec, audio?.timingMode),
     editor: editorInteractions,
@@ -393,6 +400,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
     setTab("motion");
   };
   const previewSingleScene = () => {
+    transitionPreviewLock.current = false;
     const start = Math.floor(selectedSpan.startSec * FPS);
     setScenePreviewEnd(Math.floor(selectedSpan.endSec * FPS));
     seekTo(start);
@@ -421,6 +429,23 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
     finally { setGeneratingImage(false); }
   };
   const selectedTrackIndex = research.scenes.findIndex((scene) => scene.id === selectedScene.sceneId);
+  const previousScene = research.scenes[selectedTrackIndex - 1];
+  const previousSpan = previousScene ? sceneSpan(previousScene) : null;
+  const inspectorTabs: ReadonlyArray<readonly [InspectorTab, string]> = workspaceMode === "visual"
+    ? [["visual", "Visual"], ["motion", "Gerak"]]
+    : [["clip", "Klip"], ["text", "Teks"], ["transition", "Transisi"], ["audio", "Audio"]];
+  const previewTransition = () => {
+    if (!previousScene || !previousSpan) return;
+    const incomingStart = Math.floor(selectedSpan.startSec * FPS);
+    const incomingEnd = Math.max(incomingStart, Math.floor(selectedSpan.endSec * FPS) - 1);
+    const start = Math.max(Math.floor(previousSpan.startSec * FPS), incomingStart - Math.round(FPS / 2));
+    const duration = transitionCue === "cut" ? Math.round(FPS / 2) : Math.max(1, activeTransitionPlan?.durationFrames ?? FPS);
+    const transitionEnd = incomingStart + (transitionCue === "cut" ? 0 : activeTransitionPlan?.delayFrames ?? 0) + duration;
+    transitionPreviewLock.current = true;
+    setScenePreviewEnd(Math.min(frameCount - 1, incomingEnd, transitionEnd));
+    seekTo(start);
+    playerRef.current?.play();
+  };
 
   return <section className="video-editor-v2" aria-label="Editor video">
     <header className="video-editor-toolbar">
@@ -444,7 +469,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
 
     <div className={`video-editor-layout inspector-${inspectorOpen ? "open" : "closed"}`}>
       <aside className="video-editor-scenes" aria-label="Daftar scene">
-         <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div><div className="editor-scene-heading-actions"><button type="button" className="button button-light editor-batch-launch" onClick={() => batchLauncher?.()} disabled={busy || !batchLauncher} title={batchLauncher ? "Impor beberapa gambar atau klip Google Flow ke scene" : "Pilih sumber Google Flow di tab Visual untuk membuka batch import"}><Upload size={14} aria-hidden="true"/><span>Import Semua Media</span></button><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div></div>
+         <div className="editor-panel-heading"><div><h2>Scene</h2><span>{research.scenes.length} bagian</span></div>{workspaceMode === "visual" && <div className="editor-scene-heading-actions"><button type="button" className="button button-light editor-batch-launch" onClick={() => batchLauncher?.()} disabled={busy || !batchLauncher} title={batchLauncher ? "Impor beberapa gambar atau klip Google Flow ke scene" : "Pilih sumber Google Flow di tab Visual untuk membuka batch import"}><Upload size={14} aria-hidden="true"/><span>Import Semua Media</span></button><button type="button" className="button button-light icon-button" aria-label="Siapkan ilustrasi yang perlu diperbaiki" title="Siapkan ilustrasi yang perlu diperbaiki" onClick={() => onPrepareIssues(storyboard.scenes.filter((scene) => scene.authoringStatus === "needs_visual_authoring").map((scene) => scene.sceneId))} disabled={!saved || busy || !storyboard.scenes.some((scene) => scene.authoringStatus === "needs_visual_authoring")}><ImagePlus size={16} aria-hidden="true"/></button></div>}</div>
         <div className="editor-scene-list">
           {storyboard.scenes.map((scene, index) => {
             const source = visualResearch.scenes[index]!;
@@ -456,7 +481,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
             </button>;
           })}
         </div>
-        <div className="editor-approval-summary"><span>{storyboard.scenes.filter((scene) => scene.approved).length} / {storyboard.scenes.length} scene disetujui</span><span className={primaryIllustrationsReady ? "ready" : "attention"}>{primaryIllustrationsReady ? "Ilustrasi siap" : "Perlu ilustrasi utama"}</span></div>
+         {workspaceMode === "visual" && <div className="editor-approval-summary"><span>{storyboard.scenes.filter((scene) => scene.approved).length} / {storyboard.scenes.length} scene disetujui</span><span className={primaryIllustrationsReady ? "ready" : "attention"}>{primaryIllustrationsReady ? "Ilustrasi siap" : "Perlu ilustrasi utama"}</span></div>}
       </aside>
 
       <main className="video-editor-center">
@@ -489,7 +514,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
              const span = sceneSpan(scene);
              return [<button type="button" key={scene.id} className={`editor-media-clip ${scene.id === selectedScene.sceneId ? "selected" : ""}`} style={{ left: `${span.startSec / previewDurationSec * 100}%`, width: `${Math.max(0.5, (span.endSec - span.startSec) / previewDurationSec * 100)}%` }} onClick={() => selectScene(scene.id)} aria-label={`Klip ${scene.sceneMedia.sourceFormat.toUpperCase()} scene ${visual.sceneNumber}: ${scene.sceneMedia.name}`} title={`${scene.sceneMedia.name} · trim ${scene.sceneMedia.trimInSec.toFixed(1)}–${scene.sceneMedia.trimOutSec.toFixed(1)}s`}><strong>{scene.sceneMedia.sourceFormat.toUpperCase()}</strong><small>{scene.sceneMedia.shortClip === "loop" ? "loop" : "freeze"}</small></button>];
            })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
-           <div className="editor-track-row"><span>Motion Beat</span><div className="editor-motion-rail" aria-label="Timeline motion beats">
+            {workspaceMode === "visual" && <div className="editor-track-row"><span>Motion Beat</span><div className="editor-motion-rail" aria-label="Timeline motion beats">
             {storyboard.scenes.flatMap((visual) => {
               const scene = research.scenes.find((item) => item.id === visual.sceneId);
               if (!scene) return [];
@@ -527,7 +552,7 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
               });
             })}
             <i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/>
-          </div></div>
+           </div></div>}
           {audio && <div className="editor-track-row"><span>Narasi</span><div className="editor-track-rail"><div className="editor-audio-clip" style={{ left: 0, width: `${Math.min(100, audio.durationSec / previewDurationSec * 100)}%` }} title={audio.name}>{audio.name}</div></div></div>}
           {captionsAvailable && <div className="editor-track-row"><span>Subtitle</span><div className="editor-track-rail">{research.scenes.map((scene) => {
             const span = sceneSpan(scene);
@@ -538,8 +563,8 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
 
       <aside id="video-editor-inspector" className="video-editor-inspector" aria-label="Pengaturan scene terpilih" aria-hidden={!inspectorOpen}>
         <header className="editor-inspector-header"><div className="editor-inspector-scene"><span>SCENE {String(selectedTrackIndex + 1).padStart(2, "0")}</span><strong>{selectedScene.headline}</strong><small>{selectedScene.durationSec.toFixed(1)} detik</small></div><button type="button" className="button button-light icon-button" onClick={() => setInspectorOpen(false)} aria-label="Tutup inspector"><X size={16} aria-hidden="true"/></button></header>
-        <div className="editor-inspector-tabs" role="tablist" aria-label="Panel scene">
-          {([ ["visual", "Visual"], ...(workspaceMode === "editor" ? [["text", "Teks"], ["motion", "Gerak"], ["audio", "Audio"]] as const : []) ] as ReadonlyArray<readonly [InspectorTab, string]>).map(([id, label]) => <button type="button" role="tab" key={id} aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}
+        <div className={`editor-inspector-tabs ${workspaceMode === "visual" ? "visual-mode" : "editor-mode"}`} role="tablist" aria-label="Panel scene">
+          {inspectorTabs.map(([id, label]) => <button type="button" role="tab" key={id} aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}
         </div>
         <div className="editor-inspector-content">
           {tab === "visual" && <>
@@ -584,11 +609,9 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
                <button type="button" className="button button-light full-button" onClick={() => { if (selectedImage && imageBaseline) setImage({ x: imageBaseline.x, y: imageBaseline.y, width: imageBaseline.width, height: imageBaseline.height, fit: imageBaseline.fit, position: imageBaseline.position }); }} disabled={!imageBaseline}><RotateCcw size={14} aria-hidden="true"/> Reset transform</button>
              </details>}
 
-             {selectedScene.sceneMedia && <section className="editor-scene-media-controls" aria-label="Pengaturan klip animasi">
-               <div className="editor-info-box"><strong>Video Clip · {selectedScene.sceneMedia.sourceFormat.toUpperCase()}</strong><span>{selectedScene.sceneMedia.sourceWidth}×{selectedScene.sceneMedia.sourceHeight} · {selectedScene.sceneMedia.sourceDurationSec.toFixed(2)}s asli · {selectedScene.sceneMedia.sourceVideoCodec} → H.264/30 fps.</span></div>
-               <label className="editor-field">Trim masuk · detik<input type="number" min={0} max={Math.max(0, selectedScene.sceneMedia.trimOutSec - 0.1)} step={0.1} value={selectedScene.sceneMedia.trimInSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateSceneMedia({ trimInSec: Math.max(0, Math.min(value, selectedScene.sceneMedia!.trimOutSec - 0.1)) }); }}/></label>
-               <label className="editor-field">Trim keluar · detik<input type="number" min={selectedScene.sceneMedia.trimInSec + 0.1} max={selectedScene.sceneMedia.durationSec} step={0.1} value={selectedScene.sceneMedia.trimOutSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateSceneMedia({ trimOutSec: Math.min(selectedScene.sceneMedia!.durationSec, Math.max(value, selectedScene.sceneMedia!.trimInSec + 0.1)) }); }}/></label>
-               <label className="editor-field">Fit video<select value={selectedScene.sceneMedia.fit} onChange={(event) => updateSceneMedia({ fit: event.target.value as SceneMedia["fit"] })}><option value="cover">Cover · crop aman</option><option value="contain">Contain · tanpa crop</option></select></label>
+              {selectedScene.sceneMedia && <section className="editor-scene-media-controls" aria-label="Media Google Flow">
+                <div className="editor-info-box"><strong>Video Clip · {selectedScene.sceneMedia.sourceFormat.toUpperCase()}</strong><span>{selectedScene.sceneMedia.sourceWidth}×{selectedScene.sceneMedia.sourceHeight} · {selectedScene.sceneMedia.sourceDurationSec.toFixed(2)}s asli · {selectedScene.sceneMedia.sourceVideoCodec} → H.264/30 fps.</span></div>
+                <label className="editor-field">Fit video<select value={selectedScene.sceneMedia.fit} onChange={(event) => updateSceneMedia({ fit: event.target.value as SceneMedia["fit"] })}><option value="cover">Cover · crop aman</option><option value="contain">Contain · tanpa crop</option></select></label>
                <label className="editor-field">Posisi video<select value={selectedScene.sceneMedia.position} onChange={(event) => updateSceneMedia({ position: event.target.value as SceneMedia["position"] })}>{["center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].map((position) => <option key={position} value={position}>{position.replaceAll("-", " ")}</option>)}</select></label>
                <label className="editor-field">Jika klip lebih pendek<select value={selectedScene.sceneMedia.shortClip} onChange={(event) => updateSceneMedia({ shortClip: event.target.value as SceneMedia["shortClip"] })}><option value="loop">Ulangi klip</option><option value="freeze-last-frame">Bekukan frame terakhir</option></select></label>
                <label className="editor-field editor-media-audio"><input type="checkbox" checked={selectedScene.sceneMedia.audioEnabled} disabled={!selectedScene.sceneMedia.audioCodec} onChange={(event) => updateSceneMedia({ audioEnabled: event.target.checked })}/> Gunakan audio klip{selectedScene.sceneMedia.audioCodec ? " · default nonaktif" : " · klip tanpa audio"}</label>
@@ -605,14 +628,23 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
               <label className="editor-field">Model perencana AI<select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={!models.length}>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
               <small>{aiMode === "development" ? plannerAvailable ? "AI Text tersedia setelah tindakan eksplisit." : "Pilih model OpenCode yang tersedia." : "AI planner perlu konfigurasi Development."}</small>
               <button type="button" className="button button-light full-button" onClick={() => onPlan(selectedScene.sceneId)} disabled={!plannerAvailable || busy || planningSceneId !== null}>{planningSceneId === selectedScene.sceneId ? "Merencanakan…" : "Rencana visual AI Text"}</button>
-            </details>
+             </details>
+           </>}
+
+          {tab === "clip" && workspaceMode === "editor" && <>
+            <label className="editor-field">Durasi scene · detik<input type="number" min="0.1" max="120" step="0.1" value={selectedScene.durationSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) onDurationChange(selectedScene.sceneId, value); }}/></label>
+            {selectedScene.sceneMedia ? <section className="editor-scene-media-controls" aria-label="Trim klip">
+              <div className="editor-info-box"><strong>Klip · {selectedScene.sceneMedia.sourceFormat.toUpperCase()}</strong><span>{selectedScene.sceneMedia.name} · {selectedScene.sceneMedia.durationSec.toFixed(2)}s · {selectedScene.sceneMedia.shortClip === "loop" ? "diulang" : "frame akhir dibekukan"}.</span></div>
+              <label className="editor-field">Trim masuk · detik<input type="number" min={0} max={Math.max(0, selectedScene.sceneMedia.trimOutSec - 0.1)} step={0.1} value={selectedScene.sceneMedia.trimInSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateSceneMedia({ trimInSec: Math.max(0, Math.min(value, selectedScene.sceneMedia!.trimOutSec - 0.1)) }); }}/></label>
+              <label className="editor-field">Trim keluar · detik<input type="number" min={selectedScene.sceneMedia.trimInSec + 0.1} max={selectedScene.sceneMedia.durationSec} step={0.1} value={selectedScene.sceneMedia.trimOutSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updateSceneMedia({ trimOutSec: Math.min(selectedScene.sceneMedia!.durationSec, Math.max(value, selectedScene.sceneMedia!.trimInSec + 0.1)) }); }}/></label>
+              <small>Fit, posisi, dan import media diatur di Visual Storyboard.</small>
+            </section> : <div className="editor-info-box"><strong>Scene memakai visual statis</strong><span>Import atau ganti klip Google Flow di Visual Storyboard.</span></div>}
           </>}
 
           {tab === "text" && <>
             <label className="editor-field">Headline<input maxLength={120} value={selectedScene.headline} onChange={(event) => onChange(selectedScene.sceneId, { headline: event.target.value })}/></label>
             <label className="editor-field">Narasi<textarea rows={8} maxLength={2000} value={selectedScene.narrationText} onChange={(event) => onChange(selectedScene.sceneId, { narrationText: event.target.value })}/></label>
             <CaptionSegmentsEditor key={sourceResearchScene.id} scene={sourceResearchScene} onChange={(captionSegments) => onCaptionSegmentsChange(sourceResearchScene.id, captionSegments)}/>
-            <label className="editor-field">Durasi scene · detik<input type="number" min="0.1" max="120" step="0.1" value={selectedScene.durationSec} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) onDurationChange(selectedScene.sceneId, value); }}/></label>
             <fieldset className="editor-overlay-settings"><legend>Judul, subtitle & branding</legend>
               {([["showCategory", "Tampilkan kategori"], ["showTitle", "Tampilkan headline"], ["showSceneLabel", "Tampilkan nomor scene"], ["showSubtitles", "Tampilkan subtitle"], ["showProgress", "Tampilkan progress video"], ["showBranding", "Tampilkan branding"]] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={research.videoOverlaySettings[key]} onChange={(event) => onOverlaySettingsChange({ [key]: event.target.checked })}/>{label}</label>)}
               <label className="editor-field">Nama branding<input maxLength={40} value={research.videoOverlaySettings.brandName} disabled={!research.videoOverlaySettings.showBranding} onChange={(event) => onOverlaySettingsChange({ brandName: event.target.value })}/></label>
@@ -620,20 +652,9 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
             <div className="editor-info-box"><strong>Tampilan teks</strong><span>Headline dan subtitle mengikuti template Remotion aktif. Mengubah naskah dapat membuat audio AI perlu disetujui ulang.</span></div>
           </>}
 
-          {tab === "motion" && <>
+          {tab === "motion" && workspaceMode === "visual" && <>
             <section className="editor-motion-direction" aria-labelledby="editor-motion-direction-title">
-              <div className="editor-section-heading"><h3 id="editor-motion-direction-title">Motion Direction</h3><p>Gerakkan layer visual atau seluruh klip. Efek scene dapat digabung; pilih satu transisi.</p></div>
-              <fieldset className="editor-motion-transition"><legend>Transisi Antar Scene</legend><div>
-                {([ ["cut", "Cut"], ["dissolve", "Crossfade"], ["slide-transition", "Slide"], ["wipe", "Wipe"] ] as const).map(([cue, label]) => <button type="button" key={cue} className={`button ${transitionCue === cue ? "button-primary" : "button-light"}`} aria-pressed={transitionCue === cue} onClick={() => changeTransition(cue)} disabled={busy}>{label}</button>)}
-              </div>{activeTransitionPlan && transitionCue !== "cut" && (() => {
-                const plan = activeTransitionPlan;
-                return <div className="editor-motion-timing-fields">
-                  <label className="editor-field">Durasi transisi · detik<input type="number" aria-label="Durasi transisi (detik)" min="0.1" max="10" step="0.1" value={(plan.durationFrames / FPS).toFixed(1)} disabled={busy} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editTransition({ durationFrames: Math.max(1, Math.min(300, Math.round(value * FPS))) }); }}/></label>
-                  <label className="editor-field">Delay · detik<input type="number" aria-label="Delay transisi (detik)" min="0" max="30" step="0.1" value={(plan.delayFrames / FPS).toFixed(1)} disabled={busy} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editTransition({ delayFrames: Math.max(0, Math.min(900, Math.round(value * FPS))) }); }}/></label>
-                  {transitionCue === "slide-transition" && <label className="editor-field">Arah Slide<select value={plan.direction ?? "right"} disabled={busy} onChange={(event) => editTransition({ direction: event.target.value as MotionCuePlan["direction"] })}>{[["left", "Dari kiri"], ["right", "Dari kanan"], ["up", "Dari atas"], ["down", "Dari bawah"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-                  <label className="editor-field">Easing<select value={plan.easing} disabled={busy} onChange={(event) => editTransition({ easing: event.target.value as MotionCuePlan["easing"] })}>{Object.entries(motionEasingLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                </div>;
-              })()}</fieldset>
+              <div className="editor-section-heading"><h3 id="editor-motion-direction-title">Motion Direction</h3><p>Atur efek visual scene ini. Efek dapat digabung; transisi antar-scene ada di Edit Video.</p></div>
               <div className="editor-motion-effects" aria-label="Animasi Scene">
                 <strong>Animasi Scene</strong>
                 {motionEffects.map(({ cue, label }) => {
@@ -662,10 +683,9 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
               </div> : <div className="editor-info-box"><strong>Pilih efek untuk mengedit</strong><span>Aktifkan checkbox, lalu atur timing, easing, arah, intensitas, dan target.</span></div>}
               <div className="editor-motion-direction-actions">
                 <button type="button" className="button button-primary full-button" onClick={previewSingleScene}>Pratinjau Efek{selectedMotionPlan ? ` · ${motionEffects.find((effect) => effect.cue === selectedMotionCue)?.label}` : " Scene"}</button>
-                <button type="button" className="button button-light" onClick={() => emitMotionPlan(defaultMotionPlan(["cut"]))} disabled={busy}>Tanpa efek · Cut</button>
-                <button type="button" className="button button-light" onClick={() => { setSelectedMotionCue("fadeIn"); emitMotionPlan(defaultMotionPlan(["cut"])); }} disabled={busy}><RotateCcw size={14} aria-hidden="true"/> Reset default · Cut</button>
+                <button type="button" className="button button-light" onClick={() => emitMotionPlan(sceneMotionPlan.filter(isSceneTransitionPlan))} disabled={busy}><RotateCcw size={14} aria-hidden="true"/> Hapus semua efek</button>
               </div>
-              <div className="editor-info-box"><strong>{activeMotionEffects.length ? activeMotionEffects.map((plan) => motionEffects.find((effect) => effect.cue === plan.cue)?.label).join(" · ") : "Tanpa gerakan tambahan"}</strong><span>{selectedScene.sceneMedia ? "GIF/MP4 bergerak sebagai satu klip; efek tidak mengubah objek di dalam raster/video." : "Raster bergerak sebagai satu layer; vector/layer terpisah dapat ditargetkan."} Preview dan MP4 memakai renderer Remotion yang sama.</span></div>
+              <div className="editor-info-box"><strong>{activeMotionEffects.length ? activeMotionEffects.map((plan) => motionEffects.find((effect) => effect.cue === plan.cue)?.label).join(" · ") : "Tanpa gerakan tambahan"}</strong><span>{selectedScene.sceneMedia ? "GIF/MP4 Flow tetap menjadi visual utama; efek diterapkan langsung pada klip, tanpa procedural fallback." : "Raster bergerak sebagai satu layer; vector/layer terpisah dapat ditargetkan."} Preview dan MP4 memakai renderer Remotion yang sama.</span></div>
             </section>
             <section className="editor-motion-beats" aria-label="Motion Beats scene">
                {selectedScene.sceneMedia && <div className="editor-info-box"><strong>Klip Flow bergerak sendiri</strong><span>Motion Beat lama tetap tersimpan, tetapi tidak ditumpuk otomatis di atas video.</span></div>}
@@ -704,17 +724,33 @@ export function VideoEditorV2({ workspaceMode, backLabel, research, storyboard, 
             {motionPreparation && ["failed", "partial_failure", "cancelled"].includes(motionPreparation.status) && <button type="button" className="button button-light full-button" onClick={() => onRetryMotion(motionPreparation.scenes.filter((item) => ["failed", "cancelled"].includes(item.status)).map((item) => item.sceneId), motionPreparation.intensity)} disabled={!saved || busy}>Coba ulang scene gagal</button>}
           </>}
 
+          {tab === "transition" && workspaceMode === "editor" && <section className="editor-motion-transition-panel" aria-labelledby="editor-transition-title">
+            <div className="editor-section-heading"><h3 id="editor-transition-title">Transisi Antar Scene</h3><p>Pilih transition untuk scene masuk. Preview menampilkan scene keluar dan masuk pada timeline Remotion.</p></div>
+            <div className="editor-transition-pair" aria-label="Pasangan scene transisi"><span>{previousScene?.onScreenText ?? "Awal video"}</span><b aria-hidden="true">→</b><span>{selectedScene.headline}</span></div>
+            {!previousScene && <div className="editor-info-box"><strong>Scene pertama</strong><span>Tidak punya scene sebelumnya; transisi masuk tidak berlaku.</span></div>}
+            <fieldset className="editor-motion-transition"><legend>Efek transisi</legend><div>
+              {([ ["cut", "Cut"], ["dissolve", "Crossfade"], ["slide-transition", "Slide"], ["wipe", "Wipe"] ] as const).map(([cue, label]) => <button type="button" key={cue} className={`button ${transitionCue === cue ? "button-primary" : "button-light"}`} aria-pressed={transitionCue === cue} onClick={() => changeTransition(cue)} disabled={busy || !previousScene}>{label}</button>)}
+            </div></fieldset>
+            {activeTransitionPlan && transitionCue !== "cut" && <div className="editor-motion-timing-fields">
+              <label className="editor-field">Durasi transisi · detik<input type="number" aria-label="Durasi transisi (detik)" min="0.1" max="10" step="0.1" value={(activeTransitionPlan.durationFrames / FPS).toFixed(1)} disabled={busy || !previousScene} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editTransition({ durationFrames: Math.max(1, Math.min(300, Math.round(value * FPS))) }); }}/></label>
+              <label className="editor-field">Delay · detik<input type="number" aria-label="Delay transisi (detik)" min="0" max="30" step="0.1" value={(activeTransitionPlan.delayFrames / FPS).toFixed(1)} disabled={busy || !previousScene} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) editTransition({ delayFrames: Math.max(0, Math.min(900, Math.round(value * FPS))) }); }}/></label>
+              {transitionCue === "slide-transition" && <label className="editor-field">Arah Slide<select value={activeTransitionPlan.direction ?? "right"} disabled={busy || !previousScene} onChange={(event) => editTransition({ direction: event.target.value as MotionCuePlan["direction"] })}>{[["left", "Dari kiri"], ["right", "Dari kanan"], ["up", "Dari atas"], ["down", "Dari bawah"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+              <label className="editor-field">Easing<select value={activeTransitionPlan.easing} disabled={busy || !previousScene} onChange={(event) => editTransition({ easing: event.target.value as MotionCuePlan["easing"] })}>{Object.entries(motionEasingLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            </div>}
+            {previousScene && <button type="button" className="button button-primary full-button" onClick={previewTransition}>Pratinjau transisi · 2 scene</button>}
+          </section>}
+
           {tab === "audio" && <>
             {audio ? <><div className="editor-info-box"><strong>{audio.source === "tts" ? audio.tts?.voiceName ?? "AI Voice" : audio.name}</strong><span>{audio.durationSec.toFixed(1)} detik · {audio.timingMode === "estimated" ? "timing perkiraan" : "durasi disesuaikan"}</span></div><audio className="editor-audio-preview" controls preload="metadata" src={`/${audio.file.split("/").map(encodeURIComponent).join("/")}`} aria-label="Pratinjau audio narasi"/><small>Audio aktif project. Timing per kata tidak tersedia untuk semua sumber.</small></> : <div className="editor-info-box"><strong>Audio belum tersedia</strong><span>Render tanpa narasi memerlukan konfirmasi eksplisit.</span></div>}
             <div className="editor-info-box"><strong>Subtitle</strong><span>{sourceResearchScene.captionSegments?.length ? `${sourceResearchScene.captionSegments.length} segmen tersimpan.` : "Dibentuk dari narasi scene saat preview dan render."}</span></div>
           </>}
 
-           <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} showPanel={tab === "visual" && selectedScene.illustrationWorkflow === "google-flow"} onFlowPromptChange={onFlowPromptChange} onFlowVisualModeChange={onFlowVisualModeChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onPrepareSceneMedia={onPrepareSceneMedia} onApplySceneMedia={onApplySceneMedia} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>
+           <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} showPanel={workspaceMode === "visual" && tab === "visual" && selectedScene.illustrationWorkflow === "google-flow"} onFlowPromptChange={onFlowPromptChange} onFlowVisualModeChange={onFlowVisualModeChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onPrepareSceneMedia={onPrepareSceneMedia} onApplySceneMedia={onApplySceneMedia} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>
         </div>
-        <footer className="editor-inspector-footer">
+        {workspaceMode === "visual" && <footer className="editor-inspector-footer">
           {sceneIssueList.length > 0 && <details className="editor-advanced editor-validation"><summary>{needsArtwork ? "Masalah visual" : `${sceneIssueList.length} pemeriksaan`}</summary>{needsArtwork && <p>Ilustrasi belum tersedia.</p>}{!needsArtwork && <ul>{sceneIssueList.map((issue) => <li key={issue}>{issue}</li>)}</ul>}</details>}
           <button type="button" className={`button ${selectedScene.approved ? "button-light" : "button-primary"} full-button`} onClick={() => onChange(selectedScene.sceneId, { approved: !selectedScene.approved })} disabled={busy || (!selectedScene.approved && (needsArtwork || sceneIssueList.length > 0))}>{selectedScene.approved ? "Batalkan persetujuan" : "Setujui scene"}</button>
-        </footer>
+        </footer>}
       </aside>
     </div>
 

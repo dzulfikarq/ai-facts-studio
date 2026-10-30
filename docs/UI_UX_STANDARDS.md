@@ -23,7 +23,7 @@
 - Keep keyboard access, visible `:focus-visible` rings, accessible names, semantic status, native control behavior, and reduced-motion support.
 - Preserve Light, Dark, and System appearance on every page and dialog. Theme changes must not affect project or renderer data.
 - Video scene controls must keep trim, fit/crop, loop/freeze, and opt-in audio keyboard-accessible; clip audio stays off by default and separate from narration approval.
-- Motion Direction, scene timing, transitions, overlays, and preview controls belong in Edit Video; Visual Storyboard owns visual authoring/approval. New scenes default to no effects and Cut. Keep Motion Beat separate and layer/media limits explicit.
+- Visual Storyboard owns artwork, Flow media, Motion Direction, Motion Beats, and per-scene approval. Edit Video owns inter-scene transitions, clip trim, final timing, title/subtitle overlays, and preview. New scenes default to no added effects and Cut. Keep Motion Beat separate and layer/media limits explicit.
 
 ## Verification
 

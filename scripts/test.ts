@@ -130,7 +130,12 @@ for (const name of samples) {
 
 const mountain = parsedSamples[0]!;
 assert.equal(mountain.videoOverlaySettings.showTitle, true, "legacy packages receive default title overlay settings");
-assert.equal(mountain.videoOverlaySettings.brandName, "AI FACTS STUDIO", "legacy packages receive default branding settings");
+assert.equal(mountain.videoOverlaySettings.showSubtitles, true, "new packages show subtitles by default");
+assert.equal(mountain.videoOverlaySettings.showBranding, false, "new packages hide branding by default");
+assert.equal(mountain.videoOverlaySettings.brandName, "AI FACTS STUDIO", "default brand name remains available when branding is enabled");
+const savedOverlayPreferences = parseResearchPackage({ ...mountain, videoOverlaySettings: { ...mountain.videoOverlaySettings, showTitle: false, showBranding: true } });
+assert.equal(savedOverlayPreferences.success && savedOverlayPreferences.data.videoOverlaySettings.showTitle, false, "saved title preference survives schema parsing");
+assert.equal(savedOverlayPreferences.success && savedOverlayPreferences.data.videoOverlaySettings.showBranding, true, "saved branding preference survives schema parsing");
 const seaSalt = parsedSamples.find((sample) => sample.id === "why-seawater-is-salty-id")!;
 const solarProtection = parsedSamples.find((sample) => sample.id === "earth-solar-protection-id")!;
 const rainbow = parsedSamples.find((sample) => sample.id === "how-rainbows-form-id")!;

@@ -4,7 +4,7 @@ Importer remains strict. Existing v1.0 files are validated using their original 
 
 ## Root fields (both versions)
 
-`schemaVersion`, `id`, `title`, `category`, `visualPreset`, `language`, `targetDurationSec`, `aspectRatio` (`9:16`), `narration`, `references`, `scenes`. Optional `videoOverlaySettings` controls category/title/scene label/subtitles/progress/branding visibility and brand name; defaults preserve current overlays.
+`schemaVersion`, `id`, `title`, `category`, `visualPreset`, `language`, `targetDurationSec`, `aspectRatio` (`9:16`), `narration`, `references`, `scenes`. Optional `videoOverlaySettings` controls category/title/scene label/subtitles/progress/branding visibility and brand name; title, subtitles, category, scene label, and progress default on, branding defaults off. Explicit saved preferences remain unchanged.
 
 Reference: unique `id`, `title`, `publisher`, HTTP(S) `url`, ISO `checkedAt`, optional ISO `publishedAt`.
 

@@ -89,7 +89,7 @@ const packageFields = {
     showProgress: z.boolean(),
     showBranding: z.boolean(),
     brandName: z.string().trim().max(40),
-  }).strict().default({ showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: true, brandName: "AI FACTS STUDIO" }),
+  }).strict().default({ showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: false, brandName: "AI FACTS STUDIO" }),
   references: z.array(referenceSchema).max(50),
 };
 

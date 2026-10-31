@@ -21,7 +21,7 @@ const defaultProps: VideoProps = {
   research: {
     schemaVersion: "1.1", id: "preview", title: "AI Facts Studio", category: "Sains & Antariksa",
     visualPreset: "cinematic-parallax", language: "id-ID", targetDurationSec: 56, aspectRatio: "9:16",
-    narration: "", videoOverlaySettings: { showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: true, brandName: "AI FACTS STUDIO" }, references: [], scenes: [defaultScene],
+    narration: "", videoOverlaySettings: { showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: false, brandName: "AI FACTS STUDIO" }, references: [], scenes: [defaultScene],
   },
 };
 

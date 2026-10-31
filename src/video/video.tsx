@@ -9,8 +9,9 @@ import { sceneTransitionOpacity, sceneTransitionPlan } from "./motion";
 import { layerMotion } from "./motion";
 import { rendererRegistry } from "./renderer-registry";
 import { visualStyles } from "./style-config";
-import { RENDERER_VERSION } from "./renderer-version";
+import { PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "./renderer-version";
 import type { SceneMedia } from "../domain/scene-media";
+import { outroTrimFrames } from "../domain/outro";
 
 function wrapText(text: string, width: number, maxLines: number) {
   const lines: string[] = [];
@@ -122,12 +123,21 @@ function findSceneIndex(research: ResearchPackage, durationSec: number, time: nu
   return next < 0 ? research.scenes.length - 1 : Math.max(0, next - 1);
 }
 
-export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile, audioDurationSec, audioTimingMode, rendererVersion, editor }) => {
+export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile, audioDurationSec, audioTimingMode, rendererVersion, outro, editor }) => {
   const frame = useCurrentFrame();
   const fps = 30;
-  const durationSec = rendererVersion !== undefined && rendererVersion < RENDERER_VERSION
+  const durationSec = rendererVersion !== undefined && rendererVersion < PREVIOUS_RENDERER_VERSION
     ? audioDurationSec && audioDurationSec > 0 ? audioDurationSec : research.targetDurationSec
     : timelineDuration(research, audioDurationSec, audioTimingMode);
+  const mainDurationFrames = Math.max(1, Math.ceil(durationSec * fps));
+  const outroFrames = rendererVersion === RENDERER_VERSION ? outroTrimFrames(outro ? { enabled: true, trimInSec: outro.trimInSec, trimOutSec: outro.trimOutSec } : null, fps) : 0;
+  if (outro && outroFrames && frame >= mainDurationFrames) {
+    return <AbsoluteFill style={{ backgroundColor: "#000", overflow: "hidden" }}>
+      <Sequence from={mainDurationFrames} durationInFrames={outroFrames} layout="none">
+        <Video src={staticFile(outro.file)} trimBefore={Math.round(outro.trimInSec * fps)} trimAfter={Math.round(outro.trimOutSec * fps)} muted={!outro.audioEnabled} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center" }}/>
+      </Sequence>
+    </AbsoluteFill>;
+  }
   const time = frame / fps;
   const style = visualStyles[research.visualPreset];
   const overlays = research.videoOverlaySettings ?? { showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: false, brandName: "AI FACTS STUDIO" };
@@ -202,6 +212,6 @@ export const MotionGraphicsVideo: React.FC<VideoProps> = ({ research, audioFile,
   </AbsoluteFill>;
 };
 
-export function previewInputProps(research: ResearchPackage, audioFile?: string, audioDurationSec?: number, audioTimingMode?: "scaled" | "estimated", rendererVersion = RENDERER_VERSION): VideoProps {
-  return { research, audioFile, audioDurationSec, audioTimingMode, rendererVersion };
+export function previewInputProps(research: ResearchPackage, audioFile?: string, audioDurationSec?: number, audioTimingMode?: "scaled" | "estimated", rendererVersion = RENDERER_VERSION, outro?: VideoProps["outro"]): VideoProps {
+  return { research, audioFile, audioDurationSec, audioTimingMode, rendererVersion, outro };
 }

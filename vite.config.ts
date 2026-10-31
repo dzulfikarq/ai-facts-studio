@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         },
         "/audio": { target: `http://${targetHost}:${apiPort}` },
         "/visual-assets": { target: `http://${targetHost}:${apiPort}` },
+        "/outros": { target: `http://${targetHost}:${apiPort}` },
       },
     },
   };

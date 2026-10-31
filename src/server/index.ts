@@ -20,6 +20,7 @@ import { motionIntensitySchema, planSceneMotion } from "../domain/motion-directo
 import { trustedImageAssets } from "../domain/visual-composition";
 import { visualAssetSchema, type VisualAsset, type VisualLibraryEntry } from "../domain/visual-assets";
 import { sceneMediaSchema, type SceneMedia } from "../domain/scene-media";
+import { outroSelectionSchema, type OutroLibraryAsset, type OutroSelection } from "../domain/outro";
 import { estimateSceneTimings, narrationScript } from "../domain/voice-timing";
 import { invalidateBundleCache, renderSnapshot, type RenderSnapshot } from "../../scripts/render-core";
 import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-version";
@@ -45,11 +46,12 @@ const root = process.cwd();
 const audioDir = path.resolve(root, "public/audio");
 const visualAssetDir = path.resolve(root, "public/visual-assets");
 const sceneMediaDir = path.resolve(root, "public/scene-media");
+const outroDir = path.resolve(root, "public/outros");
 const jobDir = path.join(dataDir, "jobs");
 const renderDir = path.resolve(root, "renders");
 const samplePath = path.resolve(root, "samples/mountain-formation.json");
 const volcanoSamplePath = path.resolve(root, "samples/volcano-formation.json");
-const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir, "visual-assets": visualAssetDir, "scene-media": sceneMediaDir };
+const cleanupRoots = { audio: audioDir, jobs: jobDir, renders: renderDir, "visual-assets": visualAssetDir, "scene-media": sceneMediaDir, outros: outroDir };
 type CleanupRoot = keyof typeof cleanupRoots;
 const maxUploadMb = Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 100));
 const dailyLimit = Math.max(1, Number(process.env.DAILY_JOB_LIMIT ?? 1));
@@ -105,10 +107,19 @@ const sceneMediaUpload = multer({
     done(new Error("Pilih MP4 atau GIF animasi dengan MIME dan ekstensi yang cocok."));
   },
 });
+const outroUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: Math.min(maxUploadMb, 100) * 1024 * 1024, files: 1 },
+  fileFilter: (_request, file, done) => {
+    if (file.mimetype === "video/mp4" && path.extname(file.originalname).toLowerCase() === ".mp4") return done(null, true);
+    done(new Error("Unggah file MP4 dengan ekstensi dan MIME video/mp4."));
+  },
+});
 
 await mkdir(audioDir, { recursive: true });
 await mkdir(visualAssetDir, { recursive: true });
 await mkdir(sceneMediaDir, { recursive: true });
+await mkdir(outroDir, { recursive: true });
 await mkdir(jobDir, { recursive: true });
 await mkdir(renderDir, { recursive: true });
 indexTablerIcons(db);
@@ -119,8 +130,50 @@ function projectRow(id: string) {
   return db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as { id: string; data_json: string; created_at: string; updated_at: string } | undefined;
 }
 
+type OutroRow = {
+  id: string; name: string; file: string; sha256: string; bytes: number; poster_file: string; poster_sha256: string; poster_bytes: number;
+  duration_sec: number; width: number; height: number; video_codec: "h264"; audio_codec: string | null; frame_rate: number;
+  is_default: number; archived: number; created_at: string; updated_at: string;
+};
+
+function outroAssetFromRow(row: OutroRow): OutroLibraryAsset {
+  return {
+    id: row.id, name: row.name, file: row.file, sha256: row.sha256, bytes: row.bytes,
+    posterFile: row.poster_file, posterSha256: row.poster_sha256, posterBytes: row.poster_bytes,
+    durationSec: row.duration_sec, width: row.width, height: row.height, videoCodec: row.video_codec,
+    audioCodec: row.audio_codec, frameRate: row.frame_rate as 30, isDefault: row.is_default === 1,
+    archived: row.archived === 1, createdAt: row.created_at, updatedAt: row.updated_at,
+    localAvailable: /^[a-f0-9]{64}\.mp4$/.test(row.file) && existsSync(path.resolve(outroDir, row.file)),
+    previewUrl: `/outros/${encodeURIComponent(row.file)}`, posterUrl: `/outros/${encodeURIComponent(row.poster_file)}`,
+  };
+}
+
+function outroRow(id: string, includeArchived = true) {
+  return db.prepare(`SELECT * FROM outro_assets WHERE id = ?${includeArchived ? "" : " AND archived = 0"}`).get(id) as OutroRow | undefined;
+}
+
+function outroLibraryResponse() {
+  const rows = db.prepare("SELECT * FROM outro_assets WHERE archived = 0 ORDER BY is_default DESC, created_at DESC").all() as OutroRow[];
+  return {
+    outros: rows.map((row) => ({ ...outroAssetFromRow(row), projectReferenceCount: projectOutroReferenceCount(row.id) })),
+    defaultOutroId: rows.find((row) => row.is_default === 1)?.id ?? null,
+  };
+}
+
+async function writeOutroFile(file: string, checksum: string, bytes: Buffer) {
+  if (!/^[a-f0-9]{64}\.(mp4|jpg)$/.test(file) || file.slice(0, 64) !== checksum) throw new Error("Nama file outro tidak valid.");
+  const target = path.resolve(outroDir, file);
+  if (path.dirname(target) !== outroDir) throw new Error("Path outro keluar dari storage yang diizinkan.");
+  if (existsSync(target)) {
+    if (await sha256File(target) !== checksum) throw new Error("File outro content-addressed sudah ada dengan hash berbeda.");
+    return;
+  }
+  await writeFile(target, bytes, { flag: "wx" });
+}
+
 function snapshotForProject(project: StoredProject): RenderSnapshot {
   if (project.visualStoryboardError) throw new Error(project.visualStoryboardError);
+  if (project.outroError) throw new Error(project.outroError);
   const extension = project.audio ? path.extname(project.audio.file) : "";
   const referencedAssetIds = new Set(project.visualStoryboard.scenes.flatMap((scene) => compositionForVisualScene(project.visualStoryboard, scene).layers
     .flatMap((layer) => layer.nodes.flatMap((node) => node.type === "group" ? node.children : [node]))
@@ -130,6 +183,17 @@ function snapshotForProject(project: StoredProject): RenderSnapshot {
     visualAssets: project.visualAssets.filter((asset) => referencedAssetIds.has(asset.id)),
     sceneMedia: project.visualStoryboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia] : []),
     rendererVersion: RENDERER_VERSION,
+    outro: project.outro?.enabled ? (() => {
+      const selection = outroSelectionSchema.parse(project.outro);
+      const asset = outroRow(selection.assetId);
+      if (!asset) throw new Error("Outro project tidak ditemukan. Tidak ada fallback outro otomatis.");
+      if (selection.trimOutSec > asset.duration_sec) throw new Error("Trim outro melewati durasi asset yang tersimpan.");
+      return {
+        assetId: asset.id, name: asset.name, file: `outros/${asset.file}`, sha256: asset.sha256, bytes: asset.bytes,
+        durationSec: asset.duration_sec, trimInSec: selection.trimInSec, trimOutSec: selection.trimOutSec,
+        audioEnabled: selection.audioEnabled,
+      };
+    })() : null,
     audio: project.audio ? {
       file: `audio/jobs/${project.audio.sha256}${extension}`,
       durationSec: project.audio.durationSec,
@@ -173,10 +237,12 @@ function snapshotContentMatchesProject(snapshotPath: string, project: StoredProj
     const currentVisualResearch = parseResearchPackage(applyVisualStoryboard(project.researchPackage, project.visualStoryboard));
     if (!oldResearch.success || !currentResearch.success || !currentVisualResearch.success) return false;
     const audioContent = (audio: RenderSnapshot["audio"]) => audio ? { file: audio.file, durationSec: audio.durationSec, timingMode: audio.timingMode ?? "scaled" } : null;
-     const oldContent = { research: oldResearch.data, audio: audioContent(snapshot.audio), assets: (snapshot.visualAssets ?? []).map((asset) => [asset.file, asset.sha256]) };
-     const audio = audioContent(snapshotForProject(project).audio);
-      const assets = (snapshotForProject(project).visualAssets ?? []).map((asset) => [asset.file, asset.sha256]);
-     return [currentResearch.data, currentVisualResearch.data].some((research) => JSON.stringify(oldContent) === JSON.stringify({ research, audio, assets }));
+      const outroContent = (outro: RenderSnapshot["outro"]) => outro ? [outro.assetId ?? null, outro.file, outro.sha256, outro.trimInSec, outro.trimOutSec, outro.audioEnabled] : null;
+      const oldContent = { research: oldResearch.data, audio: audioContent(snapshot.audio), assets: (snapshot.visualAssets ?? []).map((asset) => [asset.file, asset.sha256]), outro: outroContent(snapshot.outro) };
+      const currentSnapshot = snapshotForProject(project);
+      const audio = audioContent(currentSnapshot.audio);
+      const assets = (currentSnapshot.visualAssets ?? []).map((asset) => [asset.file, asset.sha256]);
+      return [currentResearch.data, currentVisualResearch.data].some((research) => JSON.stringify(oldContent) === JSON.stringify({ research, audio, assets, outro: outroContent(currentSnapshot.outro) }));
   } catch { return false; }
 }
 
@@ -192,10 +258,13 @@ function getProject(id: string) {
   const audioMatchesNarration = project.audio?.source === "tts"
     ? project.audio.tts?.scriptSha256 === currentScriptSha
     : true;
-  const latestJobContentCurrent = Boolean(latest && !project.visualStoryboardError && (
-    latest.source_sha256 === createHash("sha256").update(JSON.stringify(snapshotForProject(project))).digest("hex")
-    || snapshotContentMatchesProject(latest.snapshot_path, project)
-  ));
+  let latestJobContentCurrent = false;
+  if (latest && !project.visualStoryboardError && !project.outroError) {
+    try {
+      latestJobContentCurrent = latest.source_sha256 === createHash("sha256").update(JSON.stringify(snapshotForProject(project))).digest("hex")
+        || snapshotContentMatchesProject(latest.snapshot_path, project);
+    } catch { /* broken optional outro reference must remain visible, not break project reads */ }
+  }
   const latestJobCurrent = Boolean(latest && latestJobContentCurrent && latest.renderer_version === RENDERER_VERSION);
   const pendingTts = pendingAsset && existsSync(path.resolve(root, "public", pendingAsset.file))
     ? { ...project.pendingTts!, audioUrl: `/${pendingAsset.file}`, durationSec: pendingAsset.duration_sec, bytes: pendingAsset.bytes, voiceName: pendingAsset.voice_name, locale: pendingAsset.locale, style: pendingAsset.style, speakingRate: pendingAsset.speaking_rate, generatedAt: pendingAsset.created_at }
@@ -206,12 +275,14 @@ function getProject(id: string) {
   const motionPreparationRow = db.prepare("SELECT data_json FROM motion_preparation_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").get(id) as { data_json: string } | undefined;
   let motionPreparation: MotionPreparationJob | null = null;
   try { if (motionPreparationRow) motionPreparation = JSON.parse(motionPreparationRow.data_json) as MotionPreparationJob; } catch { /* malformed progress is not project data */ }
-  return { ...project, pendingTts, pendingTtsMatchesNarration: project.pendingTts?.scriptSha256 === currentScriptSha, audioMatchesNarration, latestJobCurrent, latestJobContentCurrent, latestJob: jobForClient(latest), visualPreparation, motionPreparation };
+  const outroAsset = project.outro ? outroRow(project.outro.assetId) : undefined;
+  const outroError = project.outroError ?? (project.outro && !outroAsset ? "Outro yang dipilih tidak ditemukan di library. Tidak ada fallback otomatis; lepaskan atau pilih ulang outro." : undefined);
+  return { ...project, ...(outroError ? { outroError } : {}), outro: project.outro ?? null, outroAsset: outroAsset ? outroAssetFromRow(outroAsset) : null, pendingTts, pendingTtsMatchesNarration: project.pendingTts?.scriptSha256 === currentScriptSha, audioMatchesNarration, latestJobCurrent, latestJobContentCurrent, latestJob: jobForClient(latest), visualPreparation, motionPreparation };
 }
 
 function saveProject(id: string, project: StoredProject) {
   const now = new Date().toISOString();
-  const { visualStoryboardError: _validationError, ...persisted } = project;
+  const { visualStoryboardError: _validationError, outroError: _outroValidationError, ...persisted } = project;
   db.prepare("UPDATE projects SET title = ?, data_json = ?, updated_at = ? WHERE id = ?")
     .run(project.researchPackage.title, JSON.stringify(persisted), now, id);
 }
@@ -244,6 +315,8 @@ app.use("/api/projects/:id", (request, response, next) => {
   if (!row) return next();
   const project = projectFromRow(row);
   if (project.visualStoryboardError) return invalidStoryboardResponse(response, project);
+  const explicitOutroRecovery = request.method === "PUT" && request.body && Object.hasOwn(request.body, "outro") && request.body.outro === null;
+  if (project.outroError && !explicitOutroRecovery) return apiError(response, 409, project.outroError, { code: "invalid-project-outro" });
   next();
 });
 
@@ -568,10 +641,30 @@ function sceneMediaUploadMiddleware(request: express.Request, response: express.
   });
 }
 
+function outroUploadMiddleware(request: express.Request, response: express.Response, next: express.NextFunction) {
+  outroUpload.single("outro")(request, response, (error) => {
+    if (!error) return next();
+    const status = error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    apiError(response, status, error instanceof Error ? error.message : "Outro gagal diunggah.", { code: "invalid-outro-upload" });
+  });
+}
+
 async function sha256File(filePath: string) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest("hex");
+}
+
+async function outroIntegrityError(outro: NonNullable<RenderSnapshot["outro"]>) {
+  if (!/^outros\/[a-f0-9]{64}\.mp4$/.test(outro.file) || outro.file.slice("outros/".length, -4) !== outro.sha256) return "Path atau hash outro snapshot tidak valid.";
+  const filePath = path.resolve(root, "public", outro.file);
+  if (path.dirname(filePath) !== outroDir || !existsSync(filePath)) return "Outro project hilang dari local storage. Pilih/unggah ulang outro sebelum render.";
+  try {
+    const fileStat = await stat(filePath);
+    if (fileStat.size !== outro.bytes) return "Ukuran file outro berubah; outro tidak akan dirender.";
+    if (await sha256File(filePath) !== outro.sha256) return "Hash file outro berubah; outro tidak akan dirender.";
+    return null;
+  } catch (error) { return error instanceof Error ? `Outro tidak dapat dibaca: ${error.message}` : "Outro tidak dapat dibaca."; }
 }
 
 async function sceneMediaIntegrityError(media: SceneMedia) {
@@ -597,7 +690,8 @@ function queueFileCleanup(rootName: CleanupRoot, targetPath: string) {
   if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)
     || rootName === "audio" && path.dirname(target) !== audioDir
     || rootName === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))
-    || rootName === "scene-media" && (path.dirname(target) !== sceneMediaDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))) {
+    || rootName === "scene-media" && (path.dirname(target) !== sceneMediaDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))
+    || rootName === "outros" && (path.dirname(target) !== outroDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))) {
     throw new Error("Cleanup path keluar dari direktori yang diizinkan.");
   }
   db.prepare("INSERT OR IGNORE INTO file_cleanup_queue (root, relative_path, created_at) VALUES (?, ?, ?)")
@@ -643,6 +737,52 @@ function snapshotReferencesVisualAsset(file: string) {
     try { return (JSON.parse(readFileSync(snapshotPath, "utf8")) as RenderSnapshot).visualAssets?.some((asset) => asset.file === file) ?? false; }
     catch { return false; }
   });
+}
+
+function projectReferencesOutroAsset(assetId: string) {
+  const rows = db.prepare("SELECT data_json FROM projects").all() as Array<{ data_json: string }>;
+  return rows.some((row) => {
+    try { return (JSON.parse(row.data_json) as StoredProject).outro?.assetId === assetId; }
+    catch { return false; }
+  });
+}
+
+function projectOutroReferenceCount(assetId: string) {
+  const rows = db.prepare("SELECT data_json FROM projects").all() as Array<{ data_json: string }>;
+  return rows.reduce((count, row) => {
+    try { return count + Number((JSON.parse(row.data_json) as StoredProject).outro?.assetId === assetId); }
+    catch { return count; }
+  }, 0);
+}
+
+function snapshotReferencesOutro(assetId: string, file?: string) {
+  const rows = db.prepare("SELECT snapshot_path FROM jobs").all() as Array<{ snapshot_path: string }>;
+  return rows.some((row) => {
+    const snapshotPath = path.resolve(row.snapshot_path);
+    if (!snapshotPath.startsWith(`${jobDir}${path.sep}`)) return false;
+    try {
+      const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8")) as RenderSnapshot;
+      return snapshot.outro?.assetId === assetId || Boolean(file && snapshot.outro?.file === `outros/${file}`);
+    } catch { return false; }
+  });
+}
+
+function outroFilesReferenced(file: string) {
+  const rows = db.prepare("SELECT file, poster_file FROM outro_assets").all() as Array<{ file: string; poster_file: string }>;
+  return rows.some((row) => row.file === file || row.poster_file === file);
+}
+
+async function pruneArchivedOutros() {
+  if ((db.prepare("SELECT COUNT(*) AS count FROM file_cleanup_queue WHERE root = 'jobs'").get() as { count: number }).count) return;
+  const archived = db.prepare("SELECT * FROM outro_assets WHERE archived = 1").all() as OutroRow[];
+  for (const asset of archived) {
+    if (projectReferencesOutroAsset(asset.id) || snapshotReferencesOutro(asset.id, asset.file)) continue;
+    withTransaction(() => {
+      db.prepare("DELETE FROM outro_assets WHERE id = ? AND archived = 1").run(asset.id);
+      if (!outroFilesReferenced(asset.file)) queueFileCleanup("outros", path.join(outroDir, asset.file));
+      if (!outroFilesReferenced(asset.poster_file)) queueFileCleanup("outros", path.join(outroDir, asset.poster_file));
+    });
+  }
 }
 
 function reusableSceneReferencesVisualAsset(file: string) {
@@ -926,7 +1066,8 @@ async function runFileCleanupQueue() {
     if (!base || !relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
        || item.root === "audio" && path.dirname(target) !== audioDir
        || item.root === "visual-assets" && (path.dirname(target) !== visualAssetDir || !/^[a-f0-9]{64}\.(png|jpg|webp|svg)$/.test(path.basename(target)))
-       || item.root === "scene-media" && (path.dirname(target) !== sceneMediaDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))) {
+        || item.root === "scene-media" && (path.dirname(target) !== sceneMediaDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))
+        || item.root === "outros" && (path.dirname(target) !== outroDir || !/^[a-f0-9]{64}\.(mp4|jpg)$/.test(path.basename(target)))) {
       db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
         .run("Cleanup path invalid/outside allowed root.", item.root, item.relative_path);
       continue;
@@ -955,6 +1096,15 @@ async function runFileCleanupQueue() {
           .run("Scene media masih dirujuk snapshot render.", item.root, item.relative_path);
         continue;
       }
+      if (item.root === "outros" && outroFilesReferenced(path.basename(target))) {
+        db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
+        continue;
+      }
+      if (item.root === "outros" && snapshotReferencesOutro("", path.basename(target))) {
+        db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+          .run("Outro masih dirujuk snapshot render.", item.root, item.relative_path);
+        continue;
+      }
       await rm(target, { recursive: true, force: true });
       if (item.root === "visual-assets") db.prepare("UPDATE visual_asset_catalog SET available_local = 0 WHERE asset_id = ?").run(`upload-${path.basename(target)}`);
       db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
@@ -981,6 +1131,79 @@ async function removeOrQueueCleanup(rootName: CleanupRoot, targetPath: string) {
     catch (error) { console.error("File cleanup failed and could not be queued:", error instanceof Error ? error.message : "unknown error"); }
   }
 }
+
+app.get("/api/outros", (_request, response) => response.json(outroLibraryResponse()));
+
+app.post("/api/outros", outroUploadMiddleware, async (request, response) => {
+  const file = request.file;
+  if (!file) return apiError(response, 400, "Pilih file MP4 untuk diunggah.", { code: "outro-file-required" });
+  let normalized: Awaited<ReturnType<typeof validateAndNormalizeSceneMedia>>;
+  try { normalized = await validateAndNormalizeSceneMedia(file.buffer, file.mimetype, file.originalname); }
+  catch (error) { return apiError(response, 422, error instanceof Error ? error.message : "Outro MP4 tidak valid.", { code: "invalid-outro-media" }); }
+  const { media, buffer, poster } = normalized;
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const baseName = path.basename(file.originalname, path.extname(file.originalname)).replace(/[\u0000-\u001f]/g, "").trim().slice(0, 100) || "Outro baru";
+  try {
+    await writeOutroFile(media.file, media.sha256, buffer);
+    await writeOutroFile(media.posterFile, media.posterSha256, poster);
+    db.prepare(`INSERT INTO outro_assets (id, name, file, sha256, bytes, poster_file, poster_sha256, poster_bytes, duration_sec, width, height, video_codec, audio_codec, frame_rate, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, baseName, media.file, media.sha256, media.bytes, media.posterFile, media.posterSha256, media.posterBytes, media.durationSec, media.width, media.height, media.videoCodec, media.audioCodec, media.frameRate, now, now);
+    response.status(201).json({ asset: outroAssetFromRow(outroRow(id)!), ...outroLibraryResponse() });
+  } catch (error) {
+    withTransaction(() => {
+      if (!outroFilesReferenced(media.file) && !snapshotReferencesOutro("", media.file)) queueFileCleanup("outros", path.join(outroDir, media.file));
+      if (!outroFilesReferenced(media.posterFile) && !snapshotReferencesOutro("", media.posterFile)) queueFileCleanup("outros", path.join(outroDir, media.posterFile));
+    });
+    await tryProcessFileCleanupQueue();
+    return apiError(response, 500, error instanceof Error ? error.message : "Outro gagal disimpan.", { code: "outro-storage-failed" });
+  }
+});
+
+app.patch("/api/outros/:id", (request, response) => {
+  const id = String(request.params.id);
+  if (!z.string().uuid().safeParse(id).success) return apiError(response, 400, "ID outro tidak valid.");
+  const parsed = z.object({ name: z.string().trim().min(1).max(100) }).strict().safeParse(request.body);
+  if (!parsed.success) return apiError(response, 400, "Nama outro harus berisi 1–100 karakter.", { issues: parsed.error.issues });
+  const row = outroRow(id, false);
+  if (!row) return apiError(response, 404, "Outro aktif tidak ditemukan.");
+  db.prepare("UPDATE outro_assets SET name = ?, updated_at = ? WHERE id = ?").run(parsed.data.name, new Date().toISOString(), id);
+  response.json({ asset: outroAssetFromRow(outroRow(id)!), ...outroLibraryResponse() });
+});
+
+app.post("/api/outros/:id/default", (request, response) => {
+  const id = String(request.params.id);
+  const row = outroRow(id, false);
+  if (!row) return apiError(response, 404, "Outro aktif tidak ditemukan.");
+  withTransaction(() => {
+    db.prepare("UPDATE outro_assets SET is_default = 0 WHERE is_default = 1").run();
+    db.prepare("UPDATE outro_assets SET is_default = 1, updated_at = ? WHERE id = ? AND archived = 0").run(new Date().toISOString(), id);
+  });
+  response.json(outroLibraryResponse());
+});
+
+app.delete("/api/outros/:id", async (request, response) => {
+  const id = String(request.params.id);
+  if (!z.string().uuid().safeParse(id).success) return apiError(response, 400, "ID outro tidak valid.");
+  if (activeRenderJob || activeJobCreation) return apiError(response, 409, "Outro tidak dapat dihapus saat snapshot atau render aktif.", { code: "outro-busy" });
+  const row = outroRow(id, false);
+  if (!row) return apiError(response, 404, "Outro aktif tidak ditemukan.");
+  const projectReferences = projectOutroReferenceCount(id);
+  const snapshotReferences = snapshotReferencesOutro(id, row.file);
+  if (projectReferences || snapshotReferences) {
+    db.prepare("UPDATE outro_assets SET archived = 1, is_default = 0, updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
+    return response.json({ archived: true, projectReferences, snapshotReferences, ...outroLibraryResponse() });
+  }
+  withTransaction(() => {
+    db.prepare("DELETE FROM outro_assets WHERE id = ?").run(id);
+    if (!outroFilesReferenced(row.file)) queueFileCleanup("outros", path.join(outroDir, row.file));
+    if (!outroFilesReferenced(row.poster_file)) queueFileCleanup("outros", path.join(outroDir, row.poster_file));
+  });
+  const cleanupPending = await tryProcessFileCleanupQueue();
+  response.json({ archived: false, projectReferences: 0, snapshotReferences: false, cleanupPending, ...outroLibraryResponse() });
+});
 
 app.get("/api/status", async (_request, response) => {
   let ffmpegAvailable = false;
@@ -1285,8 +1508,26 @@ app.post("/api/projects", (request, response) => {
   if (requestIdResult && !requestIdResult.success) return apiError(response, 400, "Request ID idempotency tidak valid.", { code: "invalid-request-id" });
   const requestId = requestIdResult?.success ? requestIdResult.data : null;
   const researchSha256 = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
+  if (requestId) {
+    const existing = db.prepare("SELECT project_id, research_sha256 FROM project_create_requests WHERE request_id = ?").get(requestId) as { project_id: string; research_sha256: string } | undefined;
+    if (existing) {
+      if (existing.research_sha256 !== researchSha256) return apiError(response, 409, "Request ID sudah dipakai untuk Research Package berbeda.", { code: "idempotency-conflict" });
+      return response.status(200).json(getProject(existing.project_id));
+    }
+  }
+  const hasOutroId = request.body && Object.hasOwn(request.body, "outroId");
+  const requestedOutroId = hasOutroId ? z.string().uuid().nullable().safeParse(request.body.outroId) : null;
+  if (requestedOutroId && !requestedOutroId.success) return apiError(response, 400, "Pilihan outro tidak valid.", { code: "invalid-outro-selection" });
+  const selectedAsset = hasOutroId
+    ? requestedOutroId?.success && requestedOutroId.data ? outroRow(requestedOutroId.data, false) : undefined
+    : db.prepare("SELECT * FROM outro_assets WHERE is_default = 1 AND archived = 0").get() as OutroRow | undefined;
+  if (hasOutroId && requestedOutroId?.success && requestedOutroId.data && !selectedAsset) return apiError(response, 409, "Outro yang dipilih tidak tersedia untuk project baru.", { code: "outro-not-available" });
   const now = new Date().toISOString();
-  const stored: StoredProject = { researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null, narrationMode: "unset", researchReviewStatus: "needs-review" };
+  const stored: StoredProject = {
+    researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null,
+    narrationMode: "unset", researchReviewStatus: "needs-review",
+    outro: selectedAsset ? { assetId: selectedAsset.id, enabled: true, trimInSec: 0, trimOutSec: selectedAsset.duration_sec, audioEnabled: false } : null,
+  };
   const create = () => {
     const id = randomUUID();
     db.prepare("INSERT INTO projects (id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
@@ -1316,6 +1557,19 @@ app.put("/api/projects/:id", async (request, response) => {
   if (narrationMode && !narrationMode.success) return apiError(response, 400, "Pilihan mode narasi tidak valid.", { code: "invalid-narration-mode" });
   const project = projectFromRow(row);
   if (invalidStoryboardResponse(response, project)) return;
+  let selectedOutro = project.outro ?? null;
+  if (request.body && Object.hasOwn(request.body, "outro")) {
+    if (request.body.outro === null) selectedOutro = null;
+    else {
+      const parsedOutro = outroSelectionSchema.safeParse(request.body.outro);
+      if (!parsedOutro.success) return apiError(response, 400, "Pengaturan outro tidak valid.", { code: "invalid-outro-selection", issues: parsedOutro.error.issues });
+      const asset = outroRow(parsedOutro.data.assetId);
+      const preservingMissingAsset = !asset && parsedOutro.data.assetId === project.outro?.assetId;
+      if (!asset && !preservingMissingAsset || asset?.archived && asset.id !== project.outro?.assetId) return apiError(response, 409, "Outro tidak tersedia untuk project ini.", { code: "outro-not-available" });
+      if (asset && parsedOutro.data.trimOutSec > asset.duration_sec) return apiError(response, 400, "Trim outro melewati durasi file.", { code: "invalid-outro-trim" });
+      selectedOutro = parsedOutro.data;
+    }
+  }
   const previousSceneMediaFiles = new Set(project.visualStoryboard.scenes.flatMap((scene) => scene.sceneMedia ? [scene.sceneMedia.file, scene.sceneMedia.posterFile] : []));
   let storyboardResult: ReturnType<typeof visualStoryboardSchema.safeParse>;
   if (request.body?.visualStoryboard === undefined) {
@@ -1356,6 +1610,7 @@ app.put("/api/projects/:id", async (request, response) => {
   const factsChanged = factReviewContent(project.researchPackage) !== factReviewContent(storyboardResearch.data);
   project.researchPackage = storyboardResearch.data;
   project.visualStoryboard = storyboard;
+  project.outro = selectedOutro;
   if (narrationMode?.success) project.narrationMode = narrationMode.data;
   if (factsChanged) project.researchReviewStatus = "needs-review";
   if (project.pendingTts && project.pendingTts.scriptSha256 !== createHash("sha256").update(narrationScript(parsed.data)).digest("hex")) project.pendingTts = null;
@@ -2126,6 +2381,8 @@ app.delete("/api/projects/:id", async (request, response) => {
     db.prepare("DELETE FROM projects WHERE id = ?").run(id);
   });
   invalidateBundleCache();
+  await tryProcessFileCleanupQueue();
+  await pruneArchivedOutros();
   const cleanupPending = await tryProcessFileCleanupQueue();
   response.json({ deleted: true, cleanupPending });
 });
@@ -2438,7 +2695,9 @@ app.post("/api/projects/:id/generate", async (request, response) => {
   if (project.audio?.source === "tts" && project.audio.tts?.scriptSha256 !== createHash("sha256").update(narrationScript(project.researchPackage)).digest("hex")) {
     return apiError(response, 409, "Naskah berubah setelah AI Voice dibuat. Generate ulang audio atau pilih upload manual.", { code: "tts-audio-stale" });
   }
-  const snapshot = snapshotForProject(project);
+  let snapshot: RenderSnapshot;
+  try { snapshot = snapshotForProject(project); }
+  catch (error) { return apiError(response, 409, error instanceof Error ? error.message : "Snapshot project tidak valid.", { code: "invalid-render-snapshot" }); }
   for (const asset of snapshot.visualAssets ?? []) {
     const assetPath = path.resolve(visualAssetDir, asset.file);
     if (path.dirname(assetPath) !== visualAssetDir || !existsSync(assetPath) || await sha256File(assetPath) !== asset.sha256) {
@@ -2448,6 +2707,10 @@ app.post("/api/projects/:id/generate", async (request, response) => {
   for (const media of snapshot.sceneMedia ?? []) {
     const error = await sceneMediaIntegrityError(media);
     if (error) return apiError(response, 409, error, { code: "scene-media-integrity-failed" });
+  }
+  if (snapshot.outro) {
+    const error = await outroIntegrityError(snapshot.outro);
+    if (error) return apiError(response, 409, error, { code: "outro-integrity-failed" });
   }
   const source = JSON.stringify(snapshot);
   const sourceSha = createHash("sha256").update(source).digest("hex");
@@ -2594,6 +2857,7 @@ app.post("/api/projects/:id/review", (request, response) => {
 app.use("/audio", express.static(audioDir));
 app.use("/visual-assets", express.static(visualAssetDir, { immutable: true, maxAge: "1y" }));
 app.use("/scene-media", express.static(sceneMediaDir, { immutable: true, maxAge: "1y" }));
+app.use("/outros", express.static(outroDir, { immutable: true, maxAge: "1y" }));
 
 if (existsSync(path.resolve(root, "dist/index.html"))) {
   app.use(express.static(path.resolve(root, "dist")));

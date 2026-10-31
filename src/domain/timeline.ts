@@ -1,4 +1,5 @@
 import type { ResearchPackage, Scene } from "./research";
+import { outroTrimFrames } from "./outro";
 
 export const FPS = 30;
 
@@ -13,8 +14,8 @@ export function sceneTimes(research: ResearchPackage, scene: Scene, durationSec:
   return { startSec: scene.startSec * scale, endSec: scene.endSec * scale };
 }
 
-export function durationInFrames(research: ResearchPackage, audioDurationSec?: number, timingMode: "scaled" | "estimated" = "scaled") {
-  return Math.max(1, Math.ceil(timelineDuration(research, audioDurationSec, timingMode) * FPS));
+export function durationInFrames(research: ResearchPackage, audioDurationSec?: number, timingMode: "scaled" | "estimated" = "scaled", outro?: { enabled?: boolean; trimInSec: number; trimOutSec: number } | null) {
+  return Math.max(1, Math.ceil(timelineDuration(research, audioDurationSec, timingMode) * FPS)) + outroTrimFrames(outro, FPS);
 }
 
 export function setSceneDuration(research: ResearchPackage, sceneId: string, durationSec: number): ResearchPackage {

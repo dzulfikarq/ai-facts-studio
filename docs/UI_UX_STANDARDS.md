@@ -22,6 +22,7 @@
 - Keep left/right page gutters equal and aligned to topbar outer padding. Verify 1440, 1280, 1024, 768, 390, 360, and 320px without page-level horizontal overflow; keep six Inspector tabs reachable in a 3×2 grid and timelines internally scrollable on narrow screens.
 - Keep keyboard access, visible `:focus-visible` rings, accessible names, semantic status, native control behavior, and reduced-motion support.
 - Preserve Light, Dark, and System appearance on every page and dialog. Theme changes must not affect project or renderer data.
+- Outro Library/Create/Video Editor controls must preserve these themes, keyboard operation, focus visibility, and reduced motion. Test settings tabs with arrows/Home/End and verify library/Create layout at documented widths.
 - Video scene controls must keep trim, fit/crop, loop/freeze, and opt-in audio keyboard-accessible; clip audio stays off by default and separate from narration approval.
 - One Video Editor owns Visual, Gerak, Klip, Teks, Transisi, and Audio Inspector tabs. Keep prompt creation in Visual, transitions in Transisi, and approval controls in Visual. New scenes default to no added effects and Cut. Transition, trim, scene duration, and overlay edits preserve artwork approval; artwork/copy/Motion Beat changes invalidate affected approval.
 - Inspector tabs support keyboard focus/navigation, retain selected scene and playhead, and mount only active panel. Keep Flow clip audio opt-in and separate from narration approval; Audio tab monitors and links back to Narasi.

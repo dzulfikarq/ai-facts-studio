@@ -18,6 +18,9 @@ const execFileAsync = promisify(execFile);
 const mediaFiles: string[] = [];
 let assetFile: string | undefined;
 let projectId: string | undefined;
+let outroAssetId: string | undefined;
+let outroFile: string | undefined;
+let outroPosterFile: string | undefined;
 let apiServer: ChildProcess | undefined;
 let viteServer: ChildProcess | undefined;
 let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
@@ -67,17 +70,19 @@ const viteUrl = `http://127.0.0.1:${vitePort}`;
 
 try {
   const mp4Path = path.join(tempDir, "moving-flow.mp4");
+  const outroPath = path.join(tempDir, "moving-outro.mp4");
   const gifPath = path.join(tempDir, "moving-flow.gif");
   const imagePath = path.join(tempDir, "static-flow.png");
   const fixtureHue = Number.parseInt(randomUUID().slice(0, 6), 16) % 360;
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=size=360x640:rate=24:duration=1.4,hue=h=${fixtureHue},eq=brightness=0.45:saturation=0.5`, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=1.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-movflags", "+faststart", "-y", mp4Path]);
+  await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc=size=360x640:rate=24:duration=1.4,hue=h=t*130`, "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=44100:duration=1.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-movflags", "+faststart", "-y", outroPath]);
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `testsrc2=size=320x480:rate=12:duration=1.4,hue=h=${fixtureHue},lutrgb=r=val*0.25:g=val*0.25:b=val*0.25`, "-filter_complex", "[0:v]split[a][b];[a]palettegen[p];[b][p]paletteuse", "-loop", "0", "-y", gifPath]);
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=0x${fixtureHue.toString(16).padStart(6, "0")}:s=720x1280:d=1`, "-frames:v", "1", "-y", imagePath]);
 
   apiServer = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
     cwd: root,
     env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(apiPort), VITE_PORT: String(vitePort), DATA_DIR: path.join(tempDir, "data"), DAILY_JOB_LIMIT: "5", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
-    stdio: "ignore",
+    stdio: "inherit",
   });
   await waitFor(async () => { try { return (await fetch(`${apiUrl}/api/status`)).ok; } catch { return false; } }, "API startup");
   viteServer = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
@@ -94,11 +99,76 @@ try {
     ...sample, id: `scene-media-smoke-${randomUUID()}`, title: "Scene Media Local Smoke", targetDurationSec: 6,
     narration: scenes.map((scene: { narrationText: string }) => scene.narrationText).join(" "), scenes,
   };
-  const created = await json<{ id: string; researchPackage: any; visualStoryboard: any }>(await fetch(`${apiUrl}/api/projects`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage }),
-  }));
-  projectId = created.id;
+  const outroForm = new FormData();
+  outroForm.append("outro", new Blob([await readFile(outroPath)], { type: "video/mp4" }), "Local moving outro.mp4");
+  const uploadedOutro = await json<{ asset: { id: string; file: string; posterFile: string; bytes: number; durationSec: number; localAvailable: boolean } }>(await fetch(`${apiUrl}/api/outros`, { method: "POST", body: outroForm }));
+  outroAssetId = uploadedOutro.asset.id;
+  outroFile = uploadedOutro.asset.file;
+  outroPosterFile = uploadedOutro.asset.posterFile;
+  assert.equal(uploadedOutro.asset.localAvailable, true, "Outro MP4 is normalized and stored locally");
+  assert.ok(uploadedOutro.asset.durationSec > 1, "Outro metadata stores moving clip duration");
+  await json(await fetch(`${apiUrl}/api/outros/${outroAssetId}/default`, { method: "POST" }));
+
+  browser = await openBrowser("chrome", { logLevel: "error" });
+  const browserLogs: string[] = [];
+  const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: (log: unknown) => browserLogs.push(JSON.stringify(log)), onLog: (log: unknown) => browserLogs.push(JSON.stringify(log)) } as never);
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await page.goto({ url: `${viteUrl}/create`, timeout: 30_000 });
+  await waitFor(() => page.evaluate((id) => {
+    const select = document.querySelector<HTMLSelectElement>('[aria-label="Outro Video (Opsional)"]');
+    return Boolean(select && !select.disabled && select.value === id && [...select.options].some((option) => option.textContent === "Tanpa Outro"));
+  }, outroAssetId!), "Create Video shows library default and Tanpa Outro option");
+  await waitFor(() => page.evaluate((file) => Boolean(document.querySelector(`.create-outro-selected video[src*="${file}"]`)), outroFile!), "Create Video previews selected moving Outro");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.create-mode-switch [role="tab"]')].find((button) => button.textContent?.includes("Import Research Package"))?.click());
+  await page.evaluate((value) => {
+    const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Editor Research Package JSON"]');
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }, JSON.stringify(researchPackage));
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".import-footer .button-primary")?.click());
+  await waitFor(() => page.evaluate(() => /^\/projects\/[^/]+/.test(location.pathname)), "Create Video persists selected Outro");
+  const createdProjectId = await page.evaluate(() => decodeURIComponent(location.pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? ""));
+  assert.ok(createdProjectId, "Create Video route identifies new project");
+  projectId = createdProjectId;
+  const created = await json<{ id: string; researchPackage: any; visualStoryboard: any; outro: any }>(await fetch(`${apiUrl}/api/projects/${createdProjectId}`));
+  assert.equal(created.outro.assetId, outroAssetId, "project creation persists selected Outro default");
   const sceneIds = created.researchPackage.scenes.map((scene: { id: string }) => scene.id) as string[];
+
+  await page.goto({ url: `${viteUrl}/settings`, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".ai-generation-settings"))), "Settings page with Outro Library tab");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.trim() === "Outro Library")?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".outro-library .outro-card"))), "Outro Library card loads in Settings");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-outro-library")?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-ai-generation")?.getAttribute("aria-selected") === "true"), "Settings ArrowLeft selects AI Generation tab");
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector("#settings-tab-ai-generation")), true, "Settings keyboard tab change moves focus");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-ai-generation")?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })));
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-outro-library")?.getAttribute("aria-selected") === "true"), "Settings End selects Outro Library tab");
+  assert.equal(await page.evaluate(() => document.querySelector("#settings-panel-outro-library")?.getAttribute("aria-labelledby")), "settings-tab-outro-library", "Settings tab and panel expose accessible ARIA relationship");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".outro-card-poster")?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLDialogElement>(".outro-preview-dialog[open] video"))), "native Outro preview dialog");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[aria-label="Tutup pratinjau"]')?.click());
+  for (const width of [1440, 1280, 1024, 768, 390, 360, 320]) {
+    await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
+    const bounds = await page.evaluate(() => ({ viewport: window.innerWidth, page: document.documentElement.scrollWidth, card: document.querySelector<HTMLElement>(".outro-card")?.getBoundingClientRect().right ?? 0 }));
+    assert.ok(bounds.page <= bounds.viewport + 1 && bounds.card <= bounds.viewport + 1, `Outro Library fits ${width}px without horizontal overflow: ${JSON.stringify(bounds)}`);
+  }
+  await page.goto({ url: `${viteUrl}/create`, timeout: 30_000 });
+  await waitFor(() => page.evaluate((id) => document.querySelector<HTMLSelectElement>('[aria-label="Outro Video (Opsional)"]')?.value === id, outroAssetId!), "Create Outro selection reload");
+  const createOutroSelect = await page.evaluate((id) => {
+    const select = document.querySelector<HTMLSelectElement>('[aria-label="Outro Video (Opsional)"]');
+    if (!select) return false;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "");
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const noOutro = select.value === "" && document.querySelector(".create-outro-none")?.textContent?.trim() === "Tanpa Outro";
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, id);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return noOutro;
+  }, outroAssetId!);
+  assert.equal(createOutroSelect, true, "Create Video allows explicit Tanpa Outro and reselecting library media");
+  await page.setViewport({ width: 320, height: 900, deviceScaleFactor: 1 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Create Outro controls fit 320px viewport");
 
   async function uploadMedia(sceneId: string, filePath: string, mimeType: string) {
     const form = new FormData();
@@ -174,10 +244,6 @@ try {
   assert.equal(persisted.researchPackage.scenes[0].sceneMedia.sha256, mp4Media.sha256, "MP4 metadata projects into persisted render input");
   assert.equal((await fetch(`${apiUrl}/scene-media/${encodeURIComponent(mp4Media.file)}`)).status, 200, "local normalized MP4 is served for preview/render");
 
-  browser = await openBrowser("chrome", { logLevel: "error" });
-  const browserLogs: string[] = [];
-  const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: (log: unknown) => browserLogs.push(JSON.stringify(log)), onLog: (log: unknown) => browserLogs.push(JSON.stringify(log)) } as never);
-  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   const visualUrl = `${viteUrl}/projects/${created.id}?step=visual&scene=${encodeURIComponent(sceneIds[0]!)}`;
   const editorUrl = `${viteUrl}/projects/${created.id}/editor?scene=${encodeURIComponent(sceneIds[0]!)}`;
   await page.goto({ url: visualUrl, timeout: 30_000 });
@@ -219,6 +285,46 @@ try {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, String(value));
     input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true })); return true;
   }, frame);
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Pengaturan Video"))?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector("#editor-video-settings"))), "video-level Outro settings");
+  const createSelectedOutro = await page.evaluate(() => ({
+    id: document.querySelector<HTMLSelectElement>('[aria-label="Pilih outro video"]')?.value,
+    clip: document.querySelector<HTMLButtonElement>(".editor-outro-clip")?.getAttribute("aria-label"),
+  }));
+  assert.equal(createSelectedOutro.id, outroAssetId, "Video Editor loads per-project selected Outro");
+  assert.ok(createSelectedOutro.clip?.includes("Local moving outro"), "timeline exposes separate Outro segment");
+  const setOutroNumber = async (index: number, value: number) => page.evaluate(({ inputIndex, inputValue }) => {
+    const input = document.querySelectorAll<HTMLInputElement>(".editor-outro-trim input[type=number]")[inputIndex];
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, String(inputValue));
+    input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("change", { bubbles: true })); return true;
+  }, { inputIndex: index, inputValue: value });
+  assert.ok(await setOutroNumber(0, 0.2) && await setOutroNumber(1, 1.2), "Outro trim in/out controls accept project-specific values");
+  const setOutroAudio = await page.evaluate(() => {
+    const input = document.querySelectorAll<HTMLInputElement>(".editor-outro-controls input[type=checkbox]")[1];
+    if (!input) return false;
+    if (!input.checked) input.click();
+    return input.checked;
+  });
+  assert.equal(setOutroAudio, true, "original Outro audio can be enabled independently");
+  await waitFor(() => page.evaluate(() => {
+    const inputs = [...document.querySelectorAll<HTMLInputElement>(".editor-outro-trim input[type=number]")];
+    return inputs[0]?.value === "0.2" && inputs[1]?.value === "1.2";
+  }), "trim values update in editor");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-outro-clip")?.click());
+  await waitFor(() => page.evaluate((file) => {
+    const video = document.querySelector<HTMLVideoElement>(`.editor-canvas-shell video[src*="${file}"]`);
+    return Boolean(video && video.readyState >= 2);
+  }, outroFile!), "moving Outro mounts in Remotion preview");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".editor-canvas-shell svg text").length), 0, "outro preview has no scene overlays");
+  const outroStartTime = await page.evaluate((file) => document.querySelector<HTMLVideoElement>(`.editor-canvas-shell video[src*="${file}"]`)?.currentTime ?? -1, outroFile!);
+  assert.ok(outroStartTime >= 0, "preview video has a valid moving media clock");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
+  await waitFor(() => page.evaluate((input) => (document.querySelector<HTMLVideoElement>(`.editor-canvas-shell video[src*="${input.file}"]`)?.currentTime ?? 0) > input.start + 0.15, { file: outroFile!, start: outroStartTime }), "Outro preview playback advances independently");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-play-button")?.click());
+  await saveEditor();
+  const persistedOutro = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
+  assert.deepEqual(persistedOutro.outro, { ...created.outro, trimInSec: 0.2, trimOutSec: 1.2, audioEnabled: true }, "Video Editor persists Outro selection, trim, and source-audio settings");
   const setMotionCue = async (cue: string, enabled: boolean) => page.evaluate(({ cueId, shouldEnable }) => {
     const input = document.querySelector<HTMLInputElement>(`.editor-motion-effect[data-cue="${cueId}"] input`);
     if (!input) return false;
@@ -490,7 +596,10 @@ try {
   const renderResponse = await fetch(`${apiUrl}/api/jobs/${generated.job.id}/render`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ allowSilent: true }) });
   assert.equal(renderResponse.status, 202, await renderResponse.clone().text());
   await waitFor(async () => {
-    const job = await fetch(`${apiUrl}/api/jobs/${generated.job.id}`).then((response) => json<any>(response));
+    if (apiServer && apiServer.exitCode !== null) throw new Error(`API exited during render (${apiServer.exitCode ?? "unknown"}).`);
+    const response = await fetch(`${apiUrl}/api/jobs/${generated.job.id}`).catch(() => null);
+    if (!response?.ok) return false;
+    const job = await json<any>(response);
     return job.state === "rendered" || job.state === "failed";
   }, "mixed MP4/GIF/static render", 900);
   const finalJob = await fetch(`${apiUrl}/api/jobs/${generated.job.id}`).then((response) => json<any>(response));
@@ -499,15 +608,23 @@ try {
   assert.equal(finalJob.manifest.width, 1080);
   assert.equal(finalJob.manifest.height, 1920);
   assert.equal(finalJob.manifest.audioValidation, "pass-media", "explicitly enabled clip audio renders as validated AAC without requiring voiceover");
+  assert.equal(finalJob.manifest.outroAssetId, outroAssetId, "render manifest records selected Outro asset");
+  assert.ok(Math.abs(finalJob.manifest.durationSec - 7) < 0.15, `final MP4 includes trimmed Outro duration: ${finalJob.manifest.durationSec}s`);
   const mp4Bytes = Buffer.from(await (await fetch(`${apiUrl}${finalJob.downloadUrl}`)).arrayBuffer());
   const renderedPath = path.join(evidenceDir, "scene-media-mixed-e2e.mp4");
   await writeFile(renderedPath, mp4Bytes);
-  for (const [label, time] of [["mp4", "0.5"], ["crossfade", "2.3"], ["gif", "3.3"], ["procedural", "5.5"]] as const) {
+  for (const [label, time] of [["mp4", "0.5"], ["crossfade", "2.3"], ["gif", "3.3"], ["procedural", "5.5"], ["outro-first", "6.1"], ["outro-later", "6.8"]] as const) {
     const framePath = path.join(evidenceDir, `scene-media-${label}.png`);
     await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", time, "-i", renderedPath, "-frames:v", "1", "-y", framePath]);
     assert.ok((await readFile(framePath)).length > 1000, `${label} MP4 frame decodes`);
   }
+  assert.notDeepEqual(await readFile(path.join(evidenceDir, "scene-media-outro-first.png")), await readFile(path.join(evidenceDir, "scene-media-outro-later.png")), "rendered Outro contains moving frames, not a poster still");
   const renderSnapshot = JSON.parse(await readFile(path.join(tempDir, "data", "jobs", generated.job.id, "snapshot.json"), "utf8"));
+  assert.deepEqual(renderSnapshot.outro, {
+    assetId: outroAssetId, name: "Local moving outro", file: `outros/${outroFile}`,
+    sha256: outroFile!.slice(0, 64), bytes: uploadedOutro.asset.bytes, durationSec: uploadedOutro.asset.durationSec,
+    trimInSec: 0.2, trimOutSec: 1.2, audioEnabled: true,
+  }, "immutable snapshot captures normalized Outro, trim, and audio choice");
   assert.deepEqual(renderSnapshot.research.scenes.map((scene: any) => Boolean(scene.sceneMedia)), [true, true, false], "immutable render snapshot keeps animated media separate from static composition");
   assert.equal(renderSnapshot.research.videoOverlaySettings.showTitle, true, "render snapshot keeps title enabled");
   assert.equal(renderSnapshot.research.videoOverlaySettings.showSubtitles, true, "render snapshot keeps subtitles enabled");
@@ -524,15 +641,24 @@ try {
   assert.equal((await blockedSnapshot.json()).code, "scene-media-integrity-failed");
   await page.goto({ url: editorUrl, timeout: 30_000 });
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".editor-media-error[role=alert]"))), "missing Flow media displays editor alert without composition fallback");
+  const archiveResponse = await fetch(`${apiUrl}/api/outros/${outroAssetId}`, { method: "DELETE" });
+  const archiveResult = await json<{ archived: boolean; projectReferences: number }>(archiveResponse);
+  assert.equal(archiveResult.archived, true, "deleting Outro referenced by project/snapshot archives without removing media");
+  assert.ok(archiveResult.projectReferences > 0);
+  assert.match((await fetch(`${apiUrl}/outros/${outroFile}`)).headers.get("content-type") ?? "", /^video\/mp4/i, "archived Outro stays available to existing render snapshots");
   const deleted = await fetch(`${apiUrl}/api/projects/${created.id}`, { method: "DELETE" });
   assert.equal(deleted.status, 200, "project deletion succeeds after completed render");
   const deleteResult = await deleted.json() as { cleanupPending: number | null };
   assert.equal(deleteResult.cleanupPending, 0, `project and snapshot cleanup queue drains: ${JSON.stringify(deleteResult)}`);
   projectId = undefined;
+  assert.doesNotMatch((await fetch(`${apiUrl}/outros/${outroFile}`)).headers.get("content-type") ?? "", /^video\/mp4/i, "archived Outro media cleans up after project and render snapshots are removed");
+  assert.doesNotMatch((await fetch(`${apiUrl}/outros/${outroPosterFile}`)).headers.get("content-type") ?? "", /^image\/jpeg/i, "archived Outro poster cleans up with media");
+  outroAssetId = undefined;
   for (const file of new Set(mediaFiles)) assert.equal(existsSync(path.join(root, "public/scene-media", file)), false, `unreferenced scene media cleans up after project and snapshots are deleted: ${file}`);
-  console.log(`PASS: moving MP4/GIF preview, overlay toggles/reload, Cut/Crossfade, media controls, final MP4 and sampled frames. Evidence: ${evidenceDir}`);
+  console.log(`PASS: Outro Library/create/editor selection, trim/audio persistence, moving overlay-free preview/render, safe archive/delete; MP4/GIF scene media, overlay toggles, Cut/Crossfade. Evidence: ${evidenceDir}`);
 } finally {
   if (projectId) { try { await fetch(`${apiUrl}/api/projects/${projectId}`, { method: "DELETE" }); } catch { /* isolated API may already be stopped */ } }
+  if (outroAssetId) { try { await fetch(`${apiUrl}/api/outros/${outroAssetId}`, { method: "DELETE" }); } catch { /* isolated API may already be stopped */ } }
   if (assetFile) { try { await rm(path.join(root, "public/visual-assets", assetFile), { force: true }); } catch { /* project deletion may have cleaned it */ } }
   for (const file of mediaFiles) { try { await rm(path.join(root, "public/scene-media", file), { force: true }); } catch { /* fixture-only cleanup */ } }
   if (browser) await browser.close({ silent: true });

@@ -12,7 +12,8 @@ import type { VisualAsset } from "../src/domain/visual-assets";
 import type { SceneMedia } from "../src/domain/scene-media";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { durationInFrames } from "../src/domain/timeline";
-import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION, V2_RENDERER_VERSION } from "../src/video/renderer-version";
+import type { OutroRenderInput } from "../src/domain/outro";
 
 const execFileAsync = promisify(execFile);
 const root = process.cwd();
@@ -26,6 +27,7 @@ export type RenderSnapshot = {
   research: ResearchPackage;
   visualAssets?: VisualAsset[];
   sceneMedia?: SceneMedia[];
+  outro?: OutroRenderInput | null;
   audio?: {
     file: string; durationSec: number; timingMode?: "scaled" | "estimated"; source?: "upload" | "tts" | "mock-fixture"; sha256?: string;
     tts?: { provider: string; model: string; cacheKey?: string; scriptSha256: string; locale: string; voiceId: string; voiceName: string; style: string; speakingRate: number; approvedAt?: string; alignment: "estimated" };
@@ -115,6 +117,23 @@ async function verifySnapshotSceneMedia(research: ResearchPackage) {
   }
 }
 
+async function verifySnapshotOutro(outro: OutroRenderInput) {
+  if (!/^outros\/[a-f0-9]{64}\.mp4$/.test(outro.file) || outro.sha256 !== outro.file.slice("outros/".length, -4)
+    || !Number.isInteger(outro.bytes) || outro.bytes <= 0 || outro.bytes > 150 * 1024 * 1024
+    || !Number.isFinite(outro.durationSec) || outro.durationSec <= 0 || outro.durationSec > 120
+    || !Number.isFinite(outro.trimInSec) || !Number.isFinite(outro.trimOutSec) || outro.trimInSec < 0 || outro.trimInSec >= outro.trimOutSec || outro.trimOutSec > outro.durationSec) {
+    throw new Error("Metadata outro snapshot tidak valid.");
+  }
+  const allowedRoot = path.resolve(root, "public/outros");
+  const filePath = path.resolve(root, "public", outro.file);
+  if (path.dirname(filePath) !== allowedRoot) throw new Error("Outro snapshot keluar dari direktori yang diizinkan.");
+  const fileStat = await stat(filePath);
+  if (fileStat.size !== outro.bytes) throw new Error("Ukuran outro tidak cocok dengan snapshot.");
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  if (hash.digest("hex") !== outro.sha256) throw new Error("Hash outro snapshot berubah; outro tidak akan dirender.");
+}
+
 export async function renderSnapshot(
   snapshot: RenderSnapshot,
   outputLocation: string,
@@ -122,10 +141,11 @@ export async function renderSnapshot(
   scale = 1,
 ) {
   const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
-  if (![LEGACY_RENDERER_VERSION, OLDEST_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
+  if (![LEGACY_RENDERER_VERSION, V2_RENDERER_VERSION, OLDEST_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
   if (snapshot.audio) await verifySnapshotAudio(snapshot.audio);
   await verifySnapshotVisualAssets(snapshot.visualAssets);
   await verifySnapshotSceneMedia(snapshot.research);
+  if (rendererVersion === RENDERER_VERSION && snapshot.outro) await verifySnapshotOutro(snapshot.outro);
   await mkdir(path.dirname(outputLocation), { recursive: true });
   bundlePromise ??= bundle({
     entryPoint: path.resolve(root, "src/video/entry.tsx"),
@@ -141,12 +161,13 @@ export async function renderSnapshot(
     audioDurationSec: snapshot.audio?.durationSec,
     audioTimingMode: snapshot.audio?.timingMode ?? "scaled",
     rendererVersion: snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION,
+    ...(rendererVersion === RENDERER_VERSION && snapshot.outro ? { outro: snapshot.outro } : {}),
   };
   const composition = await selectComposition({ serveUrl, id: "FactsVideo", inputProps });
   await renderMedia({
     composition: {
       ...composition,
-      durationInFrames: durationInFrames(snapshot.research, snapshot.audio?.durationSec),
+      durationInFrames: durationInFrames(snapshot.research, snapshot.audio?.durationSec, rendererVersion === RENDERER_VERSION ? snapshot.audio?.timingMode ?? "scaled" : "scaled", rendererVersion === RENDERER_VERSION ? snapshot.outro : undefined),
     },
     serveUrl,
     codec: "h264",
@@ -163,12 +184,12 @@ export async function renderSnapshot(
     throw new Error(`Resolusi hasil render salah: ${manifest.width}x${manifest.height}.`);
   }
   const audioQuality = validateAudioQuality({
-    expected: Boolean(snapshot.audio || snapshot.research.scenes.some((scene) => scene.sceneMedia?.audioEnabled)),
-    source: snapshot.audio ? "narration" : snapshot.research.scenes.some((scene) => scene.sceneMedia?.audioEnabled) ? "scene-media" : undefined,
+    expected: Boolean(snapshot.audio || snapshot.research.scenes.some((scene) => scene.sceneMedia?.audioEnabled) || rendererVersion === RENDERER_VERSION && snapshot.outro?.audioEnabled),
+    source: snapshot.audio ? "narration" : snapshot.research.scenes.some((scene) => scene.sceneMedia?.audioEnabled) || rendererVersion === RENDERER_VERSION && snapshot.outro?.audioEnabled ? "scene-media" : undefined,
     codec: manifest.audioCodec,
     videoDurationSec: manifest.durationSec,
     audioDurationSec: manifest.audioDurationSec,
-    expectedAudioDurationSec: snapshot.audio?.durationSec,
+    expectedAudioDurationSec: snapshot.outro?.audioEnabled ? undefined : snapshot.audio?.durationSec,
     meanVolumeDb: manifest.audioMeanVolumeDb,
     maxVolumeDb: manifest.audioMaxVolumeDb,
   });
@@ -176,6 +197,10 @@ export async function renderSnapshot(
     ...manifest,
     ...audioQuality,
     rendererVersion,
+    outroAssetId: snapshot.outro?.assetId ?? null,
+    outroName: snapshot.outro?.name ?? null,
+    outroDurationSec: snapshot.outro ? snapshot.outro.trimOutSec - snapshot.outro.trimInSec : 0,
+    outroAudioEnabled: snapshot.outro?.audioEnabled ?? false,
     audioSource: snapshot.audio ? snapshot.audio.source ?? "legacy-unknown" : null,
     audioSha256: snapshot.audio?.sha256 ?? null,
     audioProvider: snapshot.audio?.tts?.provider ?? null,

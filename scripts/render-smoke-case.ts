@@ -6,13 +6,13 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { parseResearchPackage } from "../src/domain/research";
-import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION, V2_RENDERER_VERSION } from "../src/video/renderer-version";
 import type { ResearchPackage } from "../src/domain/research";
 import { renderSnapshot } from "./render-core";
 
 const execFileAsync = promisify(execFile);
 const version = Number(process.argv[2]);
-assert.ok([RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, LEGACY_RENDERER_VERSION].includes(version));
+assert.ok([RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, V2_RENDERER_VERSION, LEGACY_RENDERER_VERSION].includes(version));
 const outputPath = path.resolve(process.argv[3]!);
 const audioName = process.argv[4]!;
 const audioPath = path.resolve("public/audio", audioName);

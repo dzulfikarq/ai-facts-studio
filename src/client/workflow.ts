@@ -86,8 +86,10 @@ export function previewReviewFingerprint(
   research: { title: string; category: string; targetDurationSec: number; visualPreset: string; scenes: unknown[] },
   audio?: { file: string; sha256: string; durationSec: number; timingMode: "scaled" | "estimated"; source: "upload" | "tts" } | null,
   rendererVersion = 0,
+  outro?: unknown,
 ) {
-  return JSON.stringify([research.title, research.category, research.targetDurationSec, research.visualPreset, research.scenes, audio ?? null, rendererVersion]);
+  const fingerprint = [research.title, research.category, research.targetDurationSec, research.visualPreset, research.scenes, audio ?? null, rendererVersion];
+  return JSON.stringify(outro == null ? fingerprint : [...fingerprint, outro]);
 }
 
 export function storedPreviewReviewed(projectId: string, fingerprint: string) {

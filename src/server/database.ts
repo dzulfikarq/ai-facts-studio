@@ -5,6 +5,7 @@ import { parseResearchPackage } from "../domain/research";
 import { buildVisualStoryboard, legacyMotionApprovalFingerprint, retimeVisualStoryboard, visualApprovalFingerprint, visualStoryboardSchema, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { aiGenerationSchema } from "./ai-generation/provider";
 import { visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
+import { outroSelectionSchema } from "../domain/outro";
 
 export const dataDir = path.resolve(process.env.DATA_DIR ?? "data");
 mkdirSync(dataDir, { recursive: true });
@@ -42,6 +43,28 @@ db.exec(`
     UNIQUE(project_id, source_sha256)
   );
   CREATE INDEX IF NOT EXISTS jobs_created_at_idx ON jobs(created_at);
+  CREATE TABLE IF NOT EXISTS outro_assets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    file TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    poster_file TEXT NOT NULL,
+    poster_sha256 TEXT NOT NULL,
+    poster_bytes INTEGER NOT NULL,
+    duration_sec REAL NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    video_codec TEXT NOT NULL,
+    audio_codec TEXT,
+    frame_rate REAL NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS outro_assets_single_default_idx ON outro_assets(is_default) WHERE is_default = 1 AND archived = 0;
+  CREATE INDEX IF NOT EXISTS outro_assets_created_idx ON outro_assets(archived, created_at DESC);
   CREATE TABLE IF NOT EXISTS visual_asset_catalog (
     asset_id TEXT PRIMARY KEY,
     metadata_json TEXT NOT NULL,
@@ -151,7 +174,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS video_job_requests_created_at_idx ON video_job_requests(created_at);
   CREATE TABLE IF NOT EXISTS file_cleanup_queue (
-    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets', 'scene-media')),
+    root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets', 'scene-media', 'outros')),
     relative_path TEXT NOT NULL,
     created_at TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -161,12 +184,12 @@ db.exec(`
 `);
 
 const cleanupTable = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file_cleanup_queue'").get() as { sql?: string } | undefined;
-if (cleanupTable?.sql && (!cleanupTable.sql.includes("'visual-assets'") || !cleanupTable.sql.includes("'scene-media'"))) {
+if (cleanupTable?.sql && (!cleanupTable.sql.includes("'visual-assets'") || !cleanupTable.sql.includes("'scene-media'") || !cleanupTable.sql.includes("'outros'"))) {
   db.exec(`
     BEGIN IMMEDIATE;
     ALTER TABLE file_cleanup_queue RENAME TO file_cleanup_queue_legacy;
     CREATE TABLE file_cleanup_queue (
-      root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets', 'scene-media')),
+      root TEXT NOT NULL CHECK (root IN ('audio', 'jobs', 'renders', 'visual-assets', 'scene-media', 'outros')),
       relative_path TEXT NOT NULL,
       created_at TEXT NOT NULL,
       attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -238,6 +261,8 @@ export type StoredProject = {
   pendingTts: { cacheKey: string; scriptSha256: string } | null;
   researchReviewStatus: "needs-review" | "verified-by-author";
   narrationMode?: "unset" | "audio" | "manual";
+  outro?: import("../domain/outro").OutroSelection | null;
+  outroError?: string;
   visualStoryboardError?: string;
 };
 
@@ -315,6 +340,15 @@ export function projectFromRow(row: { id: string; data_json: string; created_at:
     }
   }
   project.pendingTts ??= null;
+  if (project.outro === undefined || project.outro === null) project.outro = null;
+  else {
+    const savedOutro = outroSelectionSchema.safeParse(project.outro);
+    if (savedOutro.success) project.outro = savedOutro.data;
+    else {
+      project.outroError = "Konfigurasi outro project tidak valid; tidak ada outro pengganti yang dipilih.";
+      project.outro = null;
+    }
+  }
   project.narrationMode ??= project.audio ? "audio" : "unset";
   project.visualAssets = Array.isArray(project.visualAssets) ? project.visualAssets.flatMap((asset) => {
     const parsed = visualAssetSchema.safeParse(asset);

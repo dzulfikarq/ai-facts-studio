@@ -50,7 +50,7 @@ Default cue timings (30 fps): `fadeIn` 24f/spring, `slide` 24f/ease-in-out, `sca
 
 ## Renderer version and old jobs
 
-New snapshots store `rendererVersion: 5`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2–V5 to the motion registry. Snapshots from renderer versions 1–4 remain renderable with their prior timeline-duration behavior. Missing version metadata defaults to V1. Changed content marks a snapshot stale; immutable audio references remain unchanged.
+New snapshots store `rendererVersion: 6`; job row and MP4 manifest record same version. `src/video/root.tsx` dispatches V1 to frozen legacy components and V2–V6 to the motion registry. Snapshots from renderer versions 1–5 remain renderable with their prior timeline-duration behavior; V6 adds optional local outro media. Missing version metadata defaults to V1. Changed content marks a snapshot stale; immutable audio/outro references remain unchanged.
 
 ## Validation and visual regression
 

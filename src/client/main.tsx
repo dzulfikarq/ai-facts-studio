@@ -11,6 +11,7 @@ import { composeVisualScene } from "../domain/visual-composer";
 import { visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
 import type { VisualAsset } from "../domain/visual-assets";
 import { isAnimatedMediaFile, type SceneMedia } from "../domain/scene-media";
+import type { OutroLibraryAsset, OutroSelection } from "../domain/outro";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { AssetPlacement, ReusableSceneEntry } from "./SmartAssetLibraryDialog";
@@ -30,6 +31,7 @@ import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
 import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
 import { VideoEditorV2 } from "./VideoEditorV2";
+import { OutroLibraryPanel } from "./OutroLibraryPanel";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
@@ -63,6 +65,9 @@ type Project = {
   visualPreparation: VisualPreparationJob | null;
   motionPreparation: MotionPreparationJob | null;
   visualAssets: VisualAsset[];
+  outro: OutroSelection | null;
+  outroAsset: OutroLibraryAsset | null;
+  outroError?: string;
   audio: {
     file: string; name: string; durationSec: number; bytes: number; sha256: string;
     source: "upload" | "tts"; timingMode: "scaled" | "estimated";
@@ -81,6 +86,7 @@ type Project = {
 };
 
 type AiGenerationMode = "development" | "production";
+type OutroLibraryState = { outros: OutroLibraryAsset[]; defaultOutroId: string | null };
 type Status = { ffmpegAvailable: boolean; githubWorkflowAvailable: boolean; generationMode: AiGenerationMode; dailyLimit: number; jobsUsed: number; nextAllowedAt: string | null };
 type AiGenerationSettings = {
   mode: AiGenerationMode;
@@ -163,6 +169,11 @@ function friendlyError(error: unknown) {
   return error.message;
 }
 
+function renderOutro(outro: OutroSelection | null, asset: OutroLibraryAsset | null) {
+  if (!outro?.enabled || !asset) return undefined;
+  return { assetId: asset.id, name: asset.name, file: `outros/${asset.file}`, sha256: asset.sha256, bytes: asset.bytes, durationSec: asset.durationSec, trimInSec: outro.trimInSec, trimOutSec: outro.trimOutSec, audioEnabled: outro.audioEnabled };
+}
+
 function App() {
   const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.href));
   const routeRef = useRef(route);
@@ -182,6 +193,11 @@ function App() {
   const [aiImageProviders, setAiImageProviders] = useState<AiImageProviderCatalog | null>(null);
   const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
   const [aiSettingsError, setAiSettingsError] = useState("");
+  const [settingsTab, setSettingsTab] = useState<"ai-generation" | "outro-library">("ai-generation");
+  const [outroLibrary, setOutroLibrary] = useState<OutroLibraryState>({ outros: [], defaultOutroId: null });
+  const [outroLibraryLoaded, setOutroLibraryLoaded] = useState(false);
+  const [outroLibraryBusy, setOutroLibraryBusy] = useState(false);
+  const [selectedCreateOutroId, setSelectedCreateOutroId] = useState<string | null | undefined>(undefined);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [generatingVisualSceneId, setGeneratingVisualSceneId] = useState<string | null>(null);
@@ -220,7 +236,7 @@ function App() {
   const visualResearch = useMemo(() => project && research && !project.visualStoryboardError ? applyVisualStoryboard(research, project.visualStoryboard) : research, [project?.visualStoryboard, project?.visualStoryboardError, project?.id, research]);
   const visualGate = useMemo(() => project && visualResearch && !project.visualStoryboardError ? visualStoryboardQualityGate(visualResearch, project.visualStoryboard, project.visualAssets) : null, [project?.visualStoryboard, project?.visualStoryboardError, project?.visualAssets, visualResearch]);
   const visualApproved = Boolean(visualGate?.ready && !Object.keys(sceneMediaErrors).length && project?.visualStoryboard.scenes.length && project.visualStoryboard.scenes.every((scene) => scene.approved));
-  const reviewFingerprint = project && visualResearch ? previewReviewFingerprint(visualResearch, project.audio, RENDERER_VERSION) : "";
+  const reviewFingerprint = project && visualResearch ? previewReviewFingerprint(visualResearch, project.audio, RENDERER_VERSION, project.outro) : "";
   const draftAudioMatches = !project?.audio || project.audio.source !== "tts" || Boolean(project.audioMatchesNarration && visualResearch && narrationScript(visualResearch) === narrationScript(project.researchPackage));
   const workflowSignals = {
     activeStep,
@@ -279,7 +295,7 @@ function App() {
     const loadedVisualResearch = loaded.visualStoryboardError ? loaded.researchPackage : applyVisualStoryboard(loaded.researchPackage, loaded.visualStoryboard);
     const loadedVisualGate = loaded.visualStoryboardError ? null : visualStoryboardQualityGate(loadedVisualResearch, loaded.visualStoryboard, loaded.visualAssets);
     const loadedVisualApproved = Boolean(loadedVisualGate?.ready && !Object.keys(loaded.sceneMediaErrors ?? {}).length && loaded.visualStoryboard.scenes.every((scene) => scene.approved));
-    const savedPreviewReview = storedPreviewReviewed(loaded.id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION));
+    const savedPreviewReview = storedPreviewReviewed(loaded.id, previewReviewFingerprint(loadedVisualResearch, loaded.audio, RENDERER_VERSION, loaded.outro));
     const savedStep = requestedStep ?? storedWorkspaceStep(loaded.id);
     const reachableStep = loaded.visualStoryboardError ? "materials" : reachableWorkspaceStep(savedStep, {
       activeStep: savedStep,
@@ -338,6 +354,64 @@ function App() {
     return settings;
   }
 
+  async function refreshOutroLibrary() {
+    const library = await api<OutroLibraryState>("/api/outros");
+    setOutroLibrary(library);
+    setSelectedCreateOutroId((current) => current !== undefined && current !== null && !library.outros.some((asset) => asset.id === current) ? null : current);
+    setOutroLibraryLoaded(true);
+    return library;
+  }
+
+  async function uploadOutro(file: File) {
+    setOutroLibraryBusy(true);
+    try {
+      const form = new FormData();
+      form.append("outro", file);
+      const result = await api<{ asset: OutroLibraryAsset } & OutroLibraryState>("/api/outros", { method: "POST", body: form });
+      setOutroLibrary({ outros: result.outros, defaultOutroId: result.defaultOutroId });
+      setMessage(`Outro “${result.asset.name}” ditambahkan. Tetapkan sebagai default bila diperlukan.`);
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setOutroLibraryBusy(false); }
+  }
+
+  async function renameOutro(id: string, name: string) {
+    setOutroLibraryBusy(true);
+    try {
+      const result = await api<{ asset: OutroLibraryAsset } & OutroLibraryState>(`/api/outros/${encodeURIComponent(id)}`, jsonRequest("PATCH", { name }));
+      setOutroLibrary({ outros: result.outros, defaultOutroId: result.defaultOutroId });
+      setMessage("Nama outro diperbarui.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setOutroLibraryBusy(false); }
+  }
+
+  async function makeOutroDefault(id: string) {
+    setOutroLibraryBusy(true);
+    try {
+      setOutroLibrary(await api<OutroLibraryState>(`/api/outros/${encodeURIComponent(id)}/default`, { method: "POST" }));
+      setMessage("Default outro diperbarui. Project lama tidak berubah.");
+    } catch (error) { setMessage(friendlyError(error)); }
+    finally { setOutroLibraryBusy(false); }
+  }
+
+  async function deleteOutro(asset: OutroLibraryAsset) {
+    await askConfirmation({
+      title: "Hapus outro dari library?",
+      message: `“${asset.name}” akan diarsipkan bila masih dipakai project atau snapshot render. File yang masih dirujuk tetap tersedia; tidak ada penggantian outro otomatis.`,
+      confirmLabel: "Hapus outro",
+      cancelLabel: "Pertahankan outro",
+      tone: "danger",
+      onConfirm: async () => {
+        setOutroLibraryBusy(true);
+        try {
+          const result = await api<{ archived: boolean; projectReferences: number } & OutroLibraryState>(`/api/outros/${encodeURIComponent(asset.id)}`, { method: "DELETE" });
+          setOutroLibrary({ outros: result.outros, defaultOutroId: result.defaultOutroId });
+          setMessage(result.archived ? `Outro “${asset.name}” diarsipkan; project yang memakainya tetap aman.` : `Outro “${asset.name}” dihapus permanen.`);
+        } catch (error) { throw error; }
+        finally { setOutroLibraryBusy(false); }
+      },
+    });
+  }
+
   function askConfirmation(options: ConfirmationOptions) {
     return new Promise<boolean>((resolve) => {
       confirmationRef.current?.resolve(false);
@@ -370,6 +444,7 @@ function App() {
   useEffect(() => {
     void refresh().catch((error) => setMessage(friendlyError(error)));
     void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
+    void refreshOutroLibrary().catch((error) => setMessage(friendlyError(error)));
     void api<AiImageProviderCatalog>("/api/ai-image/providers").then(setAiImageProviders).catch(() => setAiImageProviders({ status: "Failed", configured: false, providers: [], message: "Provider gambar tidak tersedia; gunakan Prompt Builder + import manual.", retryAt: null }));
     const currentIndex = (window.history.state as { aiFactsStudioIndex?: unknown } | null)?.aiFactsStudioIndex;
     routeHistoryIndex.current = Number.isSafeInteger(currentIndex) ? currentIndex as number : 0;
@@ -451,7 +526,10 @@ function App() {
           routeHistoryIndex.current = targetIndex;
           commitRoute(target, "replace");
           accepted = true;
-          if (target.view === "settings") void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
+          if (target.view === "settings") {
+            void refreshAiGenerationSettings().catch((error) => setAiSettingsError(friendlyError(error)));
+            void refreshOutroLibrary().catch((error) => setMessage(friendlyError(error)));
+          }
         } finally {
           if (accepted) popNavigationPending.current = false;
           else if (!restorePopNavigation.current) popNavigationPending.current = false;
@@ -600,21 +678,24 @@ function App() {
     if (!await saveBeforeLeavingWorkspace()) return;
     setCreateMode("ai");
     setJsonDraft("");
+    setSelectedCreateOutroId(undefined);
     setCreateDraftUnsaved(false);
     commitRoute({ view: "create" });
     setMessage("");
   }
 
-  async function openSettings() {
+  async function openSettings(tab: "ai-generation" | "outro-library" = "ai-generation") {
     if (busy || ttsBusy || ttsLoading || aiSettingsBusy) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     setCreateDraftUnsaved(false);
+    setSettingsTab(tab);
     commitRoute({ view: "settings" });
     setMessage("");
     setAiSettingsError("");
-    try { await refreshAiGenerationSettings(); }
-    catch (error) { setAiSettingsError(friendlyError(error)); }
+    const results = await Promise.allSettled([refreshAiGenerationSettings(), refreshOutroLibrary()]);
+    if (results[0]?.status === "rejected") setAiSettingsError(friendlyError(results[0].reason));
+    if (results[1]?.status === "rejected") setMessage(friendlyError(results[1].reason));
   }
 
   async function setAiGenerationMode(mode: AiGenerationMode) {
@@ -651,7 +732,7 @@ function App() {
   async function createAiProject(researchPackage: ResearchPackage, requestId: string) {
     setBusy(true);
     try {
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       setCreateDraftUnsaved(false);
       await refresh().catch(() => undefined);
       return { id: created.id, title: created.researchPackage.title };
@@ -664,7 +745,7 @@ function App() {
     setBusy(true);
     try {
       const researchPackage = await api<ResearchPackage>("/api/sample?topic=volcano-formation");
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       const seeded = seedVolcanoVisualSample(created.visualStoryboard);
       const prepared = await api<Project>(`/api/projects/${created.id}`, jsonRequest("PUT", { researchPackage: created.researchPackage, visualStoryboard: seeded }));
       await refresh();
@@ -685,7 +766,7 @@ function App() {
     setBusy(true);
     try {
       const researchPackage = JSON.parse(jsonDraft) as ResearchPackage;
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       await refresh();
       await openProject(created.id, undefined, true);
     } catch (error) { setMessage(friendlyError(error)); }
@@ -1508,6 +1589,17 @@ function App() {
     setPreviewStarted(false);
   }
 
+  function updateProjectOutro(outro: OutroSelection | null) {
+    setProject((current) => current ? {
+      ...current,
+      outro,
+      outroAsset: outro ? current.outroAsset?.id === outro.assetId ? current.outroAsset : outroLibrary.outros.find((asset) => asset.id === outro.assetId) ?? null : null,
+    } : current);
+    setSaved(false);
+    setPreviewReviewed(false);
+    setPreviewStarted(false);
+  }
+
   async function selectVisualLibraryAsset(sceneId: string, assetId: string, placement: AssetPlacement) {
     if (busy) return;
     setBusy(true);
@@ -1643,7 +1735,7 @@ function App() {
     if (!project || !research) return null;
     setBusy(true);
     try {
-      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard }));
+      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard, outro: project.outro }));
       setProject(updated);
       setResearch(updated.researchPackage);
       setSaved(true);
@@ -1742,7 +1834,7 @@ function App() {
     setBusy(true);
     try {
       const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", {
-        researchPackage: research, visualStoryboard: project.visualStoryboard, narrationMode: "manual",
+        researchPackage: research, visualStoryboard: project.visualStoryboard, narrationMode: "manual", outro: project.outro,
       }));
       setProject(updated);
       setResearch(updated.researchPackage);
@@ -1761,7 +1853,7 @@ function App() {
     setTtsMessage("");
     try {
       if (!saved) {
-        const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard }));
+        const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard, outro: project.outro }));
         setProject(updated);
         setResearch(updated.researchPackage);
         setSaved(true);
@@ -1958,6 +2050,8 @@ function App() {
   const currentWorkspaceStep = workspaceSteps.find((step) => step.id === activeStep) ?? workspaceSteps[0];
   const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
+  const createOutroId = selectedCreateOutroId === undefined ? outroLibrary.defaultOutroId : selectedCreateOutroId;
+  const createOutroAsset = createOutroId ? outroLibrary.outros.find((asset) => asset.id === createOutroId) ?? null : null;
 
   return <div className={`app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""}`}>
     <main className="main-area">
@@ -1989,6 +2083,22 @@ function App() {
           <button type="button" role="tab" aria-selected={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>Generate with AI</button>
           <button type="button" role="tab" aria-selected={createMode === "import"} className={createMode === "import" ? "selected" : ""} onClick={() => setCreateMode("import")}>Import Research Package</button>
         </div>
+        <section className="create-outro-choice" aria-labelledby="create-outro-title">
+          <div className="create-outro-copy"><h2 id="create-outro-title">Outro Video (Opsional)</h2><p>Default library terpilih untuk project baru. Pilih Tanpa Outro kapan saja.</p></div>
+          <label>Outro Video
+            <select aria-label="Outro Video (Opsional)" value={createOutroId ?? ""} onChange={(event) => setSelectedCreateOutroId(event.target.value || null)} disabled={!outroLibraryLoaded}>
+              <option value="">Tanpa Outro</option>
+              {outroLibrary.outros.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{asset.isDefault ? " · Default" : ""} · {asset.durationSec.toFixed(1)} dtk</option>)}
+            </select>
+          </label>
+          {createOutroAsset ? <div className="create-outro-selected">
+            <img src={createOutroAsset.posterUrl} alt=""/>
+            <div><strong>{createOutroAsset.name}</strong><span>{createOutroAsset.durationSec.toFixed(1)} dtk · {createOutroAsset.width} × {createOutroAsset.height}</span>
+              {createOutroAsset.localAvailable ? <video src={createOutroAsset.previewUrl} poster={createOutroAsset.posterUrl} controls playsInline preload="metadata" aria-label={`Pratinjau outro ${createOutroAsset.name}`}/> : <small role="alert">File outro tidak tersedia; tidak ada fallback otomatis.</small>}
+            </div>
+          </div> : <p className="create-outro-none">{outroLibraryLoaded ? "Tanpa Outro" : "Memuat Outro Library…"}</p>}
+          <button type="button" className="button button-light" onClick={() => void openSettings("outro-library")}>Kelola Outro Library</button>
+        </section>
         <div hidden={createMode !== "ai"}><AiGenerationPanel
           mode={aiGenerationSettings?.mode ?? null}
           development={aiGenerationSettings?.providers.development ?? null}
@@ -2017,6 +2127,9 @@ function App() {
         onMode={(mode) => void setAiGenerationMode(mode)}
         theme={theme}
         onTheme={setTheme}
+        tab={settingsTab}
+        onTab={setSettingsTab}
+        outroContent={<OutroLibraryPanel assets={outroLibrary.outros} defaultOutroId={outroLibrary.defaultOutroId} busy={outroLibraryBusy} onUpload={(file) => void uploadOutro(file)} onRename={(id, name) => void renameOutro(id, name)} onMakeDefault={(id) => void makeOutroDefault(id)} onDelete={(asset) => void deleteOutro(asset)}/>}
       />}
 
       {view === "workspace" && project && research && <section className={`page layout-container workspace-page ${activeStep === "video-editor" ? "video-editor-workspace" : ""}`}>
@@ -2072,6 +2185,10 @@ function App() {
             generatingSceneId={generatingVisualSceneId}
             assets={project.visualAssets}
             projectId={project.id}
+            outros={outroLibrary.outros}
+            outro={project.outro}
+            outroAsset={project.outroAsset}
+            outroError={project.outroError}
             sceneMediaErrors={sceneMediaErrors}
             audio={project.audio}
             audioMatchesNarration={draftAudioMatches}
@@ -2080,6 +2197,8 @@ function App() {
             selectedSceneId={selectedSceneId}
             onSelectScene={selectScene}
             onTitleChange={(title) => updateResearch((current) => ({ ...current, title }))}
+            onOutroChange={updateProjectOutro}
+            onOpenOutroLibrary={() => void openSettings("outro-library")}
             onDurationChange={updateSceneDuration}
             onCaptionSegmentsChange={(sceneId, segments) => updateScene(sceneId, (scene) => ({ ...scene, captionSegments: segments }))}
             onOverlaySettingsChange={updateOverlaySettings}
@@ -2198,12 +2317,14 @@ function App() {
           />}
 
           {activeStep === "preview" && <div className="interactive-preview">
-            <div className="interactive-preview-player"><div className="player-wrap">
+            <div className="interactive-preview-player">{project.outroError || project.outro?.enabled && (!project.outroAsset || !project.outroAsset.localAvailable)
+              ? <div className="workflow-alert danger" role="alert">{project.outroError ?? "Outro aktif hilang dari local storage. Tidak ada fallback; perbaiki Outro Video di Video Editor."}</div>
+              : <div className="player-wrap">
               <Player<AnyZodObject, VideoProps>
                 ref={previewPlayer}
                 component={VersionedVideo}
-                inputProps={previewInputProps(visualResearch!, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, RENDERER_VERSION)}
-                durationInFrames={durationInFrames(research, project.audio?.durationSec, project.audio?.timingMode)}
+                inputProps={previewInputProps(visualResearch!, project.audio?.file, project.audio?.durationSec, project.audio?.timingMode, RENDERER_VERSION, renderOutro(project.outro, project.outroAsset))}
+                durationInFrames={durationInFrames(research, project.audio?.durationSec, project.audio?.timingMode, project.outro)}
                 compositionWidth={1080}
                 compositionHeight={1920}
                 fps={30}
@@ -2211,7 +2332,7 @@ function App() {
                 loop
                 style={{ width: "100%", aspectRatio: "9 / 16", maxHeight: "min(68vh, 760px)" }}
               />
-            </div></div>
+            </div>}</div>
             <aside className="interactive-preview-note">
               <span className="preview-live"><i /> DRAFT LIVE</span>
               <h3>Preview interaktif</h3>
@@ -2256,13 +2377,16 @@ function App() {
   </div>;
 }
 
-function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onTheme }: {
+function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onTheme, tab, onTab, outroContent }: {
   settings: AiGenerationSettings | null;
   busy: boolean;
   error: string;
   onMode: (mode: AiGenerationMode) => void;
   theme: ThemePreference;
   onTheme: (theme: ThemePreference) => void;
+  tab: "ai-generation" | "outro-library";
+  onTab: (tab: "ai-generation" | "outro-library") => void;
+  outroContent: React.ReactNode;
 }) {
   const development = settings?.providers.development;
   const production = settings?.providers.production;
@@ -2287,8 +2411,21 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onThem
     connected: "Connected",
   } as const)[development.state] : "Checking";
   return <section className="page layout-container ai-generation-settings">
-    <div className="page-heading"><div><div className="eyebrow">KONFIGURASI PROVIDER</div><h1>Settings</h1><p>AI Generation Mode terpisah dari AI Voice, NODE_ENV, dan mode deployment.</p></div></div>
+    <div className="page-heading"><div><div className="eyebrow">SETTINGS</div><h1>Settings</h1><p>Atur tampilan, AI Generation, dan reusable outro lokal.</p></div></div>
     <AppearanceSettings preference={theme} onChange={onTheme} />
+    <div className="settings-subnav" role="tablist" aria-label="Pengaturan" onKeyDown={(event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = ["ai-generation", "outro-library"] as const;
+      const current = tabs.indexOf(tab);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+      onTab(tabs[next]!);
+      event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=tab]")[next]?.focus();
+    }}>
+      <button type="button" id="settings-tab-ai-generation" role="tab" aria-controls="settings-panel-ai-generation" tabIndex={tab === "ai-generation" ? 0 : -1} aria-selected={tab === "ai-generation"} className={`button button-light ${tab === "ai-generation" ? "selected" : ""}`} onClick={() => onTab("ai-generation")}>AI Generation</button>
+      <button type="button" id="settings-tab-outro-library" role="tab" aria-controls="settings-panel-outro-library" tabIndex={tab === "outro-library" ? 0 : -1} aria-selected={tab === "outro-library"} className={`button button-light ${tab === "outro-library" ? "selected" : ""}`} onClick={() => onTab("outro-library")}>Outro Library</button>
+    </div>
+    {tab === "outro-library" ? <div id="settings-panel-outro-library" role="tabpanel" aria-labelledby="settings-tab-outro-library" tabIndex={0}>{outroContent}</div> : <div id="settings-panel-ai-generation" role="tabpanel" aria-labelledby="settings-tab-ai-generation" tabIndex={0}>
     {error && <div className="workflow-alert danger" role="alert">{error}</div>}
     {!settings ? <div className="workflow-empty" role={error ? undefined : "status"}>{error ? "Pengaturan gagal dimuat." : "Memuat pengaturan AI…"}</div> : <>
       <section className="ai-settings-panel">
@@ -2340,6 +2477,7 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onThem
 
         <div className="ai-settings-footnote"><strong>Generate hanya setelah klik eksplisit.</strong><span>Development mengirim input ke OpenCode lokal dan model terpilih; biaya provider mengikuti akun OpenCode. Production memakai Gemini guard/quota. Keduanya tidak melakukan fact-check independen.</span></div>
     </>}
+    </div>}
   </section>;
 }
 

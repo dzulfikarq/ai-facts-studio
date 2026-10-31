@@ -1,4 +1,4 @@
-# Dynamic Motion Graphics Engine — Renderer V5
+# Dynamic Motion Graphics Engine
 
 ## Goal
 
@@ -57,7 +57,7 @@ Current captions show one phrase at a time, wrap to at most two lines, use prese
 
 ## Versioning and tests
 
-New jobs store `rendererVersion: 5` in immutable snapshot, SQLite job row, and manifest. Renderer versions 1–4 remain supported; older snapshots keep prior timeline-duration behavior. Snapshots without a version default to V1 and use the frozen legacy component. Preview and render share `VersionedVideo`. Audio path/hash stays immutable; daily quota policy is unchanged.
+New jobs store `rendererVersion: 6` in immutable snapshot, SQLite job row, and manifest. Renderer versions 1–5 remain supported; V6 adds optional local outro media while older snapshots keep their prior behavior. Snapshots without a version default to V1 and use the frozen legacy component. Preview and render share `VersionedVideo`. Audio/outro references stay immutable; daily quota policy is unchanged.
 
 Run `npm test`, `npm run smoke:render`, `npm run smoke:samples`, and `npm run test:visual`. Visual test renders 86 PNG frames at 270×480 and compares hashes to `scripts/visual-goldens.json`. It includes all templates, presets, cue behavior, staggered entrance, lightning, seven mountain scenes, five salt scenes, five Earth scenes, and transitions. Before/after/contact sheets were inspected before golden refresh. Hash baseline is local Windows/Chrome-specific and may differ on another platform/font rasterizer.
 

@@ -5,10 +5,10 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION } from "../src/video/renderer-version";
+import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION, V2_RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
-const versions = [RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, LEGACY_RENDERER_VERSION];
+const versions = [RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, V2_RENDERER_VERSION, LEGACY_RENDERER_VERSION];
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-render-smoke-"));
 try {
   for (const version of versions) {

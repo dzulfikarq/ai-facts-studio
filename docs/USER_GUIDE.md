@@ -11,6 +11,14 @@ Start `npm run dev`; open `http://127.0.0.1:5173`. Choose **Create video**, impo
 5. **Preview Video:** Remotion Player shows the current draft and active audio interactively. It creates no snapshot/render job and uses no production video quota. Play it, then mark it reviewed; storyboard/audio changes invalidate that review.
 6. **Render & Download:** explicit action creates/reuses immutable snapshot and starts local MP4 render. Quota/status, progress, manifest, and download appear here. Without audio, confirm **Render tanpa narasi**. Template preview/render makes zero AI calls.
 
+## Outro Library
+
+Open **Settings → Outro Library** to upload a local MP4, preview or rename it, and optionally make it the default for new projects. No MP4 is bundled. In **Create video**, keep the current default or choose **Tanpa Outro**. Existing projects keep their saved selection when the library default changes.
+
+In **Video Editor → Pengaturan Video**, choose/disable the outro, set trim in/out, and optionally include its original audio. The editor preview and final render append the same moving clip after scenes; it has no scene text overlays. Missing media is reported instead of silently replaced. Deleting an outro used by a project or saved render archives it until references are removed.
+
+Technical behavior: [`OUTRO_LIBRARY.md`](OUTRO_LIBRARY.md).
+
 Workspace URL stores project, step, and selected scene. Video Editor uses `/projects/:id/editor`; legacy `/projects/:id?step=visual` and `?step=editor` URLs resolve to the same editor. Browser Back/Forward preserves route history and unsaved-change confirmations.
 
 UI typography uses Plus Jakarta Sans consistently, including technical editors; Segoe UI/Arial act as fallbacks when Google Fonts is unavailable.

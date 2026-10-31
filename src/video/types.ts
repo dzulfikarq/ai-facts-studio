@@ -1,6 +1,7 @@
 import type { ResearchPackage } from "../domain/research";
 import type { VisualImageTransform } from "../domain/visual-composition";
 import type { MotionAction } from "../domain/motion-director";
+import type { OutroRenderInput } from "../domain/outro";
 
 export type EditorMotionPath = {
   actionId: string;
@@ -23,5 +24,6 @@ export type VideoProps = {
   audioDurationSec?: number;
   audioTimingMode?: "scaled" | "estimated";
   rendererVersion?: number;
+  outro?: OutroRenderInput;
   editor?: VideoEditorInteractions;
 };

@@ -38,6 +38,6 @@ Optional `captionSegments` stores `{text,startProgress,endProgress,emphasis?}` (
 
 1–120 sec; 1–30 scenes; up to 50 references; 2,000 chars per narration segment; 120 chars on-screen text; up to 12 composition layers, 32 nodes/layer, 8 cues/scene. Templates: `mountain-reveal`, `plate-collision`, `folding-uplift`, `himalaya`, `volcano`, `infographic`, `space-orbit`, `animal-habitat`.
 
-V1.0 migration uses `templateId` to add authored default compositions and derives default cue plans. Existing `visualDescription`, claims, references, timing, and scene text remain unchanged. DB projects normalize on read; they persist v1.1 on next save. Renderer V5 is current; immutable renderer versions 1–4 remain supported, with legacy timeline-duration behavior preserved.
+V1.0 migration uses `templateId` to add authored default compositions and derives default cue plans. Existing `visualDescription`, claims, references, timing, and scene text remain unchanged. DB projects normalize on read; they persist v1.1 on next save. Renderer V6 is current; immutable renderer versions 1–5 remain supported, with legacy timeline-duration behavior preserved.
 
 Examples: [`mountain-formation.json`](../samples/mountain-formation.json), [`lightning-charge.json`](../samples/lightning-charge.json), and [`kenapa-air-laut-asin.json`](../samples/kenapa-air-laut-asin.json). V1.0 samples remain supported. No URL fetch/factual verification occurs; author review remains required. Renderer wiring and known nonvisual metadata fields: [`VIDEO_PIPELINE.md`](VIDEO_PIPELINE.md).

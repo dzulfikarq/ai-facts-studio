@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, ImagePlus, Pause, Play, Plus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, Film, ImagePlus, Pause, Play, Plus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import { applyVisualStoryboard, compositionForVisualScene, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
@@ -21,6 +21,7 @@ import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../dom
 import type { MotionPreparationJob } from "../domain/motion-preparation";
 import type { VisualPreparationJob } from "../domain/visual-preparation";
 import type { SceneMedia } from "../domain/scene-media";
+import { outroTrimFrames, type OutroLibraryAsset, type OutroSelection } from "../domain/outro";
 import { SmartAssetLibraryDialog, type AssetPlacement, type ReusableSceneEntry } from "./SmartAssetLibraryDialog";
 import { GoogleFlowPanel, type FlowBatchItem, type FlowBatchProgress } from "./GoogleFlowPanel";
 import { visualStyles } from "../video/style-config";
@@ -54,7 +55,7 @@ const motionEasingLabels: Record<MotionCuePlan["easing"], string> = { linear: "L
 const isMotionEffect = (cue: MotionCuePlan["cue"]): cue is MotionEffectCue => cue !== "cut" && cue !== "dissolve" && cue !== "slide-transition" && cue !== "wipe";
 const isMotionEffectPlan = (plan: MotionCuePlan) => isMotionEffect(plan.cue) && !isSceneTransitionPlan(plan);
 
-export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, audio, audioMatchesNarration, hasPendingAudio, narrationMode, selectedSceneId, sceneMediaErrors, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onMotionDirectionChange, onTitleChange, onDurationChange, onCaptionSegmentsChange, onOverlaySettingsChange, onSelectScene, onBack, onOpenNarration, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionBeatPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
+export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, outros, outro, outroAsset, outroError, audio, audioMatchesNarration, hasPendingAudio, narrationMode, selectedSceneId, sceneMediaErrors, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onMotionDirectionChange, onTitleChange, onOutroChange, onOpenOutroLibrary, onDurationChange, onCaptionSegmentsChange, onOverlaySettingsChange, onSelectScene, onBack, onOpenNarration, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionBeatPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
   gate: VisualQualityGate;
@@ -63,6 +64,10 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   generatingSceneId: string | null;
   assets: VisualAsset[];
   projectId: string;
+  outros: OutroLibraryAsset[];
+  outro: OutroSelection | null;
+  outroAsset: OutroLibraryAsset | null;
+  outroError?: string;
   audio: EditorAudio;
   audioMatchesNarration: boolean;
   hasPendingAudio: boolean;
@@ -84,6 +89,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onChange: (sceneId: string, change: Partial<VisualStoryboardScene>) => void;
   onMotionDirectionChange: (sceneId: string, motionPlan: MotionCuePlan[]) => void;
   onTitleChange: (title: string) => void;
+  onOutroChange: (outro: OutroSelection | null) => void;
+  onOpenOutroLibrary: () => void;
   onDurationChange: (sceneId: string, durationSec: number) => void;
   onCaptionSegmentsChange: (sceneId: string, segments: ResearchPackage["scenes"][number]["captionSegments"]) => void;
   onOverlaySettingsChange: (change: Partial<ResearchPackage["videoOverlaySettings"]>) => void;
@@ -131,6 +138,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
 }) {
   const [tab, setTab] = useState<InspectorTab>("visual");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
   const [batchLauncher, setBatchLauncher] = useState<(() => void) | null>(null);
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [selectedMotionBeatRef, setSelectedMotionBeatRef] = useState<{ sceneId: string; actionId: string } | null>(null);
@@ -172,10 +180,14 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const sceneImages = useMemo(() => visualImageNodes(selectedComposition), [selectedComposition]);
   const selectedImage = sceneImages.find((entry) => entry.id === selectedImageId) ?? sceneImages[0];
   const selectedAsset = assets.find((asset) => asset.id === selectedImage?.node.asset);
-  const previewDurationSec = timelineDuration(research, audio?.durationSec, audio?.timingMode);
-  const frameCount = durationInFrames(research, audio?.durationSec, audio?.timingMode);
+  const mainDurationSec = timelineDuration(research, audio?.durationSec, audio?.timingMode);
+  const frameCount = durationInFrames(research, audio?.durationSec, audio?.timingMode, outro);
+  const previewDurationSec = frameCount / FPS;
+  const outroDurationFrames = outroTrimFrames(outro, FPS);
+  const mainDurationFrames = Math.max(1, Math.ceil(mainDurationSec * FPS));
+  const outroPreviewError = outroError ?? (outro?.enabled && (!outroAsset || !outroAsset.localAvailable) ? "Outro aktif tidak tersedia di local storage. Tidak ada fallback outro otomatis." : "");
   const currentTime = Math.min(previewDurationSec, frame / FPS);
-  const sceneSpan = (scene: ResearchPackage["scenes"][number]) => sceneTimes(research, scene, previewDurationSec, audio?.timingMode);
+  const sceneSpan = (scene: ResearchPackage["scenes"][number]) => sceneTimes(research, scene, mainDurationSec, audio?.timingMode);
   const selectedSpan = sceneSpan(sourceResearchScene);
   const scenePreviewFrame = (span: { startSec: number; endSec: number }) => Math.min(frameCount - 1, Math.floor((span.startSec + Math.min(1, (span.endSec - span.startSec) / 2)) * FPS));
   const selectedMediaError = sceneMediaErrors[selectedScene.sceneId];
@@ -256,7 +268,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
       }
       const time = detail.frame / FPS;
       const scene = research.scenes.find((item) => {
-        const span = sceneTimes(research, item, previewDurationSec, audio?.timingMode);
+        const span = sceneTimes(research, item, mainDurationSec, audio?.timingMode);
         return time >= span.startSec && time < span.endSec;
       }) ?? research.scenes.at(-1);
       if (scene && scene.id !== selectedSceneRef.current && !transitionPreviewLock.current) {
@@ -280,7 +292,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
       player.removeEventListener("play", onPlay);
       player.removeEventListener("pause", onPause);
     };
-  }, [audio?.timingMode, onSelectScene, previewDurationSec, research, scenePreviewEnd]);
+  }, [audio?.timingMode, mainDurationSec, onSelectScene, previewDurationSec, research, scenePreviewEnd]);
 
   const seekTo = useCallback((nextFrame: number) => {
     const safeFrame = Math.max(0, Math.min(frameCount - 1, Math.round(nextFrame)));
@@ -333,9 +345,12 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     },
   }), [editImage, editMotionBeat, selectedImageId, selectedPathAction, selectedScene.sceneId, selectedMotionAction, tab]);
   const playerInputProps = useMemo<VideoProps>(() => ({
-    ...previewInputProps(visualResearch, audio?.file, audio?.durationSec, audio?.timingMode),
+    ...previewInputProps(visualResearch, audio?.file, audio?.durationSec, audio?.timingMode, undefined, outro?.enabled && outroAsset ? {
+      assetId: outroAsset.id, name: outroAsset.name, file: `outros/${outroAsset.file}`, sha256: outroAsset.sha256, bytes: outroAsset.bytes,
+      durationSec: outroAsset.durationSec, trimInSec: outro.trimInSec, trimOutSec: outro.trimOutSec, audioEnabled: outro.audioEnabled,
+    } : undefined),
     editor: editorInteractions,
-  }), [audio?.durationSec, audio?.file, audio?.timingMode, editorInteractions, visualResearch]);
+  }), [audio?.durationSec, audio?.file, audio?.timingMode, editorInteractions, outro, outroAsset, visualResearch]);
   const setImage = (update: VisualImageUpdate) => selectedImage && editImage(selectedImage.id, update);
   const setImageFit = (fit: "cover" | "contain") => {
     setImage({ fit });
@@ -452,12 +467,49 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
         <span className={`editor-save-state ${saved ? "saved" : "unsaved"}`} role="status"><i />{saved ? "Tersimpan" : "Belum disimpan"}</span>
       </div>
       <div className="video-editor-toolbar-actions">
+        <button type="button" className={`button button-light ${videoSettingsOpen ? "selected" : ""}`} aria-expanded={videoSettingsOpen} aria-controls="editor-video-settings" onClick={() => setVideoSettingsOpen((open) => !open)}><Film size={15} aria-hidden="true"/>Pengaturan Video</button>
         <button type="button" className="button button-light editor-inspector-toggle" aria-expanded={inspectorOpen} aria-controls="video-editor-inspector" onClick={() => setInspectorOpen((open) => !open)}><SlidersHorizontal size={15} aria-hidden="true"/>{inspectorOpen ? "Tutup Inspector" : "Inspector"}</button>
         <button type="button" className="button button-light" onClick={onSave} disabled={saved || busy}><Check size={15} aria-hidden="true"/> Simpan</button>
         <button type="button" className="button button-light" onClick={() => playerRef.current?.toggle()}><Play size={15} aria-hidden="true"/>{playing ? "Jeda" : "Pratinjau video"}</button>
         <button type="button" className="button button-primary" onClick={onExport} disabled={busy}>Lanjut ke Review <span aria-hidden="true">→</span></button>
       </div>
     </header>
+
+    {videoSettingsOpen && <section id="editor-video-settings" className="editor-video-settings" aria-labelledby="editor-video-settings-title">
+      <div className="editor-video-settings-heading"><div><span className="eyebrow">PENGATURAN LEVEL VIDEO</span><h2 id="editor-video-settings-title">Outro</h2><p>Outro ditambahkan setelah scene terakhir; durasi scene dan narasi tetap.</p></div><button type="button" className="button button-light icon-button" aria-label="Tutup pengaturan video" onClick={() => setVideoSettingsOpen(false)}><X size={16} aria-hidden="true"/></button></div>
+      <div className="editor-outro-controls">
+        <label className="editor-field">Outro Video<select aria-label="Pilih outro video" value={outro?.assetId ?? ""} onChange={(event) => {
+          const asset = outros.find((item) => item.id === event.target.value);
+          onOutroChange(asset ? { assetId: asset.id, enabled: true, trimInSec: 0, trimOutSec: asset.durationSec, audioEnabled: false } : null);
+        }}>
+          <option value="">Tanpa Outro</option>
+          {outro && <option value={outro.assetId}>{outroAsset ? `${outroAsset.name}${outroAsset.archived ? " · Diarsipkan (project ini)" : outroAsset.localAvailable ? " · Terpilih" : " · File tidak tersedia"}` : "Outro tidak ditemukan (project ini)"}</option>}
+          {outros.filter((asset) => asset.id !== outro?.assetId).map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{asset.isDefault ? " · Default" : ""} · {asset.durationSec.toFixed(1)} dtk</option>)}
+        </select></label>
+        {outro && <label className="editor-outro-toggle"><input type="checkbox" checked={outro.enabled} onChange={(event) => onOutroChange({ ...outro, enabled: event.target.checked })}/><span>Gunakan outro di preview dan render</span></label>}
+        {outro && <>
+          {outroPreviewError && <div className="workflow-alert danger" role="alert">{outroPreviewError}</div>}
+          <div className="editor-outro-preview">
+            {outroAsset?.localAvailable ? <video src={outroAsset.previewUrl} poster={outroAsset.posterUrl} controls playsInline preload="metadata" aria-label={`Pratinjau outro ${outroAsset.name}`}/> : <span className="editor-outro-missing"><Film size={18} aria-hidden="true"/>File outro tidak tersedia</span>}
+            <div><strong>{outroAsset?.name ?? "Outro tidak ditemukan"}</strong><small>{outroAsset ? `${outroAsset.durationSec.toFixed(1)} dtk · ${outroAsset.width} × ${outroAsset.height}${outroAsset.archived ? " · Diarsipkan, tetap tersedia untuk project ini" : ""}` : "Tidak ada fallback outro otomatis."}</small></div>
+          </div>
+          <div className="editor-outro-trim">
+            <label className="editor-field">Trim masuk · detik<input type="number" min="0" max={Math.max(0, outro.trimOutSec - 0.1)} step="0.1" value={outro.trimInSec} disabled={!outroAsset} onChange={(event) => {
+              const value = Number(event.target.value);
+              if (Number.isFinite(value) && outroAsset) onOutroChange({ ...outro, trimInSec: Math.max(0, Math.min(value, outro.trimOutSec - 0.1)) });
+            }}/></label>
+            <label className="editor-field">Trim keluar · detik<input type="number" min={outro.trimInSec + 0.1} max={outroAsset?.durationSec ?? 120} step="0.1" value={outro.trimOutSec} disabled={!outroAsset} onChange={(event) => {
+              const value = Number(event.target.value);
+              if (Number.isFinite(value) && outroAsset) onOutroChange({ ...outro, trimOutSec: Math.max(outro.trimInSec + 0.1, Math.min(value, outroAsset.durationSec)) });
+            }}/></label>
+          </div>
+          <label className="editor-outro-toggle"><input type="checkbox" checked={outro.audioEnabled} disabled={!outroAsset} onChange={(event) => onOutroChange({ ...outro, audioEnabled: event.target.checked })}/><span>Gunakan audio asli outro</span></label>
+          <p className="editor-outro-total">Durasi outro {((outro.trimOutSec - outro.trimInSec)).toFixed(1)} dtk · total video {previewDurationSec.toFixed(1)} dtk</p>
+        </>}
+        {!outros.length && <p className="editor-outro-empty">Outro Library kosong. Project tetap tanpa outro sampai Anda memilih asset.</p>}
+        <button type="button" className="button button-light editor-outro-library-link" onClick={onOpenOutroLibrary}>Kelola Outro Library</button>
+      </div>
+    </section>}
 
     {(preparation || motionPreparation) && <div className="editor-job-status" role="status" aria-live="polite">
       {preparation && <span>{preparation.status === "running" ? `Menyiapkan ilustrasi ${preparation.processed}/${preparation.total}` : `Persiapan ilustrasi: ${preparation.status === "completed" ? "selesai" : preparation.status.replaceAll("_", " ")}`}</span>}
@@ -486,6 +538,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
         <div className="editor-canvas-toolbar"><div><strong>Pratinjau video</strong><span>9:16 · 1080 × 1920</span></div><button type="button" className={`button button-light ${safeGuides ? "selected" : ""}`} aria-pressed={safeGuides} onClick={() => setSafeGuides((value) => !value)}>Panduan aman</button></div>
         <div className="editor-canvas-shell">
           <Player<AnyZodObject, VideoProps> ref={playerRef} component={VersionedVideo} inputProps={playerInputProps} durationInFrames={frameCount} compositionWidth={1080} compositionHeight={1920} fps={FPS} initialFrame={scenePreviewFrame(selectedSpan)} loop={false} controls={false} clickToPlay={false} style={{ width: "100%", height: "100%" }} />
+          {outroPreviewError && <div className="editor-outro-error" role="alert">{outroPreviewError}</div>}
           {selectedMediaError && <div className="editor-media-error" role="alert"><strong>Media Flow tidak tersedia atau rusak</strong><span>{selectedMediaError}</span><small>Komposisi tidak dipakai sebagai fallback. Impor ulang klip atau lepas media bermasalah.</small></div>}
           {safeGuides && <div className="editor-safe-guide" aria-hidden="true" style={{ left: `${safe.left / 1080 * 100}%`, right: `${safe.right / 1080 * 100}%`, top: `${safe.top / 1920 * 100}%`, bottom: `${safe.bottom / 1920 * 100}%` }} />}
         </div>
@@ -506,7 +559,8 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
             const span = sceneSpan(scene);
             return <button type="button" key={scene.id} className={`editor-track-clip ${scene.id === selectedScene.sceneId ? "selected" : ""}`} style={{ left: `${span.startSec / previewDurationSec * 100}%`, width: `${Math.max(0.5, (span.endSec - span.startSec) / previewDurationSec * 100)}%` }} onClick={() => selectScene(scene.id)} aria-label={`Pilih scene ${index + 1}: ${scene.onScreenText}`}><strong>{String(index + 1).padStart(2, "0")}</strong><small>{(span.endSec - span.startSec).toFixed(1)}s</small></button>;
            })}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>
-           <div className="editor-track-row"><span>Media</span><div className="editor-track-rail editor-media-rail">{storyboard.scenes.flatMap((visual) => {
+           {outro?.enabled && <div className="editor-track-row"><span>Outro</span><div className="editor-track-rail editor-outro-rail">{outroAsset && <button type="button" className="editor-outro-clip" style={{ left: `${mainDurationFrames / frameCount * 100}%`, width: `${outroDurationFrames / frameCount * 100}%` }} onClick={() => seekTo(mainDurationFrames)} aria-label={`Pilih segmen outro ${outroAsset.name}, ${((outro.trimOutSec - outro.trimInSec)).toFixed(1)} detik`} title={`${outroAsset.name} · ${((outro.trimOutSec - outro.trimInSec)).toFixed(1)}s`}><strong>{outroAsset.name}</strong><small>{((outro.trimOutSec - outro.trimInSec)).toFixed(1)}s</small></button>}<i className="editor-playhead-line" style={{ left: `${currentTime / previewDurationSec * 100}%` }} aria-hidden="true"/></div></div>}
+            <div className="editor-track-row"><span>Media</span><div className="editor-track-rail editor-media-rail">{storyboard.scenes.flatMap((visual) => {
              const scene = research.scenes.find((item) => item.id === visual.sceneId);
              if (!scene?.sceneMedia) return [];
              const span = sceneSpan(scene);

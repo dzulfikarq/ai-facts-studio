@@ -9,6 +9,7 @@ import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/capt
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { isAnimatedMediaFile, sceneMediaSchema } from "../src/domain/scene-media";
 import { canStartNewJob, durationInFrames, sceneTimes, setSceneDuration, timelineDuration } from "../src/domain/timeline";
+import { outroSelectionSchema } from "../src/domain/outro";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
 import { ApiError, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai";
@@ -721,6 +722,8 @@ assert.equal(workflowStatuses({ ...workflowBase, activeStep: "preview", reviewVe
 assert.equal(workflowStatuses({ ...workflowBase, activeStep: "render", latestJobState: "rendered", latestJobContentCurrent: true }).render, "active");
 const reviewAudio = { file: "audio/test.wav", sha256: "audio-sha", durationSec: 12, timingMode: "scaled" as const, source: "upload" as const };
 const previewFingerprint = previewReviewFingerprint(mountain, reviewAudio, 2);
+assert.equal(previewFingerprint, previewReviewFingerprint(mountain, reviewAudio, 2, null), "projects without Outro retain their existing preview-review fingerprint shape");
+assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, reviewAudio, 2, { assetId: "outro-a", trimOutSec: 2 }), "Outro changes invalidate preview review");
 assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, { ...reviewAudio, sha256: "different-audio-sha" }, 2), "audio changes must invalidate preview review");
 assert.notEqual(previewFingerprint, previewReviewFingerprint({ ...mountain, title: `${mountain.title}!` }, reviewAudio, 2), "research changes must invalidate preview review");
 assert.notEqual(previewFingerprint, previewReviewFingerprint(mountain, reviewAudio, 3), "renderer changes must invalidate preview review");
@@ -1231,6 +1234,10 @@ assert.equal(canStartNewJob([new Date(now - 24 * 60 * 60 * 1000).toISOString()],
 
 assert.equal(durationInFrames(mountain), 56 * 30);
 assert.equal(durationInFrames(mountain, 43.5), 43.5 * 30);
+const outroSelection = { assetId: "f46e6843-a5e8-438e-bc8f-21c58515f268", enabled: true, trimInSec: 0.2, trimOutSec: 1.3, audioEnabled: false };
+assert.equal(durationInFrames(mountain, undefined, "scaled", outroSelection), 56 * 30 + 33, "Outro trim appends frame-quantized duration without retiming scenes");
+assert.equal(durationInFrames(mountain, undefined, "scaled", { ...outroSelection, enabled: false }), 56 * 30, "disabled outro contributes no timeline frames");
+assert.equal(outroSelectionSchema.safeParse({ ...outroSelection, trimOutSec: 0.2 }).success, false, "Outro trim must have positive range");
 assert.equal(sceneTimes(mountain, mountain.scenes[1]!, 43.5).endSec, 15 * (43.5 / 56));
 const manualTimeline = setSceneDuration(mountain, mountain.scenes[0]!.id, mountain.scenes[0]!.endSec - mountain.scenes[0]!.startSec + 1);
 assert.equal(manualTimeline.scenes[1]!.startSec, mountain.scenes[1]!.startSec + 1, "manual scene resize shifts following scenes without overlap");

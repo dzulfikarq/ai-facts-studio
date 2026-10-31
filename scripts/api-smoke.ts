@@ -84,6 +84,8 @@ let jobSnapshotPath: string | undefined;
 let projectUploadPath: string | undefined;
 let assetUploadPath: string | undefined;
 let flowAssetPath: string | undefined;
+const outroAssetIds: string[] = [];
+const outroProjectIds: string[] = [];
 let jobId: string | undefined;
 let renderOutputPath: string | undefined;
 
@@ -174,6 +176,99 @@ try {
   settingsDb.close();
 
   const research = await fetch(`${baseUrl}/api/sample`).then((response) => response.json());
+  const outroFixturePath = path.join(tempDir, "outro-moving.mp4");
+  const outroFixtureTwoPath = path.join(tempDir, "outro-moving-two.mp4");
+  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=24:duration=1.4", "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=44100:duration=1.4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-movflags", "+faststart", "-y", outroFixturePath], { timeout: 60_000 });
+  await execFileAsync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=360x640:rate=24:duration=1.3", "-vf", "hue=h=t*100", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", outroFixtureTwoPath], { timeout: 60_000 });
+  const uploadOutro = async (fixturePath: string, name: string) => {
+    const form = new FormData();
+    form.append("outro", new Blob([await readFile(fixturePath)], { type: "video/mp4" }), name);
+    const response = await fetch(`${baseUrl}/api/outros`, { method: "POST", body: form });
+    assert.equal(response.status, 201, `valid local MP4 uploads to Outro Library: ${await response.clone().text()}`);
+    const result = await response.json() as { asset: { id: string; file: string; posterFile: string; durationSec: number; audioCodec: string | null; localAvailable: boolean }; outros: Array<{ id: string; isDefault: boolean }>; defaultOutroId: string | null };
+    outroAssetIds.push(result.asset.id);
+    assert.ok(result.asset.durationSec > 1 && result.asset.durationSec <= 120, "Outro metadata stores normalized duration");
+    assert.equal(result.asset.audioCodec, fixturePath === outroFixturePath ? "aac" : null, "Outro metadata records normalized optional audio stream");
+    assert.equal(result.asset.localAvailable, true, "uploaded Outro is available in local storage");
+    const servedVideo = await fetch(`${baseUrl}/outros/${result.asset.file}`);
+    assert.equal(servedVideo.status, 200, "normalized Outro media is served locally");
+    assert.match(servedVideo.headers.get("content-type") ?? "", /^video\/mp4/i, "Outro media endpoint serves MP4, not SPA fallback");
+    const servedPoster = await fetch(`${baseUrl}/outros/${result.asset.posterFile}`);
+    assert.equal(servedPoster.status, 200, "Outro poster is served locally");
+    assert.match(servedPoster.headers.get("content-type") ?? "", /^image\/jpeg/i, "Outro poster endpoint serves JPEG");
+    return result.asset;
+  };
+  const firstOutro = await uploadOutro(outroFixturePath, "Outro A.mp4");
+  const secondOutro = await uploadOutro(outroFixtureTwoPath, "Outro B.mp4");
+  const renamedOutro = await fetch(`${baseUrl}/api/outros/${firstOutro.id}`, {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Outro A renamed" }),
+  });
+  assert.equal(renamedOutro.status, 200, "library supports renaming custom Outro");
+  assert.equal((await renamedOutro.json()).asset.name, "Outro A renamed");
+  assert.equal((await fetch(`${baseUrl}/api/outros/${firstOutro.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "" }) })).status, 400, "empty Outro names are rejected");
+  await fetch(`${baseUrl}/api/outros/${firstOutro.id}/default`, { method: "POST" }).then(async (response) => { assert.equal(response.status, 200, await response.text()); });
+  const projectRequestId = randomUUID();
+  const defaultProject = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId }),
+  }).then((response) => response.json());
+  outroProjectIds.push(defaultProject.id);
+  assert.equal(defaultProject.outro.assetId, firstOutro.id, "new projects snapshot current library default at creation");
+  await fetch(`${baseUrl}/api/outros/${secondOutro.id}/default`, { method: "POST" }).then(async (response) => { assert.equal(response.status, 200, await response.text()); });
+  const retriedCreate = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId }),
+  }).then((response) => response.json());
+  assert.equal(retriedCreate.id, defaultProject.id, "idempotent project retry survives a library-default change");
+  assert.equal(retriedCreate.outro.assetId, firstOutro.id, "idempotent retry preserves original project Outro selection");
+  const switchedLibrary = await fetch(`${baseUrl}/api/outros`).then((response) => response.json());
+  assert.equal(switchedLibrary.defaultOutroId, secondOutro.id, "only selected library item becomes default");
+  assert.equal(switchedLibrary.outros.filter((asset: { isDefault: boolean }) => asset.isDefault).length, 1, "library has at most one active default");
+  const explicitNoOutro = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, outroId: null }),
+  }).then((response) => response.json());
+  outroProjectIds.push(explicitNoOutro.id);
+  assert.equal(explicitNoOutro.outro, null, "Tanpa Outro overrides library default at project creation");
+  const projectOutro = { ...defaultProject.outro, trimInSec: 0.1, trimOutSec: 0.9, audioEnabled: true };
+  const projectOutroSave = await fetch(`${baseUrl}/api/projects/${defaultProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: defaultProject.researchPackage, outro: projectOutro }),
+  });
+  assert.equal(projectOutroSave.status, 200, await projectOutroSave.clone().text());
+  const reopenedOutroProject = await fetch(`${baseUrl}/api/projects/${defaultProject.id}`).then((response) => response.json());
+  assert.deepEqual(reopenedOutroProject.outro, projectOutro, "per-project enabled/trim/audio settings persist independently of default changes");
+  const archivedOutroResponse = await fetch(`${baseUrl}/api/outros/${firstOutro.id}`, { method: "DELETE" });
+  const archivedOutro = await archivedOutroResponse.json();
+  assert.equal(archivedOutroResponse.status, 200);
+  assert.equal(archivedOutro.archived, true, "deleting a referenced Outro archives it instead of breaking projects");
+  assert.equal(archivedOutro.projectReferences, 1);
+  assert.equal((await fetch(`${baseUrl}/api/projects/${defaultProject.id}`).then((response) => response.json())).outroAsset.archived, true, "archived Outro remains attached to its existing project");
+  assert.match((await fetch(`${baseUrl}/outros/${firstOutro.file}`)).headers.get("content-type") ?? "", /^video\/mp4/i, "archive keeps referenced media available");
+  const archivedRetryResponse = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, outroId: firstOutro.id }),
+  });
+  assert.equal(archivedRetryResponse.status, 200, "idempotent replay succeeds even after original Outro is archived");
+  assert.equal((await archivedRetryResponse.json()).id, defaultProject.id, "archived-asset replay returns the original project");
+  await fetch(`${baseUrl}/api/projects/${defaultProject.id}`, { method: "DELETE" }).then(async (response) => { assert.equal(response.status, 200, await response.text()); });
+  outroProjectIds.splice(outroProjectIds.indexOf(defaultProject.id), 1);
+  assert.doesNotMatch((await fetch(`${baseUrl}/outros/${firstOutro.file}`)).headers.get("content-type") ?? "", /^video\/mp4/i, "archived Outro is cleaned only after referencing project is deleted");
+  const removedOutroResponse = await fetch(`${baseUrl}/api/outros/${secondOutro.id}`, { method: "DELETE" });
+  assert.equal(removedOutroResponse.status, 200);
+  assert.equal((await removedOutroResponse.json()).archived, false, "unreferenced custom Outro can be permanently deleted");
+  outroAssetIds.splice(outroAssetIds.indexOf(firstOutro.id), 1);
+  outroAssetIds.splice(outroAssetIds.indexOf(secondOutro.id), 1);
+  for (const id of [...outroProjectIds]) {
+    await fetch(`${baseUrl}/api/projects/${id}`, { method: "DELETE" });
+    outroProjectIds.splice(outroProjectIds.indexOf(id), 1);
+  }
+  const noDefaultProject = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
+  }).then((response) => response.json());
+  outroProjectIds.push(noDefaultProject.id);
+  assert.equal(noDefaultProject.outro, null, "Tanpa Outro remains default when no library asset is marked default");
+  await fetch(`${baseUrl}/api/projects/${noDefaultProject.id}`, { method: "DELETE" });
+  outroProjectIds.splice(outroProjectIds.indexOf(noDefaultProject.id), 1);
+  const invalidOutroForm = new FormData();
+  invalidOutroForm.append("outro", new Blob([Buffer.from("not an mp4")], { type: "video/mp4" }), "invalid.mp4");
+  assert.equal((await fetch(`${baseUrl}/api/outros`, { method: "POST", body: invalidOutroForm })).status, 422, "invalid MP4 bytes are rejected after MIME/extension checks");
+
   const volcanoSampleResponse = await fetch(`${baseUrl}/api/sample?topic=volcano-formation`);
   assert.equal(volcanoSampleResponse.status, 200, "volcano education sample is available through explicit topic selection");
   const volcanoSample = await volcanoSampleResponse.json();
@@ -640,8 +735,10 @@ try {
   assert.equal(finalQuotaStatus.jobsUsed, 5, "deleting a project must not reset rolling job history");
   assert.equal(finalQuotaStatus.generationMode, "production");
   projectId = undefined;
-  console.log(`PASS: production UI/API, Vite proxy Origin/CSRF, import/idempotency, AI mode validation/persistence + TTS quota isolation, research-review invalidation, upload/cleanup, shared audio, quota persistence. Gemini configured=${ttsStatus.configured}.`);
+  console.log(`PASS: Outro library CRUD/default/archive/project settings; production UI/API, Vite proxy Origin/CSRF, import/idempotency, AI mode validation/persistence + TTS quota isolation, review, cleanup, shared audio, quota. Gemini configured=${ttsStatus.configured}.`);
 } finally {
+  for (const id of outroProjectIds) await fetch(`${baseUrl}/api/projects/${id}`, { method: "DELETE" }).catch(() => {});
+  for (const id of outroAssetIds) await fetch(`${baseUrl}/api/outros/${id}`, { method: "DELETE" }).catch(() => {});
   if (projectId) await fetch(`${baseUrl}/api/projects/${projectId}`, { method: "DELETE" }).catch(() => {});
   if (assetProjectId) await fetch(`${baseUrl}/api/projects/${assetProjectId}`, { method: "DELETE" }).catch(() => {});
   if (reusableTargetId) await fetch(`${baseUrl}/api/projects/${reusableTargetId}`, { method: "DELETE" }).catch(() => {});

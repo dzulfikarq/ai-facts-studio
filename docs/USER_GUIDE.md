@@ -1,18 +1,17 @@
 # User guide
 
-## Seven-step workspace
+## Six-step workspace
 
 Start `npm run dev`; open `http://127.0.0.1:5173`. Choose **Create video**, import JSON or choose a sample. Research Package v1.0 auto-upgrades to v1.1.
 
 1. **Materi & Storyboard:** edit title, scene text/narration, references, category, and visual preset. Save occurs when continuing; leaving with unsaved edits prompts to save. Research edits invalidate author verification and Preview review.
 2. **Narasi:** upload MP3/WAV/M4A (≤100 MB, ≤120 sec), explicitly choose manual timing, or load Gemini's voice catalog and choose language/voice/style/pace. Voice catalog does not load on workspace open. **Test Voice** sends only sample text. **Preview Narasi Lengkap** sends storyboard narration; listen, then explicitly choose **Gunakan Audio Ini**. If TTS changes duration, choose **Retiming**, **Keep timeline**, or **Cancel**. Retiming adjusts scene spans by narration weight while preserving stable IDs and visual edits; Keep timeline preserves authored boundaries. Pending audio never replaces active audio before approval. TTS quota is separate from video-job allowance.
-3. **Visual Storyboard:** import Google Flow stills/clips or use other supported visual sources. Edit artwork, per-scene Motion Direction, and Motion Beats; review and approve each scene separately. Quality Gate issues do not block entry to Edit Video, but approval/readiness remain required before Review, Preview, and Render.
-4. **Edit Video:** adjust inter-scene Cut/Crossfade/Slide/Wipe transitions, clip trim, final scene timing, title/subtitle/branding overlays, and Remotion preview. Transition preview shows outgoing and incoming scenes. Motion Direction and Motion Beats live in Visual Storyboard, not here.
-5. **Review & Subtitle:** inspect source links, warnings, timeline, and phrase captions. Verify claims/URLs yourself, then mark material reviewed. Edits to research reset this verification.
-6. **Preview Video:** Remotion Player shows the current draft and active audio interactively. It creates no snapshot/render job and uses no production video quota. Play it, then mark it reviewed; storyboard/audio changes invalidate that review.
-7. **Render & Download:** explicit action creates/reuses immutable snapshot and starts local MP4 render. Quota/status, progress, manifest, and download appear here. Without audio, confirm **Render tanpa narasi**. Template preview/render makes zero AI calls.
+3. **Video Editor:** one editor has six Inspector tabs. **Visual** imports Google Flow stills/clips or other supported sources, edits artwork, and approves each scene. **Gerak** edits Motion Direction and Motion Beats. **Klip** edits scene duration, clip trim/loop, and timing. **Teks** edits captions and title/subtitle/branding overlays. **Transisi** edits Cut/Crossfade/Slide/Wipe. **Audio** previews active narration and links to Narasi. Quality Gate issues do not block entry; approval/readiness remain required before Review, Preview, and Render. Artwork/copy/Motion Beat changes invalidate affected approval; clip trim, timing, transitions, and overlays do not.
+4. **Review:** inspect source links, warnings, timeline, and phrase captions. Edit scene text/captions in Video Editor. Verify claims/URLs yourself, then mark material reviewed. Research edits reset this verification.
+5. **Preview Video:** Remotion Player shows the current draft and active audio interactively. It creates no snapshot/render job and uses no production video quota. Play it, then mark it reviewed; storyboard/audio changes invalidate that review.
+6. **Render & Download:** explicit action creates/reuses immutable snapshot and starts local MP4 render. Quota/status, progress, manifest, and download appear here. Without audio, confirm **Render tanpa narasi**. Template preview/render makes zero AI calls.
 
-Workspace URL stores project, step, and selected scene. Visual Storyboard uses `/projects/:id?step=visual`; Edit Video uses `/projects/:id/editor`. Browser Back/Forward preserves route history and unsaved-change confirmations.
+Workspace URL stores project, step, and selected scene. Video Editor uses `/projects/:id/editor`; legacy `/projects/:id?step=visual` and `?step=editor` URLs resolve to the same editor. Browser Back/Forward preserves route history and unsaved-change confirmations.
 
 UI typography uses Plus Jakarta Sans consistently, including technical editors; Segoe UI/Arial act as fallbacks when Google Fonts is unavailable.
 

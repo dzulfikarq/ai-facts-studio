@@ -1,13 +1,10 @@
-import { workspaceSteps, type WorkspaceStep } from "./workflow";
+import { normalizeWorkspaceStep, type WorkspaceStep } from "./workflow";
 
 export type AppRoute =
   | { view: "dashboard" }
   | { view: "create" }
   | { view: "settings" }
   | { view: "workspace"; projectId: string; step: WorkspaceStep; sceneId: string | null };
-
-const isWorkspaceStep = (value: string | null): value is WorkspaceStep =>
-  workspaceSteps.some((step) => step.id === value);
 
 export function parseAppRoute(input: string | URL): AppRoute {
   const url = input instanceof URL ? input : new URL(input, "http://localhost");
@@ -18,8 +15,7 @@ export function parseAppRoute(input: string | URL): AppRoute {
     try {
       const projectId = decodeURIComponent(match[1]!);
       if (!projectId || projectId.includes("/")) return { view: "dashboard" };
-      const requestedStep = url.searchParams.get("step");
-      const step = match[2] ? "editor" : isWorkspaceStep(requestedStep) ? requestedStep : "materials";
+      const step = match[2] ? "video-editor" : normalizeWorkspaceStep(url.searchParams.get("step")) ?? "materials";
       return { view: "workspace", projectId, step, sceneId: url.searchParams.get("scene") };
     } catch { return { view: "dashboard" }; }
   }
@@ -29,9 +25,9 @@ export function parseAppRoute(input: string | URL): AppRoute {
 export function appRouteHref(route: AppRoute): string {
   if (route.view === "dashboard") return "/";
   if (route.view === "create" || route.view === "settings") return `/${route.view}`;
-  const path = `/projects/${encodeURIComponent(route.projectId)}${route.step === "editor" ? "/editor" : ""}`;
+  const path = `/projects/${encodeURIComponent(route.projectId)}${route.step === "video-editor" ? "/editor" : ""}`;
   const query = new URLSearchParams();
-  if (route.step !== "materials" && route.step !== "editor") query.set("step", route.step);
+  if (route.step !== "materials" && route.step !== "video-editor") query.set("step", route.step);
   if (route.sceneId) query.set("scene", route.sceneId);
   const suffix = query.toString();
   return `${path}${suffix ? `?${suffix}` : ""}`;

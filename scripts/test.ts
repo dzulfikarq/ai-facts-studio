@@ -29,7 +29,7 @@ import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, composi
 import { composeVisualScene, hasGenericIconCards, visualRelationshipIsVisible } from "../src/domain/visual-composer";
 import { visualObjectIds, visualObjectLibrary } from "../src/domain/visual-objects";
 import { prepareSmartVisual, type ReusableCandidate } from "../src/server/visual-orchestrator";
-import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, type WorkflowSignals } from "../src/client/workflow";
+import { canAdvanceWorkspaceStep, normalizeWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, workflowStatuses, workspaceSteps, type WorkflowSignals } from "../src/client/workflow";
 import { appRouteHref, parseAppRoute } from "../src/client/routes";
 import { aiGeneratedContentSchema, aiGenerationInputSchema, buildAiGenerationDraft, buildDevelopmentPrompt, parseManualAiResult, parseManualAiResultText, researchPackageWithConfirmedSources, restoreAiGenerationDraft, type AiGeneratedContent } from "../src/domain/ai-generation";
 import { aiGenerationSchema, DEFAULT_TEXT_MODEL, FREE_TIER_TEXT_MODELS, getAiGenerationSettings, getGeminiTextQuotaMonitoring, getProductionProviderStatus, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "../src/server/ai-generation/provider";
@@ -53,13 +53,16 @@ const samples = ["mountain-formation", "volcano-formation", "space-orbit", "anim
 assert.deepEqual(parseAppRoute("http://localhost/"), { view: "dashboard" }, "dashboard route survives direct navigation");
 assert.deepEqual(parseAppRoute("http://localhost/settings"), { view: "settings" }, "settings route survives refresh");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo"), { view: "workspace", projectId: "demo", step: "materials", sceneId: null }, "project URL opens materials by default");
-assert.deepEqual(parseAppRoute("http://localhost/projects/demo/editor?scene=scene-3"), { view: "workspace", projectId: "demo", step: "editor", sceneId: "scene-3" }, "editor URL restores selected scene");
-assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=visual&scene=scene-3"), { view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }, "visual storyboard has distinct URL step");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo/editor?scene=scene-3"), { view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }, "legacy editor URL restores selected scene in Video Editor");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=visual&scene=scene-3"), { view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }, "legacy visual step resolves to Video Editor");
+assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=editor&scene=scene-3"), { view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }, "legacy editor step resolves to Video Editor");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=render&scene=scene-3"), { view: "workspace", projectId: "demo", step: "render", sceneId: "scene-3" }, "workspace URL restores step and scene");
 const invalidStepRoute = parseAppRoute("http://localhost/projects/demo?step=invalid");
 assert.equal(invalidStepRoute.view === "workspace" ? invalidStepRoute.step : "", "materials", "invalid workspace step falls back safely");
-assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "editor", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "editor route serializes selected scene");
-assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "visual", sceneId: "scene-3" }), "/projects/demo?step=visual&scene=scene-3", "visual storyboard route stays separate from editor");
+assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "Video Editor route serializes selected scene");
+assert.equal(normalizeWorkspaceStep("visual"), "video-editor", "legacy stored visual step migrates without project rewrite");
+assert.equal(normalizeWorkspaceStep("editor"), "video-editor", "legacy stored editor step migrates without project rewrite");
+assert.equal(workspaceSteps.length, 6, "workflow has six steps");
 assert.equal(resolveTheme("system", true), "dark", "System theme follows dark OS preference");
 assert.equal(resolveTheme("system", false), "light", "System theme follows light OS preference");
 assert.equal(resolveTheme("dark", false), "dark", "Explicit theme ignores OS preference");
@@ -704,13 +707,15 @@ const workflowBase: WorkflowSignals = {
   latestJobContentCurrent: false,
 };
 assert.equal(workflowStatuses(workflowBase).materials, "active");
-assert.equal(reachableWorkspaceStep("editor", workflowBase), "editor", "Edit Video remains reachable while Visual Storyboard has quality issues or pending approval");
-assert.equal(reachableWorkspaceStep("review", workflowBase), "editor", "review remains blocked until Visual Storyboard approval");
-assert.equal(reachableWorkspaceStep("render", workflowBase), "editor", "resume reaches Edit Video but stops before review until Visual Storyboard approval");
+assert.equal(reachableWorkspaceStep("video-editor", workflowBase), "video-editor", "Video Editor remains reachable while visuals need repair or approval");
+assert.equal(reachableWorkspaceStep("review", workflowBase), "video-editor", "review remains blocked until visual approval");
+assert.equal(reachableWorkspaceStep("render", workflowBase), "video-editor", "resume reaches Video Editor but stops before review until visual approval");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true }), "review", "visual approval precedes research review");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true, reviewVerified: true }), "preview");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true, reviewVerified: true, previewReviewed: true }), "render");
 assert.equal(canAdvanceWorkspaceStep("narration", { ...workflowBase, audioMatchesNarration: false }), false, "stale AI audio blocks progression");
+assert.equal(canAdvanceWorkspaceStep("video-editor", workflowBase), false, "visual issues block progression out of Video Editor, not entry");
+assert.equal(canAdvanceWorkspaceStep("video-editor", { ...workflowBase, visualStoryboardApproved: true }), true, "approved Video Editor can advance to Review");
 assert.equal(reachableWorkspaceStep("render", { ...workflowBase, visualStoryboardApproved: true, audioMatchesNarration: false }), "narration");
 assert.equal(workflowStatuses({ ...workflowBase, activeStep: "preview", reviewVerified: false }).review, "attention");
 assert.equal(workflowStatuses({ ...workflowBase, activeStep: "render", latestJobState: "rendered", latestJobContentCurrent: true }).render, "active");

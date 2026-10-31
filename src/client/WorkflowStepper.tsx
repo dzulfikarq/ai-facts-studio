@@ -14,7 +14,7 @@ export function WorkflowStepper({ activeStep, statuses, signals, onSelect }: { a
       {workspaceSteps.map((step, index) => {
         const status = statuses[step.id];
         const label = step.id === "materials" ? signals.hasResearch ? "Draft Storyboard" : "Draft Research"
-          : step.id === "visual" ? !signals.visualStoryboardReady ? "Needs Visual Review" : signals.visualStoryboardApproved ? "Approved for Motion" : "Visual Storyboard Ready"
+          : step.id === "video-editor" ? !signals.visualStoryboardReady ? "Perbaiki visual" : signals.visualStoryboardApproved ? "Visual disetujui" : "Perlu approval visual"
           : step.id === "render" && signals.saved && signals.visualStoryboardApproved && signals.audioMatchesNarration && !signals.hasPendingAudio && signals.reviewVerified && signals.previewReviewed ? "Ready to Render" : statusLabel[status];
         return <li key={step.id}>
           <button type="button" className={`workflow-step ${status} ${activeStep === step.id ? "selected" : ""}`} data-step-id={step.id} aria-current={activeStep === step.id ? "step" : undefined} aria-label={`${index + 1}. ${step.title}: ${statusLabel[status]}`} onClick={() => onSelect(step.id)}>

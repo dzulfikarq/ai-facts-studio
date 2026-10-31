@@ -1,6 +1,6 @@
 # 2D Visual Storyboard
 
-Workflow: Materi → Narasi → Visual Storyboard → Edit Video → Review & Subtitle → Preview Video → Render & Download. Visual Storyboard handles artwork, Flow media, and scene approval; Edit Video handles timing, motion, transitions, overlays, and preview. Edit Video remains accessible while visual quality issues or approvals are pending; Review/Preview/Render remain guarded. Local deterministic composer remains automatic path; it uses curated vector/shape scenes and no image-generation API. Scene illustration source is independent of Development/Production mode.
+Workflow: Materi & Storyboard → Narasi → Video Editor → Review → Preview Video → Render & Download. One `VideoEditorV2` contains Visual, Gerak, Klip, Teks, Transisi, and Audio Inspector tabs. Video Editor remains accessible while visual quality issues or approvals are pending; Review/Preview/Render remain guarded. Local deterministic composer remains automatic path; it uses curated vector/shape scenes and no image-generation API. Scene illustration source is independent of Development/Production mode. Legacy `?step=visual`, `?step=editor`, and `/editor` links resolve to Video Editor without rewriting project data.
 
 ## Composer and review
 
@@ -12,7 +12,7 @@ Statuses:
 - `needs_review`: composition exists but human inspection or edits are required.
 - `needs_visual_authoring`: required concept/relationship lacks adequate supported art.
 
-Approval fingerprints cover artwork, copy, object/relation plan, source/status, and motion. Edits invalidate approval; API rejects stale fingerprints. Quality gate checks renderer-transformed bounds at midpoint, safe area, text overlap, density, visible concepts/relations, upload ownership, and approval integrity. It is deterministic heuristic, not proof of scientific accuracy or aesthetic quality.
+Approval fingerprints cover artwork, copy, object/relation plan, source/status, Motion Beats, and imported-media appearance. Material artwork/copy/Motion Beat changes invalidate approval; clip trim/loop/audio, scene timing, transitions, and title/subtitle overlays preserve artwork approval. API rejects stale fingerprints. Quality gate checks renderer-transformed bounds at midpoint, safe area, text overlap, density, visible concepts/relations, upload ownership, and approval integrity. It is deterministic heuristic, not proof of scientific accuracy or aesthetic quality.
 
 ## Automatic 2D Motion Director V1
 

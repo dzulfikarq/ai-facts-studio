@@ -264,9 +264,10 @@ try {
   });
   assert.ok(animatedClipMotion && animatedClipMotion.transform !== staticClipMotion?.transform, `Remotion preview transforms whole MP4 layer with Pan: ${JSON.stringify(animatedClipMotion)}`);
   await saveEditor();
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Klip")?.click());
+  assert.ok(await setSelect(0, "freeze-last-frame"), "Klip tab exposes freeze-last-frame control");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Visual")?.click());
 
-  assert.ok(await setSelect(2, "freeze-last-frame"), "freeze-last-frame control exists");
   assert.ok(await page.evaluate(() => {
     const input = document.querySelector<HTMLInputElement>(".editor-media-audio input");
     if (!input) return false;
@@ -314,9 +315,12 @@ try {
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2"))), "visual media workspace reload");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".editor-scene-media-controls"))), "visual media controls reload");
-  assert.ok(await setSelect(2, "loop"), "loop control exists");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Klip")?.click());
+  assert.ok(await setSelect(0, "loop"), "Klip tab exposes loop control");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Visual")?.click());
   assert.ok(await setSelect(0, "cover") && await setSelect(1, "center"), "cover crop can be restored");
-  await waitFor(() => page.evaluate(() => document.querySelectorAll<HTMLSelectElement>(".editor-scene-media-controls select")[2]?.value === "loop"), "loop selection updates editor state");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Klip")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelectorAll<HTMLSelectElement>(".editor-scene-media-controls select")[0]?.value === "loop"), "loop selection updates editor state");
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "loop selection marks project dirty");
   await saveEditor();
   latest = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
@@ -356,8 +360,20 @@ try {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: latest.researchPackage, visualStoryboard: reapprovedBoard, narrationMode: "manual" }),
   }));
   await page.goto({ url: visualUrl, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2"))), "approved Flow project reloads in unified editor");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.click());
-  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".editor-inspector-tabs button")].some((button) => button.textContent?.trim() === "Gerak")), "approved Visual Storyboard unlocks Edit Video step");
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-inspector-tabs button").length === 6), "all six Inspector tabs remain available with approved Flow media");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Klip")?.click());
+  assert.ok(await setNumber(0, 0.2), "trim adjustment is available after visual approval");
+  await saveEditor();
+  latest = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
+  assert.equal(latest.visualStoryboard.scenes[0].approved, true, "changing Flow trim keeps artwork approval intact");
+  await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[1]?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Transisi")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-motion-transition button")].find((button) => button.textContent?.trim() === "Crossfade")?.click());
+  await saveEditor();
+  latest = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
+  assert.equal(latest.visualStoryboard.scenes[1].approved, true, "changing scene transition keeps that scene's artwork approval");
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[2]?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-inspector-scene")?.textContent?.includes("SCENE 03") ?? false), "static image scene selection");
   assert.ok(await page.evaluate(() => document.querySelectorAll(".editor-canvas-shell image").length > 0), "static imported image remains separate from video scene media");
@@ -410,6 +426,9 @@ try {
     const state = await previewOverlayState();
     return !state.texts.includes("DARI BATU JADI GUNUNG") && state.captions === 0;
   }, "title and subtitle disappear from live preview");
+  await saveEditor();
+  latest = await fetch(`${apiUrl}/api/projects/${created.id}`).then((response) => json<any>(response));
+  assert.ok(latest.visualStoryboard.scenes.every((scene: any) => scene.approved), "title/subtitle overlay edits keep visual approvals intact");
   assert.ok(await setOverlay(0, false) && await setOverlay(2, false) && await setOverlay(4, false), "category, scene label, and progress toggles turn off");
   await waitFor(async () => {
     const state = await previewOverlayState();

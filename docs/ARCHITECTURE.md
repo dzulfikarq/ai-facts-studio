@@ -10,9 +10,9 @@
 
 ## Data flow
 
-`free-form topic → Development authenticated loopback OpenCode or manual prompt/paste OR explicit Production Gemini Text structured Research/Storyboard request → schema validation + local review → Project/SQLite → Materi → Narasi → Visual Storyboard → Edit Video → Review/Subtitle → Preview Video → Render/Download → immutable renderer-versioned snapshot with audio SHA/approval provenance → H.264/AAC MP4 + audio/video validation manifest`.
+`free-form topic → Development authenticated loopback OpenCode or manual prompt/paste OR explicit Production Gemini Text structured Research/Storyboard request → schema validation + local review → Project/SQLite → Materi & Storyboard → Narasi → Video Editor (Visual/Gerak/Klip/Teks/Transisi/Audio) → Review → Preview Video → Render/Download → immutable renderer-versioned snapshot with audio SHA/approval provenance → H.264/AAC MP4 + audio/video validation manifest`.
 
-Edit Video remains reachable after Visual Storyboard is saved even when quality issues or scene approvals remain, so users can edit timing and motion. Visual approval and quality checks still gate Review, Preview, and Render. TTS duration changes require an explicit retime, keep-timeline, or cancel decision before audio attachment.
+One Video Editor remains reachable after Narasi even when visual quality issues or scene approvals remain, so users can repair artwork and edit timing, motion, transitions, text, and clips. Visual approval and quality checks still gate Review, Preview, and Render. Legacy `visual`/`editor` step links resolve to Video Editor without project-data migration. TTS duration changes require an explicit retime, keep-timeline, or cancel decision before audio attachment.
 
 API defaults to `127.0.0.1` (port 3001); Vite dev UI binds to `127.0.0.1:5173`. Production UI and API share port 3001. Projects, jobs, rolling job-usage events, TTS cache metadata/attempts, and retryable file-cleanup entries persist in SQLite; snapshots under `data/jobs/`; uploaded/TTS assets under `public/audio/tts/` and `public/audio/`; immutable content-addressed job audio under `public/audio/jobs/`; outputs under `renders/`.
 

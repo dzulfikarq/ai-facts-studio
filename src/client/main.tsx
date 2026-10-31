@@ -668,7 +668,7 @@ function App() {
       const seeded = seedVolcanoVisualSample(created.visualStoryboard);
       const prepared = await api<Project>(`/api/projects/${created.id}`, jsonRequest("PUT", { researchPackage: created.researchPackage, visualStoryboard: seeded }));
       await refresh();
-      await openProject(prepared.id, "Draft Visual World dan enam Motion Beat siap diuji. Ilustrasi Flow final belum tersedia.", true, "visual");
+      await openProject(prepared.id, "Draft Visual World dan enam Motion Beat siap diuji. Ilustrasi Flow final belum tersedia.", true, "video-editor");
     } catch (error) { setMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }
@@ -717,8 +717,7 @@ function App() {
           ...refreshed,
           scenes: refreshed.scenes.map((scene) => scene.sceneId !== sceneId ? scene : {
             ...scene,
-            ...(authoredComposition ? { composition: changed.visualComposition, compositionSource: "manual" as const, illustrationSource: "manual" as const, authoringConfirmed: true, authoringStatus: "needs_review" as const, layout: "existing-composition" as const, warnings: ["Komposisi manual dipilih; periksa kecocokan objek sebelum approval."] } : {}),
-            approved: false,
+            ...(authoredComposition ? { composition: changed.visualComposition, compositionSource: "manual" as const, illustrationSource: "manual" as const, authoringConfirmed: true, authoringStatus: "needs_review" as const, layout: "existing-composition" as const, warnings: ["Komposisi manual dipilih; periksa kecocokan objek sebelum approval."], approved: false, approvedFingerprint: null } : {}),
           }),
         },
       };
@@ -745,8 +744,9 @@ function App() {
           ...(!("warnings" in change) && prior.motionActions.length ? { warnings: [...prior.warnings.slice(0, 6), "Ilustrasi berubah; Motion Beat dipertahankan untuk ditinjau. Target yang hilang perlu diperbaiki."] } : {}),
         }
       : change;
-    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionOverride", "compositionSource", "illustrationSource", "sceneMedia", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
-    const artworkChanged = artworkFields.some((field) => field in effectiveChange);
+    const artworkFields = ["headline", "narrationText", "visualSummary", "layout", "compositionType", "objects", "relationships", "visualFocus", "illustrationIntent", "motionIntent", "motionSummary", "motionIntensity", "motionTiming", "motionStatus", "motionActions", "composition", "compositionOverride", "compositionSource", "illustrationSource", "missingVisuals", "warnings", "authoringStatus", "authoringConfirmed"];
+    const mediaAppearanceChanged = "sceneMedia" in effectiveChange && (effectiveChange.sceneMedia?.file !== prior.sceneMedia?.file || effectiveChange.sceneMedia?.fit !== prior.sceneMedia?.fit || effectiveChange.sceneMedia?.position !== prior.sceneMedia?.position);
+    const artworkChanged = mediaAppearanceChanged || artworkFields.some((field) => field in effectiveChange);
     const copyChanged = effectiveChange.headline !== undefined && effectiveChange.headline !== prior.headline || effectiveChange.narrationText !== undefined && effectiveChange.narrationText !== prior.narrationText;
     const statusAfterReview = effectiveChange.approved === true && prior.authoringStatus === "needs_review" ? "ready_for_review"
       : effectiveChange.approved === false && prior.compositionSource === "procedural" && prior.authoringStatus === "ready_for_review" ? "needs_review"
@@ -1674,9 +1674,9 @@ function App() {
         currentProject = updated;
         currentSaved = true;
       }
-      if (step === "visual" && !currentSaved) {
+      if (step === "video-editor" && !currentSaved) {
         const updated = await saveProject();
-        if (!updated) { navigateWorkspaceStep("visual", "replace"); return; }
+        if (!updated) { navigateWorkspaceStep("video-editor", "replace"); return; }
         currentProject = updated;
         currentSaved = true;
       }
@@ -1688,7 +1688,7 @@ function App() {
       });
       if (!canAdvance) {
         navigateWorkspaceStep(step, "replace");
-        setMessage(step === "materials" ? "Simpan materi sebelum lanjut." : step === "narration" ? "Setujui audio yang cocok, atau pilih durasi manual tanpa narasi." : step === "visual" ? "Perbaiki quality gate, lalu approve setiap scene Visual Storyboard." : step === "editor" ? "Simpan perubahan editor sebelum lanjut." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Video sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
+        setMessage(step === "materials" ? "Simpan materi sebelum lanjut." : step === "narration" ? "Setujui audio yang cocok, atau pilih durasi manual tanpa narasi." : step === "video-editor" ? "Perbaiki quality gate dan approve visual terkait sebelum lanjut ke Review." : step === "review" ? "Tinjau materi dan tandai sudah diverifikasi sebelum lanjut." : step === "preview" ? "Putar dan tinjau Preview Video sebelum ke render." : "Selesaikan langkah ini sebelum lanjut.");
         return;
       }
     }
@@ -1750,7 +1750,7 @@ function App() {
       setPreviewReviewed(false);
       setPreviewStarted(false);
       setMessage("Mode durasi manual dipilih. Tidak ada layanan TTS yang dipanggil.");
-      navigateWorkspaceStep("visual");
+      navigateWorkspaceStep("video-editor");
     } catch (error) { setTtsMessage(friendlyError(error)); }
     finally { setBusy(false); }
   }
@@ -1845,8 +1845,8 @@ function App() {
   async function renderFinal() {
     if (!project || !research || busy) return;
     if (!visualGate?.ready || !visualApproved) {
-      navigateWorkspaceStep("visual");
-      setMessage("Visual Storyboard belum lolos quality gate atau belum disetujui per scene.");
+      navigateWorkspaceStep("video-editor");
+      setMessage("Visual belum lolos quality gate atau belum disetujui per scene.");
       return;
     }
     if (!saved) {
@@ -1959,7 +1959,7 @@ function App() {
   const currentStepIndex = workspaceSteps.findIndex((step) => step.id === activeStep);
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
 
-  return <div className={`app-shell ${view === "workspace" && ["visual", "editor"].includes(activeStep) ? "editor-active" : ""}`}>
+  return <div className={`app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""}`}>
     <main className="main-area">
       <header className="topbar">
         <div className="topbar-left">
@@ -1971,7 +1971,7 @@ function App() {
           </nav>
         </div>
         <div className="topbar-actions">
-          {view === "workspace" && !["visual", "editor"].includes(activeStep) && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
+          {view === "workspace" && activeStep !== "video-editor" && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
           <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "create" ? "page" : undefined} aria-label="Buat video" title="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>
           <ThemeSwitcher preference={theme} onChange={setTheme} />
           <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>
@@ -2019,8 +2019,8 @@ function App() {
         onTheme={setTheme}
       />}
 
-      {view === "workspace" && project && research && <section className={`page layout-container workspace-page ${["visual", "editor"].includes(activeStep) ? "video-editor-workspace" : ""}`}>
-        {!["visual", "editor"].includes(activeStep) && <div className="workspace-heading">
+      {view === "workspace" && project && research && <section className={`page layout-container workspace-page ${activeStep === "video-editor" ? "video-editor-workspace" : ""}`}>
+        {activeStep !== "video-editor" && <div className="workspace-heading">
           <div><div className="eyebrow">VIDEO WORKSPACE <span className="crumb-dot">/</span> LANGKAH {currentStepIndex + 1} DARI {workspaceSteps.length}</div>
             <input className="title-input" aria-label="Judul video" value={research.title} onChange={(event) => updateResearch((current) => ({ ...current, title: event.target.value }))} />
             <div className="meta-line"><span>{research.scenes.length} scenes</span><i />{project.audio ? <span>Audio {project.audio.durationSec.toFixed(1)} dtk</span> : <span>Audio belum ditambahkan</span>}<i /><span>9:16 · 1080 × 1920</span></div>
@@ -2028,8 +2028,8 @@ function App() {
         </div>}
 
         <WorkflowStepper activeStep={activeStep} statuses={stepStatuses} signals={workflowSignals} onSelect={(step) => void goToStep(step)} />
-        <div className={`workspace-step-panel ${["visual", "editor"].includes(activeStep) ? "video-editor-step-panel" : ""}`}>
-          {!["visual", "editor"].includes(activeStep) && <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>}
+        <div className={`workspace-step-panel ${activeStep === "video-editor" ? "video-editor-step-panel" : ""}`}>
+          {activeStep !== "video-editor" && <div className="workspace-step-heading"><div><span className="eyebrow">LANGKAH {currentStepIndex + 1}</span><h2>{currentWorkspaceStep.title}</h2><p>{currentWorkspaceStep.description}</p></div>{activeStep === "preview" && <span className="step-duration">Draft interaktif</span>}</div>}
 
           {project.visualStoryboardError ? <div className="storyboard-recovery-card" role="alert"><span className="eyebrow">DATA VISUAL DILINDUNGI</span><h2>Visual Storyboard perlu dipulihkan</h2><p>{project.visualStoryboardError}</p><p>Project tidak dimuat dengan visual pengganti. Data asli tetap tersimpan dan semua perubahan ditahan.</p><button type="button" className="button button-primary" onClick={() => {
             const backup = new Blob([JSON.stringify({ id: project.id, researchPackage: project.researchPackage, visualStoryboard: project.visualStoryboard, visualAssets: project.visualAssets }, null, 2)], { type: "application/json" });
@@ -2063,9 +2063,7 @@ function App() {
             </aside>
           </div>}
 
-          {(["visual", "editor"].includes(activeStep)) && <VideoEditorV2
-            workspaceMode={activeStep as "visual" | "editor"}
-            backLabel={activeStep === "editor" ? "Visual" : "Narasi"}
+          {activeStep === "video-editor" && <VideoEditorV2
             research={research}
             storyboard={project.visualStoryboard}
             gate={visualGate!}
@@ -2076,14 +2074,18 @@ function App() {
             projectId={project.id}
             sceneMediaErrors={sceneMediaErrors}
             audio={project.audio}
+            audioMatchesNarration={draftAudioMatches}
+            hasPendingAudio={Boolean(project.pendingTts)}
+            narrationMode={project.narrationMode}
             selectedSceneId={selectedSceneId}
             onSelectScene={selectScene}
             onTitleChange={(title) => updateResearch((current) => ({ ...current, title }))}
             onDurationChange={updateSceneDuration}
             onCaptionSegmentsChange={(sceneId, segments) => updateScene(sceneId, (scene) => ({ ...scene, captionSegments: segments }))}
             onOverlaySettingsChange={updateOverlaySettings}
-            onBack={() => void goToStep(activeStep === "editor" ? "visual" : "narration")}
-            onExport={() => void goToStep(activeStep === "visual" ? "editor" : "render")}
+            onBack={() => void goToStep("narration")}
+            onOpenNarration={() => void goToStep("narration")}
+            onExport={() => void goToStep("review")}
             onSave={() => void saveProject()}
             onChange={updateVisualScene}
             onMotionDirectionChange={(sceneId, motionPlan) => updateScene(sceneId, (current) => ({ ...current, motionCues: motionPlan.map((plan) => plan.cue), motionPlan }))}
@@ -2189,7 +2191,7 @@ function App() {
           {activeStep === "review" && <ReviewStep
             research={visualResearch!}
             project={project}
-            onEditScene={(id) => { selectScene(id); void goToStep("materials"); }}
+            onEditScene={(id) => { selectScene(id); void goToStep("video-editor"); }}
             onEditReferences={() => void goToStep("materials")}
             onEditNarration={() => void goToStep("narration")}
             onReview={(value) => void setReview(value)}
@@ -2238,7 +2240,7 @@ function App() {
             </div>
           </div>}
 
-          {!["visual", "editor"].includes(activeStep) && <div className="workflow-navigation">
+          {activeStep !== "video-editor" && <div className="workflow-navigation">
             <span>{saved ? "Semua perubahan tersimpan." : "Perubahan tersimpan saat lanjut dari Materi & Storyboard."}</span>
             <div className="workflow-navigation-actions">
               {currentStepIndex > 0 && <button type="button" className="button button-light" onClick={() => void goToStep(workspaceSteps[currentStepIndex - 1]!.id)} disabled={busy}>← Kembali</button>}

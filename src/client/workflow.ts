@@ -1,15 +1,19 @@
 export const workspaceSteps = [
   { id: "materials", title: "Materi & Storyboard", description: "Riset, scene, naskah, dan arahan visual" },
   { id: "narration", title: "Narasi", description: "Generate atau upload audio; pilih durasi manual" },
-  { id: "visual", title: "Visual Storyboard", description: "Artwork, media Flow, Motion Direction, Beats, dan approval" },
-  { id: "editor", title: "Edit Video", description: "Transisi, trim, timing final, judul, subtitle, dan preview" },
-  { id: "review", title: "Review & Subtitle", description: "Timeline, frasa, dan fakta" },
+  { id: "video-editor", title: "Video Editor", description: "Visual Flow, gerak, klip, teks, transisi, audio, dan preview" },
+  { id: "review", title: "Review", description: "Verifikasi fakta, materi, dan kesiapan konten" },
   { id: "preview", title: "Preview Video", description: "Tinjau hasil lengkap sebelum render" },
   { id: "render", title: "Render & Download", description: "Buat MP4 final" },
 ] as const;
 
 export type WorkspaceStep = typeof workspaceSteps[number]["id"];
 export type WorkflowStatus = "not-started" | "active" | "complete" | "attention";
+export function normalizeWorkspaceStep(value: string | null): WorkspaceStep | null {
+  if (value === "visual" || value === "editor" || value === "video-editor") return "video-editor";
+  return workspaceSteps.some((step) => step.id === value) ? value as WorkspaceStep : null;
+}
+
 export type WorkflowSignals = {
   activeStep: WorkspaceStep;
   hasResearch: boolean;
@@ -31,20 +35,18 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
   const activeIndex = workspaceSteps.findIndex((step) => step.id === signals.activeStep);
   const completed: Record<WorkspaceStep, boolean> = {
     materials: signals.hasResearch && signals.saved,
-    visual: signals.visualStoryboardReady && signals.visualStoryboardApproved,
     narration: signals.narrationMode === "manual" && !signals.hasAudio || signals.hasAudio && signals.audioMatchesNarration && !signals.hasPendingAudio,
+    "video-editor": signals.saved && signals.visualStoryboardReady && signals.visualStoryboardApproved,
     review: signals.reviewVerified,
-    editor: signals.saved && signals.visualStoryboardApproved,
     preview: signals.previewReviewed,
     render: signals.latestJobState === "rendered" && signals.latestJobContentCurrent,
   };
   const attention: Record<WorkspaceStep, boolean> = {
     materials: !signals.hasResearch || !signals.saved,
-    visual: !signals.visualStoryboardReady || (!signals.visualStoryboardApproved && activeIndex > 1),
     narration: signals.hasPendingAudio || (!signals.hasAudio && signals.narrationMode !== "manual" && activeIndex > 1) || (signals.hasAudio && !signals.audioMatchesNarration),
-    review: signals.hasWarnings || (!signals.reviewVerified && activeIndex > 4),
-    editor: !signals.visualStoryboardApproved || !signals.saved,
-    preview: !signals.previewReviewed && activeIndex > 5,
+    "video-editor": !signals.saved || !signals.visualStoryboardReady || !signals.visualStoryboardApproved,
+    review: signals.hasWarnings || (!signals.reviewVerified && activeIndex > 3),
+    preview: !signals.previewReviewed && activeIndex > 4,
     render: signals.latestJobState === "failed" || Boolean(signals.latestJobState && !signals.latestJobContentCurrent),
   };
   return Object.fromEntries(workspaceSteps.map(({ id }, index) => [
@@ -58,8 +60,7 @@ export function workflowStatuses(signals: WorkflowSignals): Record<WorkspaceStep
 export function canAdvanceWorkspaceStep(step: WorkspaceStep, signals: WorkflowSignals) {
   if (step === "materials") return signals.hasResearch && signals.saved;
   if (step === "narration") return signals.narrationMode === "manual" && !signals.hasAudio || signals.hasAudio && signals.audioMatchesNarration && !signals.hasPendingAudio;
-  if (step === "visual") return signals.saved;
-  if (step === "editor") return signals.saved && signals.visualStoryboardApproved;
+  if (step === "video-editor") return signals.saved && signals.visualStoryboardReady && signals.visualStoryboardApproved;
   if (step === "review") return signals.reviewVerified;
   if (step === "preview") return signals.previewReviewed;
   return false;
@@ -77,7 +78,7 @@ export function reachableWorkspaceStep(target: WorkspaceStep, signals: WorkflowS
 export function storedWorkspaceStep(projectId: string): WorkspaceStep {
   try {
     const saved = localStorage.getItem(`ai-facts-studio:workspace-step:${projectId}`);
-    return workspaceSteps.some((step) => step.id === saved) ? saved as WorkspaceStep : "materials";
+    return normalizeWorkspaceStep(saved) ?? "materials";
   } catch { return "materials"; }
 }
 

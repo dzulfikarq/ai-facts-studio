@@ -101,7 +101,7 @@ try {
   };
   const outroForm = new FormData();
   outroForm.append("outro", new Blob([await readFile(outroPath)], { type: "video/mp4" }), "Local moving outro.mp4");
-  const uploadedOutro = await json<{ asset: { id: string; file: string; posterFile: string; bytes: number; durationSec: number; localAvailable: boolean } }>(await fetch(`${apiUrl}/api/outros`, { method: "POST", body: outroForm }));
+  const uploadedOutro = await json<{ asset: { id: string; name: string; file: string; posterFile: string; bytes: number; durationSec: number; localAvailable: boolean } }>(await fetch(`${apiUrl}/api/outros`, { method: "POST", body: outroForm }));
   outroAssetId = uploadedOutro.asset.id;
   outroFile = uploadedOutro.asset.file;
   outroPosterFile = uploadedOutro.asset.posterFile;
@@ -112,6 +112,12 @@ try {
   browser = await openBrowser("chrome", { logLevel: "error" });
   const browserLogs: string[] = [];
   const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: (log: unknown) => browserLogs.push(JSON.stringify(log)), onLog: (log: unknown) => browserLogs.push(JSON.stringify(log)) } as never);
+  const captureSettingsViewport = async (filename: string) => {
+    const client = (page as unknown as { _client: () => { send: (method: string, params?: Record<string, unknown>) => Promise<{ value: any }> } })._client();
+    const viewport = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight }));
+    const image = (await client.send("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false, clip: { ...viewport, scale: 1 } })).value;
+    await writeFile(path.join(evidenceDir, filename), Buffer.from(image.data, "base64"));
+  };
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: `${viteUrl}/create`, timeout: 30_000 });
   await waitFor(() => page.evaluate((id) => {
@@ -137,18 +143,87 @@ try {
   const sceneIds = created.researchPackage.scenes.map((scene: { id: string }) => scene.id) as string[];
 
   await page.goto({ url: `${viteUrl}/settings`, timeout: 30_000 });
-  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".ai-generation-settings"))), "Settings page with Outro Library tab");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.trim() === "Outro Library")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".settings-nav-item").length === 5 && location.pathname === "/settings"), "Settings General section and URL-backed navigation");
+  assert.equal(await page.evaluate(() => document.querySelector('.settings-nav-item[aria-current="page"] span')?.textContent), "General", "General is the canonical default section");
+  for (const section of ["appearance", "ai-generation", "outro-library", "preferences"] as const) {
+    await page.evaluate((target) => document.querySelector<HTMLAnchorElement>(`.settings-nav-item[href="/settings?section=${target}"]`)?.click(), section);
+    await waitFor(() => page.evaluate((target) => location.search === `?section=${target}` && document.querySelector('.settings-nav-item[aria-current="page"]')?.getAttribute("href") === `/settings?section=${target}`, section), `Settings ${section} navigation`);
+  }
+  await page.evaluate(() => document.querySelector<HTMLAnchorElement>('.settings-nav-item[href="/settings?section=appearance"]')?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".appearance-theme-choices"))), "Appearance theme cards load");
+  for (const preference of ["light", "dark", "system"] as const) {
+    await page.evaluate((target) => [...document.querySelectorAll<HTMLButtonElement>(".appearance-theme-choices button")].find((button) => button.textContent?.includes(target[0]!.toUpperCase() + target.slice(1)))?.click(), preference);
+    await waitFor(() => page.evaluate((target) => localStorage.getItem("ai-facts-studio:theme") === target && document.documentElement.dataset.themePreference === target, preference), `Theme ${preference} selection persists globally`);
+  }
+  await page.evaluate(() => document.querySelector<HTMLAnchorElement>('.settings-nav-item[href="/settings?section=ai-generation"]')?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector('.ai-mode-switch [role="radio"][aria-checked="true"]'))), "AI Generation settings remain available");
+  const aiModeBeforeOutro = await page.evaluate(() => document.querySelector('.ai-mode-switch [role="radio"][aria-checked="true"] strong')?.textContent?.trim());
+  await page.evaluate(() => document.querySelector<HTMLAnchorElement>('.settings-nav-item[href="/settings?section=outro-library"]')?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".outro-library .outro-card"))), "Outro Library card loads in Settings");
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-outro-library")?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
-  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-ai-generation")?.getAttribute("aria-selected") === "true"), "Settings ArrowLeft selects AI Generation tab");
-  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector("#settings-tab-ai-generation")), true, "Settings keyboard tab change moves focus");
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-ai-generation")?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })));
-  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>("#settings-tab-outro-library")?.getAttribute("aria-selected") === "true"), "Settings End selects Outro Library tab");
-  assert.equal(await page.evaluate(() => document.querySelector("#settings-panel-outro-library")?.getAttribute("aria-labelledby")), "settings-tab-outro-library", "Settings tab and panel expose accessible ARIA relationship");
+  await page.evaluate(() => history.back());
+  await waitFor(() => page.evaluate(() => location.search === "?section=ai-generation"), "Settings browser Back restores prior section");
+  assert.equal(await page.evaluate(() => document.querySelector('.ai-mode-switch [role="radio"][aria-checked="true"] strong')?.textContent?.trim()), aiModeBeforeOutro, "AI Generation mode survives section navigation");
+  await page.evaluate(() => history.forward());
+  await waitFor(() => page.evaluate(() => location.search === "?section=outro-library"), "Settings browser Forward restores next section");
+  await page.goto({ url: `${viteUrl}/settings?section=outro-library`, timeout: 30_000 });
+  await waitFor(() => page.evaluate(() => document.querySelector('.settings-nav-item[aria-current="page"]')?.getAttribute("href") === "/settings?section=outro-library"), "Settings refresh retains active section");
+  assert.equal(await page.evaluate(() => localStorage.getItem("ai-facts-studio:theme")), "system", "theme preference survives Settings refresh");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".outro-library .outro-card"))), "Outro Library reloads saved assets");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".outro-card-poster")?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLDialogElement>(".outro-preview-dialog[open] video"))), "native Outro preview dialog");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[aria-label="Tutup pratinjau"]')?.click());
+
+  const browserOutroName = "Browser Uploaded Outro";
+  assert.equal(await page.evaluate(({ bytes, name }) => {
+    const input = document.querySelector<HTMLInputElement>(".outro-upload-button input");
+    if (!input) return false;
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], name, { type: "video/mp4" }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, { bytes: [...await readFile(outroPath)], name: `${browserOutroName}.mp4` }), true, "Settings upload control accepts MP4");
+  await waitFor(() => page.evaluate((name) => [...document.querySelectorAll(".outro-card-title strong")].some((node) => node.textContent === name), browserOutroName), "Outro upload appears in Settings");
+  await page.evaluate((name) => {
+    const card = [...document.querySelectorAll<HTMLElement>(".outro-card")].find((item) => item.querySelector(".outro-card-title strong")?.textContent === name);
+    const input = card?.querySelector<HTMLInputElement>(".outro-rename-row input");
+    if (!card || !input) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, `${name} Renamed`);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    card.querySelector<HTMLButtonElement>(".outro-rename-row button")?.click();
+    return true;
+  }, browserOutroName);
+  const renamedOutroName = `${browserOutroName} Renamed`;
+  await waitFor(() => page.evaluate((name) => [...document.querySelectorAll(".outro-card-title strong")].some((node) => node.textContent === name), renamedOutroName), "Outro rename persists from Settings UI");
+  await page.evaluate((name) => {
+    const card = [...document.querySelectorAll<HTMLElement>(".outro-card")].find((item) => item.querySelector(".outro-card-title strong")?.textContent === name);
+    card?.querySelector<HTMLButtonElement>(".outro-card-actions .button-outline")?.click();
+  }, renamedOutroName);
+  await waitFor(async () => {
+    const state = await fetch(`${apiUrl}/api/outros`).then((response) => json<{ outros: { id: string; name: string }[]; defaultOutroId: string | null }>(response));
+    return state.outros.some((asset) => asset.name === renamedOutroName) && state.defaultOutroId === state.outros.find((asset) => asset.name === renamedOutroName)?.id;
+  }, "Outro default persists after Settings action");
+  const browserOutroId = (await fetch(`${apiUrl}/api/outros`).then((response) => json<{ outros: { id: string; name: string }[] }>(response))).outros.find((asset) => asset.name === renamedOutroName)!.id;
+  await page.evaluate((name) => {
+    const card = [...document.querySelectorAll<HTMLElement>(".outro-card")].find((item) => item.querySelector(".outro-card-title strong")?.textContent === name);
+    card?.querySelector<HTMLButtonElement>(".outro-delete-button")?.click();
+  }, renamedOutroName);
+  await waitFor(() => page.evaluate(() => document.querySelector(".confirm-dialog[role=alertdialog]")?.textContent?.includes("Hapus outro dari library?") ?? false), "Outro delete uses custom confirmation");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".confirm-submit.danger")?.click());
+  await waitFor(async () => !(await fetch(`${apiUrl}/api/outros`).then((response) => json<{ outros: { id: string }[] }>(response))).outros.some((asset) => asset.id === browserOutroId), "Confirmed Outro delete removes unused upload");
+  await page.evaluate((name) => {
+    const card = [...document.querySelectorAll<HTMLElement>(".outro-card")].find((item) => item.querySelector(".outro-card-title strong")?.textContent === name);
+    card?.querySelector<HTMLButtonElement>(".outro-card-actions .button-outline")?.click();
+  }, uploadedOutro.asset.name);
+  await waitFor(async () => (await fetch(`${apiUrl}/api/outros`).then((response) => json<{ defaultOutroId: string | null }>(response))).defaultOutroId === outroAssetId, "Original Outro default can be restored");
+  await page.goto({ url: `${viteUrl}/settings?section=outro-library`, timeout: 30_000 });
+  await waitFor(() => page.evaluate((name) => [...document.querySelectorAll<HTMLElement>(".outro-card")].some((card) => card.querySelector(".outro-card-title strong")?.textContent === name && Boolean(card.querySelector(".outro-default-badge"))), uploadedOutro.asset.name), "Default outro survives Settings refresh");
+  assert.equal(await page.evaluate(() => { const input = document.querySelector<HTMLInputElement>(".outro-upload-button input"); return Boolean(input && !input.disabled); }), true, "Outro upload stays enabled when idle");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector<HTMLElement>(".outro-upload-button")!).color), "rgb(255, 255, 255)", "primary upload label keeps white text contrast");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await captureSettingsViewport("settings-outro-desktop.png");
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+  await captureSettingsViewport("settings-outro-mobile.png");
   for (const width of [1440, 1280, 1024, 768, 390, 360, 320]) {
     await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
     const bounds = await page.evaluate(() => ({ viewport: window.innerWidth, page: document.documentElement.scrollWidth, card: document.querySelector<HTMLElement>(".outro-card")?.getBoundingClientRect().right ?? 0 }));

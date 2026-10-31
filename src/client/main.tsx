@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CircleAlert, Clock3, Film, House, Info, Save as SaveIcon, Search, Settings as SettingsIcon, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { CircleAlert, Clock3, Film, House, Info, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -35,7 +35,7 @@ import { OutroLibraryPanel } from "./OutroLibraryPanel";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
-import { appRouteHref, parseAppRoute, type AppRoute } from "./routes";
+import { appRouteHref, parseAppRoute, settingsSections, type AppRoute, type SettingsSection } from "./routes";
 import "./styles.css";
 import "./tts.css";
 import "./workflow.css";
@@ -193,7 +193,6 @@ function App() {
   const [aiImageProviders, setAiImageProviders] = useState<AiImageProviderCatalog | null>(null);
   const [aiSettingsBusy, setAiSettingsBusy] = useState(false);
   const [aiSettingsError, setAiSettingsError] = useState("");
-  const [settingsTab, setSettingsTab] = useState<"ai-generation" | "outro-library">("ai-generation");
   const [outroLibrary, setOutroLibrary] = useState<OutroLibraryState>({ outros: [], defaultOutroId: null });
   const [outroLibraryLoaded, setOutroLibraryLoaded] = useState(false);
   const [outroLibraryBusy, setOutroLibraryBusy] = useState(false);
@@ -684,18 +683,21 @@ function App() {
     setMessage("");
   }
 
-  async function openSettings(tab: "ai-generation" | "outro-library" = "ai-generation") {
+  async function openSettings(section: SettingsSection = "general") {
     if (busy || ttsBusy || ttsLoading || aiSettingsBusy) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     setCreateDraftUnsaved(false);
-    setSettingsTab(tab);
-    commitRoute({ view: "settings" });
+    commitRoute({ view: "settings", section });
     setMessage("");
     setAiSettingsError("");
     const results = await Promise.allSettled([refreshAiGenerationSettings(), refreshOutroLibrary()]);
     if (results[0]?.status === "rejected") setAiSettingsError(friendlyError(results[0].reason));
     if (results[1]?.status === "rejected") setMessage(friendlyError(results[1].reason));
+  }
+
+  function navigateSettingsSection(section: SettingsSection) {
+    if (routeRef.current.view === "settings") commitRoute({ view: "settings", section });
   }
 
   async function setAiGenerationMode(mode: AiGenerationMode) {
@@ -2120,15 +2122,20 @@ function App() {
         </>}
       </section>}
 
-      {view === "settings" && <AiGenerationSettingsPage
+      {view === "settings" && <SettingsPage
+        section={route.section}
+        onSection={navigateSettingsSection}
+        status={status}
+        projects={projects}
+        projectsLoaded={projectsLoaded}
         settings={aiGenerationSettings}
         busy={aiSettingsBusy}
         error={aiSettingsError}
         onMode={(mode) => void setAiGenerationMode(mode)}
         theme={theme}
         onTheme={setTheme}
-        tab={settingsTab}
-        onTab={setSettingsTab}
+        outroLibrary={outroLibrary}
+        outroLibraryLoaded={outroLibraryLoaded}
         outroContent={<OutroLibraryPanel assets={outroLibrary.outros} defaultOutroId={outroLibrary.defaultOutroId} busy={outroLibraryBusy} onUpload={(file) => void uploadOutro(file)} onRename={(id, name) => void renameOutro(id, name)} onMakeDefault={(id) => void makeOutroDefault(id)} onDelete={(asset) => void deleteOutro(asset)}/>}
       />}
 
@@ -2377,16 +2384,90 @@ function App() {
   </div>;
 }
 
-function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onTheme, tab, onTab, outroContent }: {
+function SettingsPage({ section, onSection, status, projects, projectsLoaded, settings, busy, error, onMode, theme, onTheme, outroLibrary, outroLibraryLoaded, outroContent }: {
+  section: SettingsSection;
+  onSection: (section: SettingsSection) => void;
+  status: Status | null;
+  projects: Project[];
+  projectsLoaded: boolean;
   settings: AiGenerationSettings | null;
   busy: boolean;
   error: string;
   onMode: (mode: AiGenerationMode) => void;
   theme: ThemePreference;
   onTheme: (theme: ThemePreference) => void;
-  tab: "ai-generation" | "outro-library";
-  onTab: (tab: "ai-generation" | "outro-library") => void;
+  outroLibrary: OutroLibraryState;
+  outroLibraryLoaded: boolean;
   outroContent: React.ReactNode;
+}) {
+  const sectionDetails: Record<SettingsSection, { label: string; description: string; Icon: typeof Info }> = {
+    general: { label: "General", description: "A snapshot of your workspace and available tools.", Icon: Info },
+    appearance: { label: "Appearance", description: "Choose how AI Facts Studio looks on this device.", Icon: Sun },
+    "ai-generation": { label: "AI Generation", description: "Review generation mode and provider availability.", Icon: Sparkles },
+    "outro-library": { label: "Outro Library", description: "Manage reusable video outros for new projects.", Icon: Film },
+    preferences: { label: "Preferences", description: "Review defaults already used by your projects.", Icon: SlidersHorizontal },
+  };
+  const defaultOutro = outroLibrary.outros.find((asset) => asset.id === outroLibrary.defaultOutroId);
+  const themeName = theme[0]!.toUpperCase() + theme.slice(1);
+  const hrefFor = (target: SettingsSection) => appRouteHref({ view: "settings", section: target });
+  const followSection = (target: SettingsSection) => (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onSection(target);
+  };
+  const activeDetails = sectionDetails[section];
+  const ActiveIcon = activeDetails.Icon;
+
+  return <section className="page layout-container settings-page">
+    <header className="settings-page-heading">
+      <span className="settings-heading-icon"><SettingsIcon aria-hidden="true" size={21}/></span>
+      <div><span className="eyebrow">WORKSPACE SETTINGS</span><h1>Settings</h1><p>Manage appearance, AI generation, and project defaults.</p></div>
+    </header>
+    <div className="settings-layout">
+      <nav className="settings-nav" aria-label="Settings sections">
+        {settingsSections.map((id) => {
+          const { label, Icon } = sectionDetails[id];
+          return <a key={id} href={hrefFor(id)} className={`settings-nav-item ${section === id ? "active" : ""}`} aria-current={section === id ? "page" : undefined} onClick={followSection(id)}>
+            <Icon aria-hidden="true" size={18}/><span>{label}</span>
+          </a>;
+        })}
+      </nav>
+      <div className="settings-content">
+        {section === "outro-library" ? outroContent : <>
+          <header className="settings-section-heading">
+            <span className="settings-section-icon"><ActiveIcon aria-hidden="true" size={20}/></span>
+            <div><h2>{activeDetails.label}</h2><p>{activeDetails.description}</p></div>
+          </header>
+          {section === "general" && <div className="settings-overview-grid">
+            <article className="settings-overview-card"><span className="settings-overview-icon"><Film aria-hidden="true" size={18}/></span><div><span>Saved projects</span><strong>{projectsLoaded ? projects.length : "Loading…"}</strong><p>Projects currently stored in this workspace.</p></div></article>
+            <article className="settings-overview-card"><span className="settings-overview-icon"><SettingsIcon aria-hidden="true" size={18}/></span><div><span>Local media processing</span><strong className={status ? status.ffmpegAvailable ? "available" : "unavailable" : ""}>{status ? status.ffmpegAvailable ? "Available" : "Unavailable" : "Checking…"}</strong><p>FFmpeg availability for local media and rendering.</p></div></article>
+            <article className="settings-overview-card"><span className="settings-overview-icon"><Sparkles aria-hidden="true" size={18}/></span><div><span>GitHub Actions workflow</span><strong className={status ? status.githubWorkflowAvailable ? "available" : "unavailable" : ""}>{status ? status.githubWorkflowAvailable ? "Available" : "Unavailable" : "Checking…"}</strong><p>Current availability of the configured export workflow.</p></div></article>
+          </div>}
+          {section === "appearance" && <AppearanceSettings preference={theme} onChange={onTheme}/>}
+          {section === "ai-generation" && <AiGenerationSettingsPanel settings={settings} busy={busy} error={error} onMode={onMode}/>}
+          {section === "preferences" && <div className="settings-preference-list">
+            <article className="settings-preference-card">
+              <span className="settings-overview-icon"><Film aria-hidden="true" size={18}/></span>
+              <div><span className="eyebrow">NEW PROJECTS</span><h3>Default outro</h3><strong>{outroLibraryLoaded ? defaultOutro?.name ?? "Tanpa Outro" : "Loading…"}</strong><p>Changing this default does not alter existing projects.</p></div>
+              <a className="button button-light" href={hrefFor("outro-library")} onClick={followSection("outro-library")}>Manage Outro Library</a>
+            </article>
+            <article className="settings-preference-card">
+              <span className="settings-overview-icon"><Sun aria-hidden="true" size={18}/></span>
+              <div><span className="eyebrow">DISPLAY</span><h3>Appearance preference</h3><strong>{themeName}</strong><p>{theme === "system" ? "Follows your operating system preference." : "Saved in this browser."}</p></div>
+              <a className="button button-light" href={hrefFor("appearance")} onClick={followSection("appearance")}>Change appearance</a>
+            </article>
+          </div>}
+        </>}
+      </div>
+    </div>
+  </section>;
+}
+
+function AiGenerationSettingsPanel({ settings, busy, error, onMode }: {
+  settings: AiGenerationSettings | null;
+  busy: boolean;
+  error: string;
+  onMode: (mode: AiGenerationMode) => void;
 }) {
   const development = settings?.providers.development;
   const production = settings?.providers.production;
@@ -2410,22 +2491,7 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onThem
     "model-unavailable": "Model Unavailable",
     connected: "Connected",
   } as const)[development.state] : "Checking";
-  return <section className="page layout-container ai-generation-settings">
-    <div className="page-heading"><div><div className="eyebrow">SETTINGS</div><h1>Settings</h1><p>Atur tampilan, AI Generation, dan reusable outro lokal.</p></div></div>
-    <AppearanceSettings preference={theme} onChange={onTheme} />
-    <div className="settings-subnav" role="tablist" aria-label="Pengaturan" onKeyDown={(event) => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-      event.preventDefault();
-      const tabs = ["ai-generation", "outro-library"] as const;
-      const current = tabs.indexOf(tab);
-      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
-      onTab(tabs[next]!);
-      event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=tab]")[next]?.focus();
-    }}>
-      <button type="button" id="settings-tab-ai-generation" role="tab" aria-controls="settings-panel-ai-generation" tabIndex={tab === "ai-generation" ? 0 : -1} aria-selected={tab === "ai-generation"} className={`button button-light ${tab === "ai-generation" ? "selected" : ""}`} onClick={() => onTab("ai-generation")}>AI Generation</button>
-      <button type="button" id="settings-tab-outro-library" role="tab" aria-controls="settings-panel-outro-library" tabIndex={tab === "outro-library" ? 0 : -1} aria-selected={tab === "outro-library"} className={`button button-light ${tab === "outro-library" ? "selected" : ""}`} onClick={() => onTab("outro-library")}>Outro Library</button>
-    </div>
-    {tab === "outro-library" ? <div id="settings-panel-outro-library" role="tabpanel" aria-labelledby="settings-tab-outro-library" tabIndex={0}>{outroContent}</div> : <div id="settings-panel-ai-generation" role="tabpanel" aria-labelledby="settings-tab-ai-generation" tabIndex={0}>
+  return <div className="settings-ai-generation">
     {error && <div className="workflow-alert danger" role="alert">{error}</div>}
     {!settings ? <div className="workflow-empty" role={error ? undefined : "status"}>{error ? "Pengaturan gagal dimuat." : "Memuat pengaturan AI…"}</div> : <>
       <section className="ai-settings-panel">
@@ -2477,8 +2543,7 @@ function AiGenerationSettingsPage({ settings, busy, error, onMode, theme, onThem
 
         <div className="ai-settings-footnote"><strong>Generate hanya setelah klik eksplisit.</strong><span>Development mengirim input ke OpenCode lokal dan model terpilih; biaya provider mengikuti akun OpenCode. Production memakai Gemini guard/quota. Keduanya tidak melakukan fact-check independen.</span></div>
     </>}
-    </div>}
-  </section>;
+  </div>;
 }
 
 function OpenCodeProviderModels({ group }: { group: OpenCodeModelGroup }) {

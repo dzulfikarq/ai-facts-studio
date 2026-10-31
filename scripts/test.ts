@@ -52,7 +52,10 @@ import { seedVolcanoVisualSample } from "../src/domain/volcano-visual-sample";
 
 const samples = ["mountain-formation", "volcano-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
 assert.deepEqual(parseAppRoute("http://localhost/"), { view: "dashboard" }, "dashboard route survives direct navigation");
-assert.deepEqual(parseAppRoute("http://localhost/settings"), { view: "settings" }, "settings route survives refresh");
+assert.deepEqual(parseAppRoute("http://localhost/settings"), { view: "settings", section: "general" }, "settings route defaults to General on refresh");
+assert.deepEqual(parseAppRoute("http://localhost/settings?section=appearance"), { view: "settings", section: "appearance" }, "settings section survives direct navigation");
+assert.deepEqual(parseAppRoute("http://localhost/settings?section=outro-library"), { view: "settings", section: "outro-library" }, "Outro Library section survives refresh");
+assert.deepEqual(parseAppRoute("http://localhost/settings?section=unknown"), { view: "settings", section: "general" }, "invalid settings section falls back to General");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo"), { view: "workspace", projectId: "demo", step: "materials", sceneId: null }, "project URL opens materials by default");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo/editor?scene=scene-3"), { view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }, "legacy editor URL restores selected scene in Video Editor");
 assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=visual&scene=scene-3"), { view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }, "legacy visual step resolves to Video Editor");
@@ -61,6 +64,8 @@ assert.deepEqual(parseAppRoute("http://localhost/projects/demo?step=render&scene
 const invalidStepRoute = parseAppRoute("http://localhost/projects/demo?step=invalid");
 assert.equal(invalidStepRoute.view === "workspace" ? invalidStepRoute.step : "", "materials", "invalid workspace step falls back safely");
 assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "Video Editor route serializes selected scene");
+assert.equal(appRouteHref({ view: "settings", section: "general" }), "/settings", "General settings route uses canonical URL");
+assert.equal(appRouteHref({ view: "settings", section: "ai-generation" }), "/settings?section=ai-generation", "AI Generation settings section serializes in URL");
 assert.equal(normalizeWorkspaceStep("visual"), "video-editor", "legacy stored visual step migrates without project rewrite");
 assert.equal(normalizeWorkspaceStep("editor"), "video-editor", "legacy stored editor step migrates without project rewrite");
 assert.equal(workspaceSteps.length, 6, "workflow has six steps");

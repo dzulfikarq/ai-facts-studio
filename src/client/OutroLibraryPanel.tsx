@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Film, Pencil, Star, Trash2, Upload, X } from "lucide-react";
+import { Film, Info, Pencil, Star, Trash2, Upload, X } from "lucide-react";
 import type { OutroLibraryAsset } from "../domain/outro";
 import "./outro-library.css";
 
@@ -19,6 +19,12 @@ export function OutroLibraryPanel({ assets, defaultOutroId, busy, onUpload, onRe
   const [names, setNames] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<OutroLibraryAsset | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  const defaultOutro = assets.find((asset) => asset.id === defaultOutroId);
+  const handleUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (file) onUpload(file);
+    event.currentTarget.value = "";
+  };
 
   useEffect(() => {
     const element = dialog.current;
@@ -29,19 +35,15 @@ export function OutroLibraryPanel({ assets, defaultOutroId, busy, onUpload, onRe
 
   return <section className="outro-library" aria-labelledby="outro-library-title">
     <div className="outro-library-heading">
-      <div><span className="eyebrow">LOCAL VIDEO ASSETS</span><h2 id="outro-library-title">Outro Library</h2>
+      <div><span className="eyebrow">LOCAL VIDEO ASSETS</span><h2 id="outro-library-title"><Film size={20} aria-hidden="true"/>Outro Library</h2>
         <p>Outro tersimpan lokal dan dipilih per project. Default baru berlaku untuk project baru; project lama tidak berubah.</p>
       </div>
       <label className="button button-primary file-button outro-upload-button"><Upload size={16} aria-hidden="true"/><span>Tambah Outro</span>
-        <input type="file" accept="video/mp4,.mp4" disabled={busy} onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          if (file) onUpload(file);
-          event.currentTarget.value = "";
-        }}/>
+        <input type="file" accept="video/mp4,.mp4" disabled={busy} onChange={handleUpload}/>
       </label>
     </div>
-    <div className="outro-library-note"><Film size={18} aria-hidden="true"/><p><strong>Follow for More:</strong> unggah MP4 Anda, ubah nama bila perlu, lalu pilih <b>Jadikan default</b>. Tidak ada video contoh bawaan.</p></div>
-    {!assets.length ? <div className="project-empty outro-library-empty"><Film size={26} aria-hidden="true"/><strong>Library outro masih kosong</strong><span>Project baru akan memakai Tanpa Outro sampai Anda upload dan menetapkan default.</span></div> :
+    <div className="outro-library-note"><Info size={18} aria-hidden="true"/><p><strong>Default untuk project baru:</strong> {defaultOutro ? <><b>{defaultOutro.name}</b>. Project lama tetap tidak berubah.</> : "Belum diatur; project baru dimulai tanpa outro."}</p></div>
+    {!assets.length ? <div className="project-empty outro-library-empty"><span className="project-empty-icon"><Film size={24} aria-hidden="true"/></span><strong>Library outro masih kosong</strong><span>Upload video MP4 lalu tetapkan sebagai default agar project baru memakainya.</span><label className="button button-primary file-button outro-empty-upload"><Upload size={16} aria-hidden="true"/><span>Upload Outro Pertama</span><input type="file" accept="video/mp4,.mp4" disabled={busy} onChange={handleUpload}/></label></div> :
       <div className="outro-card-grid">
         {assets.map((asset) => {
           const name = names[asset.id] ?? asset.name;

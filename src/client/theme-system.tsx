@@ -5,9 +5,9 @@ export type ThemePreference = "light" | "dark" | "system";
 
 const storageKey = "ai-facts-studio:theme";
 const choices = [
-  { id: "light", label: "Light", Icon: Sun },
-  { id: "dark", label: "Dark", Icon: Moon },
-  { id: "system", label: "System", Icon: Monitor },
+  { id: "light", label: "Light", description: "Bright surfaces and clear contrast.", Icon: Sun },
+  { id: "dark", label: "Dark", description: "A darker interface for low-light use.", Icon: Moon },
+  { id: "system", label: "System", description: "Follow your device appearance setting.", Icon: Monitor },
 ] as const;
 
 function readPreference(): ThemePreference {
@@ -51,9 +51,9 @@ export function useThemePreference() {
 }
 
 function ThemeChoices({ preference, onChange, compact = false }: { preference: ThemePreference; onChange: (value: ThemePreference) => void; compact?: boolean }) {
-  return <div className={`theme-choices ${compact ? "compact" : ""}`} role="group" aria-label="Appearance theme">
-    {choices.map(({ id, label, Icon }) => <button key={id} type="button" aria-pressed={preference === id} className={preference === id ? "selected" : ""} onClick={() => onChange(id)} title={`${label} theme`}>
-      <Icon aria-hidden="true" size={16} strokeWidth={1.8} /><span>{label}</span>
+  return <div className={`theme-choices ${compact ? "compact" : "appearance-theme-choices"}`} role="group" aria-label="Appearance theme">
+    {choices.map(({ id, label, description, Icon }) => <button key={id} type="button" aria-pressed={preference === id} className={preference === id ? "selected" : ""} onClick={() => onChange(id)} title={`${label} theme`}>
+      <Icon aria-hidden="true" size={18} strokeWidth={1.8} /><span><strong>{label}</strong>{!compact && <small>{description}</small>}</span>
     </button>)}
   </div>;
 }
@@ -68,8 +68,8 @@ export function ThemeSwitcher({ preference, onChange }: { preference: ThemePrefe
 }
 
 export function AppearanceSettings({ preference, onChange }: { preference: ThemePreference; onChange: (value: ThemePreference) => void }) {
-  return <section className="appearance-card">
-    <div><span className="eyebrow">TAMPILAN</span><h2>Appearance</h2><p>Pilih Light Purple, Dark Purple, atau ikuti perangkat.</p></div>
+  return <section className="appearance-card" aria-labelledby="appearance-theme-title">
+    <div><h3 id="appearance-theme-title">Theme preference</h3><p>Theme applies across the app and is saved in this browser.</p></div>
     <ThemeChoices preference={preference} onChange={onChange} />
   </section>;
 }

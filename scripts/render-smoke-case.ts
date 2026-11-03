@@ -1,6 +1,6 @@
 import "dotenv/config";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { parseResearchPackage } from "../src/domain/research";
 import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION, V2_RENDERER_VERSION } from "../src/video/renderer-version";
 import type { ResearchPackage } from "../src/domain/research";
-import { renderSnapshot } from "./render-core";
+import { invalidateBundleCache, renderSnapshot } from "./render-core";
 
 const execFileAsync = promisify(execFile);
 const version = Number(process.argv[2]);
@@ -51,6 +51,34 @@ try {
   assert.equal(manifest.height, 640);
   assert.ok(manifest.durationSec > 1.8 && manifest.durationSec < 2.2);
   console.log(`PASS: renderer V${version} ${manifest.durationSec.toFixed(1)}s ${manifest.width}x${manifest.height} H.264 + AAC SHA-256 ${manifest.sha256}`);
+  if (version === RENDERER_VERSION) {
+    const estimatedAudioDurationSec = 2.6;
+    const estimatedTargetDurationSec = 3;
+    const estimatedAudioName = `render-smoke-estimated-${randomUUID()}.wav`;
+    const estimatedAudioPath = path.resolve("public/audio", estimatedAudioName);
+    const estimatedOutputPath = `${outputPath}.estimated.mp4`;
+    try {
+      await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", `sine=frequency=440:duration=${estimatedAudioDurationSec}`, "-c:a", "pcm_s16le", estimatedAudioPath]);
+      const estimatedAudioSha256 = createHash("sha256").update(await readFile(estimatedAudioPath)).digest("hex");
+      const estimatedResearch = {
+        ...current,
+        targetDurationSec: estimatedTargetDurationSec,
+        scenes: [{ ...current.scenes[0]!, startSec: 0, endSec: estimatedAudioDurationSec }],
+      };
+      invalidateBundleCache();
+      const estimatedManifest = await renderSnapshot({
+        research: estimatedResearch,
+        audio: { file: `audio/${estimatedAudioName}`, durationSec: estimatedAudioDurationSec, timingMode: "estimated", source: "upload", sha256: estimatedAudioSha256 },
+        rendererVersion: RENDERER_VERSION,
+      }, estimatedOutputPath, () => {}, 1 / 3);
+      assert.equal(estimatedManifest.audioValidation, "pass", "estimated timeline padding must not fail the approved audio-duration gate");
+      assert.ok(estimatedManifest.audioDurationSec !== null && Math.abs(estimatedManifest.audioDurationSec - estimatedAudioDurationSec) > 0.25, "fixture reproduces audio-track padding beyond source duration");
+      assert.ok(Math.abs(estimatedManifest.durationSec - estimatedTargetDurationSec) < 0.1, "estimated audio render retains approved timeline duration");
+      console.log(`PASS: estimated audio ${estimatedManifest.durationSec.toFixed(1)}s output timeline matches snapshot`);
+    } finally {
+      await Promise.all([rm(estimatedAudioPath, { force: true }), rm(estimatedOutputPath, { force: true })]);
+    }
+  }
 } finally {
   await Promise.all([rm(audioPath, { force: true }), rm(outputPath, { force: true })]);
 }

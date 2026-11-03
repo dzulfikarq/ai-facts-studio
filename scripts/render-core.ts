@@ -11,7 +11,7 @@ import type { ResearchPackage } from "../src/domain/research";
 import type { VisualAsset } from "../src/domain/visual-assets";
 import type { SceneMedia } from "../src/domain/scene-media";
 import { validateAudioQuality } from "../src/domain/media-validation";
-import { durationInFrames } from "../src/domain/timeline";
+import { durationInFrames, FPS } from "../src/domain/timeline";
 import { LEGACY_RENDERER_VERSION, OLDER_RENDERER_VERSION, OLDEST_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION, V2_RENDERER_VERSION } from "../src/video/renderer-version";
 import type { OutroRenderInput } from "../src/domain/outro";
 
@@ -142,6 +142,12 @@ export async function renderSnapshot(
 ) {
   const rendererVersion = snapshot.rendererVersion ?? LEGACY_RENDERER_VERSION;
   if (![LEGACY_RENDERER_VERSION, V2_RENDERER_VERSION, OLDEST_RENDERER_VERSION, OLDER_RENDERER_VERSION, PREVIOUS_RENDERER_VERSION, RENDERER_VERSION].includes(rendererVersion)) throw new Error(`Renderer version not supported: ${rendererVersion}.`);
+  const outputDurationFrames = durationInFrames(
+    snapshot.research,
+    snapshot.audio?.durationSec,
+    rendererVersion === RENDERER_VERSION ? snapshot.audio?.timingMode ?? "scaled" : "scaled",
+    rendererVersion === RENDERER_VERSION ? snapshot.outro : undefined,
+  );
   if (snapshot.audio) await verifySnapshotAudio(snapshot.audio);
   await verifySnapshotVisualAssets(snapshot.visualAssets);
   await verifySnapshotSceneMedia(snapshot.research);
@@ -167,7 +173,7 @@ export async function renderSnapshot(
   await renderMedia({
     composition: {
       ...composition,
-      durationInFrames: durationInFrames(snapshot.research, snapshot.audio?.durationSec, rendererVersion === RENDERER_VERSION ? snapshot.audio?.timingMode ?? "scaled" : "scaled", rendererVersion === RENDERER_VERSION ? snapshot.outro : undefined),
+      durationInFrames: outputDurationFrames,
     },
     serveUrl,
     codec: "h264",
@@ -189,7 +195,7 @@ export async function renderSnapshot(
     codec: manifest.audioCodec,
     videoDurationSec: manifest.durationSec,
     audioDurationSec: manifest.audioDurationSec,
-    expectedAudioDurationSec: snapshot.outro?.audioEnabled ? undefined : snapshot.audio?.durationSec,
+    expectedAudioDurationSec: snapshot.audio && !snapshot.outro?.audioEnabled ? outputDurationFrames / FPS : undefined,
     meanVolumeDb: manifest.audioMeanVolumeDb,
     maxVolumeDb: manifest.audioMaxVolumeDb,
   });

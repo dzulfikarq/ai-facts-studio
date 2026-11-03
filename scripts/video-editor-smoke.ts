@@ -643,6 +643,25 @@ try {
   });
   assert.ok(mobileImportPreview.scrollWidth <= mobileImportPreview.width && mobileImportPreview.cardRight <= mobileImportPreview.width && mobileImportPreview.columns === 1 && mobileImportPreview.infoWidth > 180, `narrow import preview stacks and wraps without overflow: ${JSON.stringify(mobileImportPreview)}`);
   await captureViewport("mountain-google-flow-single-import-preview-mobile.png");
+  await page.setViewport({ width: 1024, height: 1000, deviceScaleFactor: 1 });
+  const narrowInspectorPreview = await page.evaluate(() => {
+    const card = document.querySelector<HTMLElement>(".google-flow-file-preview")!;
+    const name = card.querySelector<HTMLElement>("strong")!;
+    const cardRect = card.getBoundingClientRect();
+    const buttonBounds = [...card.querySelectorAll<HTMLButtonElement>("button")].map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    });
+    return {
+      width: innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      cardRight: cardRect.right,
+      nameRight: name.getBoundingClientRect().right,
+      columns: getComputedStyle(card).gridTemplateColumns.split(" ").length,
+      buttonsFit: buttonBounds.every((button) => button.left >= cardRect.left && button.right <= cardRect.right),
+    };
+  });
+  assert.ok(narrowInspectorPreview.scrollWidth <= narrowInspectorPreview.width && narrowInspectorPreview.cardRight <= narrowInspectorPreview.width && narrowInspectorPreview.nameRight <= narrowInspectorPreview.cardRight && narrowInspectorPreview.columns === 1 && narrowInspectorPreview.buttonsFit, `narrow inspector preview wraps inside card: ${JSON.stringify(narrowInspectorPreview)}`);
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector<HTMLElement>(".editor-inspector-content")!.scrollTop = 0; });
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".google-flow-file-preview button")].find((button) => button.textContent?.includes("Gunakan Ilustrasi"))?.click());

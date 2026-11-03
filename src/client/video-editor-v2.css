@@ -264,7 +264,7 @@
 .google-flow-prompt-details { display: grid; gap: 9px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .google-flow-prompt-details>summary { color: var(--text-primary); cursor: pointer; font-size: 12px; font-weight: 700; }
 .google-flow-prompt { min-height: 118px; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.google-flow-single-import { display: grid; gap: 9px; }
+.google-flow-single-import { display: grid; gap: 9px; container-type: inline-size; }
 .google-flow-drop,.google-flow-batch-drop { display: grid; justify-items: center; gap: 7px; padding: 11px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-secondary); text-align: center; font-size: 12px; line-height: 1.45; }
 .google-flow-drop input,.google-flow-batch-drop input { width: 100%; max-width: 100%; font-size: 12px; }
 .google-flow-file-preview { min-width: 0; display: grid; grid-template-columns: minmax(64px,90px) minmax(0,1fr); gap: 11px; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
@@ -272,6 +272,11 @@
 .google-flow-file-preview>div { display: grid; align-content: start; gap: 7px; min-width: 0; }
 .google-flow-file-preview strong,.google-flow-file-preview small { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .google-flow-file-preview small { color: var(--text-secondary); font-size: 12px; }
+.google-flow-file-preview .full-button { min-width: 0; max-width: 100%; white-space: normal; line-height: 1.35; }
+@container (max-width: 340px) {
+  .google-flow-file-preview { grid-template-columns: minmax(0,1fr); }
+  .google-flow-file-preview img,.google-flow-file-preview video { width: min(100%,180px); max-height: 220px; justify-self: center; }
+}
 .google-flow-project-tools { padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .google-flow-project-tools>summary,.google-flow-style-lock>summary { cursor: pointer; color: var(--text-primary); font-size: 12px; font-weight: 700; }
 .google-flow-project-actions { margin-top: 12px; }
@@ -335,8 +340,6 @@
   .editor-outro-trim { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .editor-video-settings { max-height: 42vh; }
   .google-flow-style-fields { grid-template-columns: minmax(0,1fr); }
-  .google-flow-file-preview { grid-template-columns: minmax(0,1fr); }
-  .google-flow-file-preview img,.google-flow-file-preview video { width: min(100%,180px); max-height: 220px; justify-self: center; }
   .google-flow-batch-dialog { width: calc(100vw - 16px); max-height: 92dvh; padding: 12px; }
   .google-flow-batch-dialog>header { align-items: flex-start; }
   .google-flow-batch-dialog>header h3 { font-size: 17px; }

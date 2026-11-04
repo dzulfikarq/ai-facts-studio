@@ -13,7 +13,6 @@ export default defineConfig(({ mode }) => {
       host,
       port: vitePort,
       strictPort: true,
-      allowedHosts: ["factstudio.me"],
       proxy: {
         "/api": {
           target: `http://${targetHost}:${apiPort}`,
@@ -23,7 +22,6 @@ export default defineConfig(({ mode }) => {
         },
         "/audio": { target: `http://${targetHost}:${apiPort}` },
         "/visual-assets": { target: `http://${targetHost}:${apiPort}` },
-        "/scene-media": { target: `http://${targetHost}:${apiPort}` },
         "/outros": { target: `http://${targetHost}:${apiPort}` },
       },
     },

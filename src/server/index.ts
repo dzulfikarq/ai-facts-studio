@@ -1244,14 +1244,7 @@ const sameOriginRequest = (request: express.Request, response: express.Response)
     && originPort === frontendPort
     && requestHost === `${backendAuthorityHost}:${backendPort}`.toLowerCase();
   const sameHost = parsedOrigin.host.toLowerCase() === requestHost;
-  const localOriginHost = ["127.0.0.1", "::1", "localhost"].includes(originHost);
-  const factstudioOrigin = parsedOrigin.protocol === "http:"
-    && parsedOrigin.host.toLowerCase() === "factstudio.me"
-    && requestHost === "factstudio.me";
-  if (!["http:", "https:"].includes(parsedOrigin.protocol)
-    || (!localOriginHost && !factstudioOrigin)
-    || (localOriginHost && !sameHost && !viteProxyRequest)
-    || (factstudioOrigin && !sameHost)) {
+  if (!["http:", "https:"].includes(parsedOrigin.protocol) || !["127.0.0.1", "::1", "localhost"].includes(originHost) || (!sameHost && !viteProxyRequest)) {
     apiError(response, 403, "Request AI harus berasal dari origin aplikasi lokal.", { code: "invalid-origin" });
     return false;
   }

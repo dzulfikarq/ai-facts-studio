@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -149,6 +150,23 @@ try {
   assert.equal(missingOrigin.status, 403, "model-trigger endpoint requires same-origin request");
   const crossOrigin = await fetch(`${baseUrl}/api/ai-generation`, { method: "POST", headers: { "content-type": "application/json", origin: "https://attacker.example" }, body: JSON.stringify(developmentRequest) });
   assert.equal(crossOrigin.status, 403, "cross-origin model trigger is rejected");
+  const postAsHost = (host: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const request = httpRequest(new URL("/api/ai-generation", baseUrl), {
+      method: "POST", headers: { "content-type": "application/json", host, origin: "http://factstudio.me" },
+    }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => { body += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+    });
+    request.on("error", reject);
+    request.end(JSON.stringify(developmentRequest));
+  });
+  const factstudioOrigin = await postAsHost("factstudio.me");
+  assert.equal(factstudioOrigin.status, 503, "loopback request with matching factstudio.me Host/Origin passes origin guard and reaches OpenCode provider gate");
+  assert.equal(JSON.parse(factstudioOrigin.body).code, "opencode-unavailable");
+  const mismatchedFactstudioHost = await postAsHost("other.local");
+  assert.equal(mismatchedFactstudioHost.status, 403, "factstudio.me Origin requires matching Host");
   const unproxiedFrontendOrigin = await fetch(`${baseUrl}/api/ai-generation`, { method: "POST", headers: { "content-type": "application/json", origin: viteUrl }, body: JSON.stringify(developmentRequest) });
   assert.equal(unproxiedFrontendOrigin.status, 403, "frontend-port Origin is rejected when request did not pass through trusted Vite proxy");
   const proxiedCrossOrigin = await fetch(`${viteUrl}/api/ai-generation`, { method: "POST", headers: { "content-type": "application/json", origin: "https://attacker.example" }, body: JSON.stringify(developmentRequest) });

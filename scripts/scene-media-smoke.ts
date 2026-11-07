@@ -245,15 +245,15 @@ try {
   await page.setViewport({ width: 320, height: 900, deviceScaleFactor: 1 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Create Outro controls fit 320px viewport");
 
-  async function uploadMedia(sceneId: string, filePath: string, mimeType: string) {
+  async function uploadMedia(sceneId: string, filePath: string, mimeType: string, fileName = path.basename(filePath)) {
     const form = new FormData();
-    form.append("media", new Blob([await readFile(filePath)], { type: mimeType }), path.basename(filePath));
+    form.append("media", new Blob([await readFile(filePath)], { type: mimeType }), fileName);
     const result = await json<{ media: any }>(await fetch(`${apiUrl}/api/projects/${created.id}/scenes/${encodeURIComponent(sceneId)}/media`, { method: "POST", body: form }));
     mediaFiles.push(result.media.file, result.media.posterFile);
     return result.media;
   }
 
-  const mp4Media = await uploadMedia(sceneIds[0]!, mp4Path, "video/mp4");
+  const mp4Media = await uploadMedia(sceneIds[0]!, mp4Path, "video/mp4", "Venus_rotation_and_orbit_comparison_030570aa.mp4");
   const gifMedia = await uploadMedia(sceneIds[1]!, gifPath, "image/gif");
   assert.equal(mp4Media.audioCodec, "aac", "MP4 audio stream is normalized to AAC");
   assert.equal(mp4Media.audioEnabled, false, "imported clip audio defaults off");
@@ -491,6 +491,16 @@ try {
     trimIn: Number(document.querySelectorAll<HTMLInputElement>(".editor-scene-media-controls input[type=number]")[0]?.value),
     trimOut: Number(document.querySelectorAll<HTMLInputElement>(".editor-scene-media-controls input[type=number]")[1]?.value),
   })), { trimIn: 0.1, trimOut: savedMedia.trimOutSec }, "clip trim survives editor reload");
+  await page.setViewport({ width: 401, height: 768, deviceScaleFactor: 1 });
+  await page.evaluate(() => { const content = document.querySelector<HTMLElement>(".editor-inspector-content"); if (content) content.scrollTop = 0; });
+  const mobileClipLayout = await page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>(".editor-inspector-content")!;
+    const info = document.querySelector<HTMLElement>(".editor-scene-media-controls .editor-info-box")!;
+    return { viewport: innerWidth, page: document.documentElement.scrollWidth, contentWidth: content.clientWidth, contentScrollWidth: content.scrollWidth, infoWidth: info.clientWidth, infoScrollWidth: info.scrollWidth };
+  });
+  assert.ok(mobileClipLayout.page <= mobileClipLayout.viewport + 1 && mobileClipLayout.contentScrollWidth <= mobileClipLayout.contentWidth + 1 && mobileClipLayout.infoScrollWidth <= mobileClipLayout.infoWidth + 1, `Clip inspector wraps long filenames without horizontal overflow at 401px: ${JSON.stringify(mobileClipLayout)}`);
+  await captureSettingsViewport("scene-media-clip-mobile.png");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 
   await page.goto({ url: visualUrl, timeout: 30_000 });
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2"))), "visual media workspace reload");

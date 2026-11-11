@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CircleAlert, Clock3, Film, House, Info, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
+import { CircleAlert, Clock3, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -21,7 +21,8 @@ import type { AiVectorIllustration } from "../domain/ai-vector-illustration";
 import type { VisualPreparationJob } from "../domain/visual-preparation";
 import type { MotionPreparationJob } from "../domain/motion-preparation";
 import { planSceneMotion, type MotionIntensity } from "../domain/motion-director";
-import { durationInFrames, setSceneDuration } from "../domain/timeline";
+import { appendResearchScene, deleteResearchScene, durationInFrames, setSceneDuration } from "../domain/timeline";
+import { defaultMotionPlan, defaultVisualComposition } from "../domain/visual-defaults";
 import { narrationScript } from "../domain/voice-timing";
 import { seedVolcanoVisualSample } from "../domain/volcano-visual-sample";
 import { previewInputProps } from "../video/video";
@@ -255,6 +256,7 @@ function App() {
   };
   const stepStatuses = workflowStatuses(workflowSignals);
   const renderMode = aiGenerationSettings?.mode ?? status?.generationMode ?? null;
+  const sceneEditingLocked = busy || ttsBusy || ttsLoading || project?.visualPreparation?.status === "running" || project?.motionPreparation?.status === "running";
 
   function commitRoute(next: AppRoute, mode: "push" | "replace" = "push") {
     const href = appRouteHref(next);
@@ -805,6 +807,66 @@ function App() {
         },
       };
     });
+  }
+
+  function updateResearchSceneStructure(nextResearch: ResearchPackage) {
+    if (!project) return;
+    const storyboard = buildVisualStoryboard(nextResearch, project.visualStoryboard);
+    updateResearch(() => applyVisualStoryboard(nextResearch, storyboard));
+    setProject((current) => current ? { ...current, visualStoryboard: storyboard } : current);
+  }
+
+  function addResearchScene() {
+    if (!project || !research || sceneEditingLocked) return;
+    const id = `scene-${crypto.randomUUID()}`;
+    const templateId = selectedScene?.templateId ?? "infographic";
+    try {
+      const nextResearch = appendResearchScene(research, {
+        id,
+        narrationText: "Tulis narasi untuk scene ini.",
+        onScreenText: "Scene baru",
+        templateId,
+        visualDescription: "",
+        motionCues: ["cut"],
+        sfxCues: [],
+        referenceIds: [],
+        visualComposition: visualCompositionSchema.parse(defaultVisualComposition(templateId)),
+        motionPlan: defaultMotionPlan(["cut"]),
+        motionActions: [],
+      });
+      updateResearchSceneStructure(nextResearch);
+      selectScene(id);
+      setMessage("Scene ditambahkan. Lengkapi teks dan narasi, lalu simpan storyboard.");
+      requestAnimationFrame(() => [...document.querySelectorAll<HTMLButtonElement>(".scene-row")].find((button) => button.dataset.sceneId === id)?.focus());
+    } catch (error) { setMessage(friendlyError(error)); }
+  }
+
+  async function removeResearchScene(sceneId: string) {
+    if (!project || !research || sceneEditingLocked) return;
+    const scene = research.scenes.find((item) => item.id === sceneId);
+    if (!scene) return;
+    const audioNote = project.audio?.source === "tts"
+      ? " Audio TTS tidak diubah; narasi berubah sehingga voice-over perlu dibuat ulang sebelum render."
+      : project.audio ? " Audio upload tidak diubah; periksa ulang timing dan sinkronisasinya." : project.pendingTts
+        ? " Kandidat TTS akan dilepas saat storyboard disimpan." : "";
+    const confirmed = await askConfirmation({
+      title: "Hapus scene dari storyboard?",
+      message: `“${scene.onScreenText || scene.id}” akan dihapus. Timing scene setelahnya maju mengikuti durasi scene ini.${audioNote}`,
+      confirmLabel: "Hapus scene",
+      cancelLabel: "Pertahankan scene",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    try {
+      const removedIndex = research.scenes.findIndex((item) => item.id === sceneId);
+      const nextResearch = deleteResearchScene(research, sceneId);
+      const nextSceneId = nextResearch.scenes[Math.min(removedIndex, nextResearch.scenes.length - 1)]!.id;
+      updateResearchSceneStructure(nextResearch);
+      setSceneMediaErrors((current) => { const next = { ...current }; delete next[sceneId]; return next; });
+      selectScene(nextSceneId);
+      setMessage("Scene dihapus. Simpan storyboard untuk menerapkan perubahan.");
+      requestAnimationFrame(() => [...document.querySelectorAll<HTMLButtonElement>(".scene-row")].find((button) => button.dataset.sceneId === nextSceneId)?.focus());
+    } catch (error) { setMessage(friendlyError(error)); }
   }
 
   function updateVisualScene(sceneId: string, change: Partial<VisualStoryboardScene>) {
@@ -2158,13 +2220,13 @@ function App() {
           }}>Unduh backup project</button></div> : <>
           {activeStep === "materials" && <div className="workspace-step-content materials-content">
             <div className="story-column">
-              <div className="section-title"><div><h2>Storyboard</h2><p>Pilih scene untuk edit teks, narasi, timing, dan sumber.</p></div><span className="count-chip">{research.scenes.length} SCENES</span></div>
+              <div className="section-title"><div><h2>Storyboard</h2><p>Pilih scene untuk edit teks, narasi, timing, dan sumber.</p></div><div className="storyboard-actions"><span className="count-chip">{research.scenes.length} SCENES</span><button type="button" className="button button-light" onClick={addResearchScene} disabled={sceneEditingLocked || research.scenes.length >= 30} title={research.scenes.length >= 30 ? "Maksimal 30 scene" : undefined}><Plus size={16} aria-hidden="true"/>Tambah scene</button></div></div>
               <div className="scene-list">
-                 {research.scenes.map((scene, index) => <button type="button" key={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => selectScene(scene.id)}>
-                  <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
-                </button>)}
-              </div>
-              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} />}
+                 {research.scenes.map((scene, index) => <button type="button" key={scene.id} data-scene-id={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => selectScene(scene.id)}>
+                   <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
+                 </button>)}
+               </div>
+              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} onDelete={() => void removeResearchScene(selectedScene.id)} deleteDisabled={sceneEditingLocked || research.scenes.length <= 1} />}
             </div>
             <aside className="materials-aside">
               <div className="project-details-card">
@@ -2806,7 +2868,7 @@ function UploadPanel({ project, busy, onUpload, onRemove }: { project: Project; 
   </div>;
 }
 
-function SceneEditor({ scene, references, onChange }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void }) {
+function SceneEditor({ scene, references, onChange, onDelete, deleteDisabled }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void; onDelete: () => void; deleteDisabled: boolean }) {
   const [compositionDraft, setCompositionDraft] = useState(JSON.stringify(scene.visualComposition, null, 2));
   const [compositionError, setCompositionError] = useState("");
 
@@ -2836,7 +2898,7 @@ function SceneEditor({ scene, references, onChange }: { scene: Scene; references
   }
 
   return <div className="scene-editor">
-    <div className="scene-editor-title"><div><span className="eyebrow">EDIT SCENE</span><strong>{scene.id}</strong></div><span className="template-badge">{scene.templateId}</span></div>
+    <div className="scene-editor-title"><div><span className="eyebrow">EDIT SCENE</span><strong>{scene.id}</strong></div><div className="scene-editor-actions"><span className="template-badge">{scene.templateId}</span><button type="button" className="button button-destructive" onClick={onDelete} disabled={deleteDisabled} aria-label={`Hapus scene ${scene.onScreenText || scene.id}`} title={deleteDisabled ? "Storyboard harus memiliki minimal satu scene" : undefined}><Trash2 size={16} aria-hidden="true"/>Hapus scene</button></div></div>
     <section className="scene-editor-section basic-content-section"><div className="editor-section-heading"><h3>Basic content</h3><p>Teks yang tampil dan dibacakan pada scene ini.</p></div>
       <label><span>On-screen text</span><input maxLength={120} placeholder="Tulis teks utama scene" value={scene.onScreenText} onChange={(event) => changeOnScreenText(event.target.value)} /></label>
       <label><span>Narration / caption</span><textarea rows={3} maxLength={2000} placeholder="Tulis narasi untuk scene ini" value={scene.narrationText} onChange={(event) => changeNarration(event.target.value)} /></label>

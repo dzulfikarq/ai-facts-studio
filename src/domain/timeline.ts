@@ -33,6 +33,40 @@ export function setSceneDuration(research: ResearchPackage, sceneId: string, dur
   return { ...research, targetDurationSec: Math.max(1, Math.ceil(lastEnd)), scenes };
 }
 
+export function appendResearchScene(research: ResearchPackage, scene: Omit<Scene, "order" | "startSec" | "endSec">): ResearchPackage {
+  if (research.scenes.length >= 30) throw new Error("Storyboard maksimal 30 scene.");
+  if (research.scenes.some((item) => item.id === scene.id)) throw new Error("ID scene harus unik.");
+  const last = research.scenes.at(-1);
+  if (!last) throw new Error("Storyboard harus memiliki minimal satu scene.");
+  const startSec = last.endSec;
+  const durationSec = Math.min(5, Math.round((120 - startSec) * 1000) / 1000);
+  if (durationSec < 0.1) throw new Error("Tidak ada ruang durasi untuk scene baru; batas video 120 detik.");
+  const endSec = Math.round((startSec + durationSec) * 1000) / 1000;
+  return {
+    ...research,
+    targetDurationSec: Math.max(research.targetDurationSec, Math.ceil(endSec)),
+    scenes: [...research.scenes, { ...scene, order: last.order + 1, startSec, endSec }],
+  };
+}
+
+export function deleteResearchScene(research: ResearchPackage, sceneId: string): ResearchPackage {
+  if (research.scenes.length <= 1) throw new Error("Storyboard harus memiliki minimal satu scene.");
+  const removedIndex = research.scenes.findIndex((scene) => scene.id === sceneId);
+  if (removedIndex < 0) throw new Error(`Scene ${sceneId} tidak ditemukan.`);
+  const removed = research.scenes[removedIndex]!;
+  const removedDuration = Math.round((removed.endSec - removed.startSec) * 1000) / 1000;
+  const scenes = research.scenes.filter((scene) => scene.id !== sceneId).map((scene, index) => {
+    if (index < removedIndex) return { ...scene, order: index + 1 };
+    return {
+      ...scene,
+      order: index + 1,
+      startSec: Math.round((scene.startSec - removedDuration) * 1000) / 1000,
+      endSec: Math.round((scene.endSec - removedDuration) * 1000) / 1000,
+    };
+  });
+  return { ...research, targetDurationSec: Math.max(1, Math.ceil(scenes.at(-1)!.endSec)), scenes };
+}
+
 export function canStartNewJob(createdAt: string[], nowMs: number, limit = 1) {
   const cutoff = nowMs - 24 * 60 * 60 * 1000;
   const recent = createdAt.map((value) => Date.parse(value)).filter((value) => Number.isFinite(value) && value > cutoff);

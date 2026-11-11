@@ -68,7 +68,10 @@ let viteServer: ChildProcess | undefined;
 let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
 
 try {
-  await waitFor(async () => { try { return (await fetch(`${apiUrl}/api/status`)).ok; } catch { return false; } }, "API startup");
+  await waitFor(async () => {
+    if (apiServer.exitCode !== null) throw new Error(`API exited ${apiServer.exitCode}; recent logs:\n${apiLogs.slice(-20).join("\n")}`);
+    try { return (await fetch(`${apiUrl}/api/status`)).ok; } catch { return false; }
+  }, "API startup", 150);
   viteServer = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
     cwd: root,
     env: { ...process.env, HOST: "127.0.0.1", PORT: String(apiPort), VITE_PORT: String(vitePort) },
@@ -251,7 +254,7 @@ try {
   projectIds.push(generatedSmokeProjects[0]!.id);
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-icon[aria-label="Pengaturan"]')?.click());
-  await waitFor(() => page.evaluate(() => location.pathname === "/settings" && document.querySelector(".ai-generation-settings") !== null), "Settings route");
+  await waitFor(() => page.evaluate(() => location.pathname === "/settings" && document.querySelector(".settings-page") !== null), "Settings route");
   await captureViewport("settings-light-desktop.png");
   await assertResponsiveNoOverflow("Settings");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
@@ -304,6 +307,48 @@ try {
   await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId, mountainProject.visualStoryboard.scenes[0].sceneId), "restore scene one for editor checks");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-step-id="materials"]')?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".workflow-stepper") && document.querySelector(".scene-editor"))), "Materials storyboard opens separately");
+  const storyboardViewportWidths = [1440, 1280, 1024, 768, 390, 360, 320];
+  for (const width of storyboardViewportWidths) {
+    await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const metrics = await page.evaluate(() => ({ width: innerWidth, page: document.documentElement.scrollWidth, addRight: document.querySelector<HTMLButtonElement>(".storyboard-actions button")?.getBoundingClientRect().right ?? Infinity, deleteRight: document.querySelector<HTMLButtonElement>(".scene-editor-actions button")?.getBoundingClientRect().right ?? Infinity }));
+    assert.ok(metrics.page <= metrics.width && metrics.addRight <= metrics.width + 1 && metrics.deleteRight <= metrics.width + 1, `Storyboard fits ${width}px viewport: ${JSON.stringify(metrics)}`);
+  }
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  const initialMaterialSceneIds = mountainProject.researchPackage.scenes.map((scene: { id: string }) => scene.id);
+  await clickButton(".storyboard-actions button", "add scene");
+  await waitFor(() => page.evaluate((count) => document.querySelectorAll(".scene-row").length === count + 1, initialMaterialSceneIds.length), "new storyboard scene appears");
+  const addedMaterialSceneId = await page.evaluate(() => document.querySelector<HTMLButtonElement>(".scene-row.chosen")?.dataset.sceneId ?? "");
+  assert.ok(addedMaterialSceneId && !initialMaterialSceneIds.includes(addedMaterialSceneId), "new scene gets unique stable ID and selection");
+  assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), addedMaterialSceneId, "adding scene updates URL-backed selection");
+  await waitFor(() => page.evaluate((sceneId) => document.activeElement === [...document.querySelectorAll<HTMLButtonElement>(".scene-row")].find((button) => button.dataset.sceneId === sceneId), addedMaterialSceneId), "new scene receives keyboard focus");
+  for (const width of storyboardViewportWidths) {
+    await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const metrics = await page.evaluate(() => ({ width: innerWidth, page: document.documentElement.scrollWidth, addRight: document.querySelector<HTMLButtonElement>(".storyboard-actions button")?.getBoundingClientRect().right ?? Infinity, deleteRight: document.querySelector<HTMLButtonElement>(".scene-editor-actions button")?.getBoundingClientRect().right ?? Infinity }));
+    assert.ok(metrics.page <= metrics.width && metrics.addRight <= metrics.width + 1 && metrics.deleteRight <= metrics.width + 1, `Storyboard with added scene fits ${width}px viewport: ${JSON.stringify(metrics)}`);
+  }
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await clickButton('button[aria-label="Simpan perubahan"]', "save storyboard with added scene");
+  await waitFor(async () => (await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json())).researchPackage.scenes.length === initialMaterialSceneIds.length + 1, "added scene persists to project");
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".scene-editor-actions button")?.disabled === false), "scene actions unlock after save");
+  await clickButton(".scene-editor-actions button", "delete selected scene");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "delete scene requires confirmation");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-cancel')?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector('[role="alertdialog"]') === null), "cancel closes delete confirmation");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".scene-row").length), initialMaterialSceneIds.length + 1, "cancelled scene deletion preserves storyboard");
+  await clickButton(".scene-editor-actions button", "confirmable delete scene");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector('[role="alertdialog"] .confirm-submit'))), "delete confirmation reopens");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[role="alertdialog"] .confirm-submit')?.click());
+  await waitFor(() => page.evaluate((count) => document.querySelectorAll(".scene-row").length === count, initialMaterialSceneIds.length), "confirmed deletion removes scene");
+  assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("scene")), initialMaterialSceneIds.at(-1), "deleting selected scene selects and routes to adjacent scene");
+  await waitFor(() => page.evaluate((sceneId) => document.activeElement === [...document.querySelectorAll<HTMLButtonElement>(".scene-row")].find((button) => button.dataset.sceneId === sceneId), initialMaterialSceneIds.at(-1)), "adjacent scene receives keyboard focus after deletion");
+  await clickButton('button[aria-label="Simpan perubahan"]', "save storyboard after deletion");
+  await waitFor(async () => {
+    const savedProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+    return JSON.stringify(savedProject.researchPackage.scenes.map((scene: { id: string }) => scene.id)) === JSON.stringify(initialMaterialSceneIds);
+  }, "deleted scene stays removed after save");
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".scene-editor-actions button")?.disabled === false), "scene actions unlock after delete save");
   await page.evaluate(() => document.querySelector<HTMLDetailsElement>(".advanced-editor summary")?.click());
   const materialsMotionControls = await page.evaluate(() => ({
     motionTab: [...document.querySelectorAll(".workflow-stepper button")].some((button) => button.textContent?.trim() === "Gerak"),

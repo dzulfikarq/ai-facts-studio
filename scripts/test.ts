@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { isAnimatedMediaFile, sceneMediaSchema } from "../src/domain/scene-media";
-import { canStartNewJob, durationInFrames, sceneTimes, setSceneDuration, timelineDuration } from "../src/domain/timeline";
+import { appendResearchScene, canStartNewJob, deleteResearchScene, durationInFrames, sceneTimes, setSceneDuration, timelineDuration } from "../src/domain/timeline";
 import { outroSelectionSchema } from "../src/domain/outro";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
@@ -1248,6 +1248,19 @@ const manualTimeline = setSceneDuration(mountain, mountain.scenes[0]!.id, mounta
 assert.equal(manualTimeline.scenes[1]!.startSec, mountain.scenes[1]!.startSec + 1, "manual scene resize shifts following scenes without overlap");
 assert.equal(manualTimeline.scenes.at(-1)!.endSec, mountain.scenes.at(-1)!.endSec + 1, "manual scene resize preserves downstream durations");
 assert.throws(() => setSceneDuration(mountain, "missing-scene", 2), /tidak ditemukan/i);
+const appendedSceneInput = { ...mountain.scenes[0]!, id: "scene-added" };
+const appendedScene = appendResearchScene(mountain, appendedSceneInput);
+assert.deepEqual(appendedScene.scenes.at(-1), { ...mountain.scenes[0]!, id: "scene-added", order: mountain.scenes.at(-1)!.order + 1, startSec: mountain.scenes.at(-1)!.endSec, endSec: mountain.scenes.at(-1)!.endSec + 5 }, "adding scene appends stable content within 120-second limit");
+assert.equal(parseResearchPackage(appendedScene).success, true, "appended scene remains a valid Research Package");
+assert.throws(() => appendResearchScene(mountain, { ...appendedSceneInput, id: mountain.scenes[0]!.id }), /unik/i, "new scene ID must not collide with existing scene");
+const fullDurationMountain = { ...mountain, targetDurationSec: 120, scenes: mountain.scenes.map((scene, index) => index === mountain.scenes.length - 1 ? { ...scene, endSec: 120 } : scene) };
+assert.throws(() => appendResearchScene(fullDurationMountain, appendedSceneInput), /batas video/i, "adding scene respects 120-second cap");
+const deletedScene = deleteResearchScene(mountain, mountain.scenes[1]!.id);
+assert.equal(deletedScene.scenes.some((scene) => scene.id === mountain.scenes[1]!.id), false, "deleting scene removes only selected stable ID");
+assert.equal(deletedScene.scenes[1]!.startSec, mountain.scenes[2]!.startSec - (mountain.scenes[1]!.endSec - mountain.scenes[1]!.startSec), "deleting scene closes its time while preserving later scene duration");
+assert.deepEqual(deletedScene.scenes.map((scene) => scene.order), deletedScene.scenes.map((_, index) => index + 1), "deleting scene renumbers display order");
+assert.equal(parseResearchPackage(deletedScene).success, true, "deleted-scene timeline remains a valid Research Package");
+assert.throws(() => deleteResearchScene({ ...mountain, scenes: [mountain.scenes[0]!] }, mountain.scenes[0]!.id), /minimal satu scene/i);
 
 const script = narrationScript(mountain);
 assert.equal(script, mountain.scenes.map((scene) => scene.narrationText.trim()).join("\n\n"));

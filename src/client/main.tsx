@@ -2811,17 +2811,17 @@ function TtsPanel({ project, script, voices, loading, busy, saved, locale, gende
   const visibleVoices = voices?.voices.filter((voice) => gender === "All" || voice.gender === gender) ?? [];
   const selectedVoice = voices?.voices.find((voice) => voice.id === voiceId);
   return <div className="tts-panel">
-    <div className="tts-panel-heading"><div className="audio-icon">✦</div><div><strong>AI Voice Generator</strong><small>{voices?.providerName ?? "Google Gemini TTS"} · {voices?.model ?? "gemini-3.8-flash-lite-tts"} · narrationText tiap scene</small></div></div>
+    <div className="tts-panel-heading"><div className="audio-icon"><Sparkles size={19} aria-hidden="true" /></div><div className="tts-panel-heading-copy"><strong>AI Voice</strong><span>Gabungkan narrationText tiap scene, lalu dengarkan preview sebelum disetujui.</span><small>{voices?.providerName ?? "Google Gemini TTS"} · {voices?.model ?? "gemini-3.8-flash-lite-tts"}</small></div></div>
     {!voices && !loading && <div className="tts-consent-note">Voice catalog belum dimuat. Audio aktif tetap bisa dipakai tanpa synthesis; pilih Muat daftar Voice hanya jika ingin membuat/mengubah narasi.</div>}
     {voices && !voices.configured && !loading && <div className="tts-config-notice"><strong>Gemini Free Tier belum dibuka</strong><span>Set <code>GEMINI_API_KEY</code> dan <code>GEMINI_TTS_FREE_TIER_ONLY=true</code> setelah pastikan Google project tidak menautkan billing. Model berbayar tidak akan dipakai sebagai fallback.</span><a href="/api/docs/tts" target="_blank" rel="noreferrer">Buka panduan konfigurasi ↗</a></div>}
     {voices?.configured && <div className="tts-consent-note">Test Voice mengirim contoh singkat; naskah storyboard dikirim hanya setelah Preview Narasi Lengkap. Gemini Free Tier dapat memakai input/output untuk peningkatan produk. Pastikan project tetap tier Free. <a href="https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash-lite-tts" target="_blank" rel="noreferrer">Kuota & harga ↗</a></div>}
     {voices?.message && <div className="tts-error">{voices.message}</div>}
     {voices?.catalogSource === "fallback" && <div className="tts-consent-note tts-fallback-warning" role="status">{voices.catalogWarning} Gender opsional. Generate tetap memvalidasi model dan dapat gagal bila project tidak menyediakan voice.</div>}
     <div className="tts-fields">
-      <label>Bahasa<select aria-label="Bahasa voice" value={locale} onChange={(event) => onLocale(event.target.value)} disabled={loading || busy}>
+      <label className="tts-language-field">Bahasa<select aria-label="Bahasa voice" value={locale} onChange={(event) => onLocale(event.target.value)} disabled={loading || busy}>
         {(voices?.locales.length ? voices.locales : [{ locale: "id-ID", localeName: "Bahasa Indonesia" }]).map((item) => <option key={item.locale} value={item.locale}>{item.localeName} ({item.locale})</option>)}
       </select></label>
-      <div className="tts-field-row">
+      <div className="tts-field-row tts-voice-fields">
         <label>Gender filter<select aria-label="Filter gender voice (opsional)" value={gender} onChange={(event) => onGender(event.target.value)} disabled={loading || busy}>
           {availableGenders.map((value) => <option key={value} value={value}>{value === "All" ? "Semua (opsional)" : value === "Unknown" ? "Tidak diketahui" : value}</option>)}
         </select></label>
@@ -2829,10 +2829,10 @@ function TtsPanel({ project, script, voices, loading, busy, saved, locale, gende
           {visibleVoices.length ? visibleVoices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name} · {voice.gender}</option>) : <option value="">{loading ? "Memuat voice…" : "Katalog voice kosong"}</option>}
         </select></label>
       </div>
-      <label>Gaya bicara<select aria-label="Gaya bicara AI" value={style} onChange={(event) => onStyle(event.target.value)} disabled={busy}>
+      <label className="tts-style-field">Gaya bicara<select aria-label="Gaya bicara AI" value={style} onChange={(event) => onStyle(event.target.value)} disabled={busy}>
         <option value="documentary">Dokumenter informatif</option><option value="neutral">Netral</option><option value="warm">Hangat</option><option value="energetic">Energik</option><option value="calm">Tenang</option>
       </select></label>
-      <label className="rate-control">Speaking pace · arahan prompt <strong>{rate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={rate} onChange={(event) => onRate(Number(event.target.value))} disabled={busy} /><span><small>Lebih lambat</small><small>Lebih cepat · perkiraan</small></span></label>
+      <label className="rate-control tts-rate-field">Speaking pace · arahan prompt <strong>{rate.toFixed(1)}×</strong><input type="range" min="0.7" max="1.3" step="0.1" value={rate} onChange={(event) => onRate(Number(event.target.value))} disabled={busy} /><span><small>Lebih lambat</small><small>Lebih cepat · perkiraan</small></span></label>
     </div>
     <div className="tts-actions tts-test-actions"><button className="button button-light" onClick={onLoadVoices} disabled={busy || loading}>{loading ? "Memuat daftar voice…" : voices ? "Muat ulang daftar voice" : "Muat daftar voice"}</button><button className="button button-light" onClick={onTest} disabled={busy || loading || !voices?.configured || !voiceId}>Test Voice · contoh singkat</button></div>
     {testPreview && <div className="tts-audio-preview"><span>Test Voice · {testPreview.voiceName} · {testPreview.durationSec.toFixed(1)} dtk</span><audio controls preload="metadata" src={testPreview.audioUrl} aria-label="Pratinjau Test Voice" /></div>}

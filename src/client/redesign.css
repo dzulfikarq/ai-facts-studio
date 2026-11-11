@@ -682,3 +682,59 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .app-shell .confirm-error { color: var(--danger); }
 .app-shell .import-card :where(.json-editor,.visual-json-editor textarea) { background: var(--surface-muted); color: var(--text-primary); font-size: 13px; }
 :root[data-theme="dark"] .app-shell :where(.smart-asset-card,.smart-reusable-save,.smart-asset-toolbar input,.smart-asset-toolbar select,.smart-asset-filters select,.smart-asset-inline-filters select) { border-color: var(--border); background-color: var(--surface-muted); color: var(--text-primary); }
+
+.app-shell .narration-step { min-width: 0; }
+.app-shell .audio-step-intro { align-items: flex-start; flex-direction: column; gap: 4px; padding: 16px 18px; border-radius: var(--radius-md); }
+.app-shell .audio-step-intro strong { color: var(--text-primary); font-size: 14px; }
+.app-shell .audio-step-intro span { max-width: 72ch; color: var(--text-secondary); font-size: var(--font-size-meta); }
+.app-shell .audio-source-card { overflow: hidden; border-radius: var(--radius-md); }
+.app-shell .audio-source-tabs { gap: 6px; padding: 7px; }
+.app-shell .audio-source-tabs button { min-width: 0; min-height: 48px; padding: 8px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; line-height: 1.35; text-wrap: balance; }
+.app-shell .audio-source-tabs button.selected { box-shadow: var(--shadow-sm); }
+.app-shell .tts-panel,.app-shell .upload-panel { display: grid; gap: 18px; min-width: 0; padding: clamp(16px, 2.5vw, 28px); }
+.app-shell .tts-panel-heading { align-items: flex-start; gap: 14px; margin: 0; }
+.app-shell .tts-panel-heading .audio-icon { flex: none; width: 46px; height: 46px; border-radius: 14px; background: var(--primary-soft); color: var(--primary); }
+.app-shell .tts-panel-heading-copy { display: grid; gap: 3px; min-width: 0; }
+.app-shell .tts-panel-heading-copy strong { color: var(--text-primary); font-size: 18px; font-weight: 700; line-height: 1.35; }
+.app-shell .tts-panel-heading-copy span,.app-shell .tts-panel-heading-copy small { color: var(--text-secondary); font-size: var(--font-size-meta); line-height: 1.55; }
+.app-shell .tts-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "language style" "voices voices" "rate rate"; gap: 16px; min-width: 0; }
+.app-shell .tts-language-field { grid-area: language; }
+.app-shell .tts-style-field { grid-area: style; }
+.app-shell .tts-voice-fields { grid-area: voices; grid-template-columns: minmax(150px, .7fr) minmax(0, 1.3fr); gap: 14px; min-width: 0; }
+.app-shell .tts-rate-field { grid-area: rate; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-primary); }
+.app-shell .tts-fields label { color: var(--text-primary); font-size: var(--font-size-label) !important; font-weight: 600; line-height: 1.5; }
+.app-shell .tts-fields select { min-width: 0; min-height: var(--control-default); margin-top: 7px; padding-inline: 11px; border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-primary); font-size: var(--font-size-control); }
+.app-shell .tts-rate-field > strong { color: var(--primary-text); font-size: 12px; }
+.app-shell .tts-rate-field input { min-height: 0; accent-color: var(--primary); }
+.app-shell .tts-rate-field span { color: var(--text-secondary); font-size: 11px; }
+.app-shell .tts-consent-note:not(.tts-fallback-warning) { border-color: var(--border); background: var(--surface-muted); color: var(--text-secondary); }
+.app-shell .tts-consent-note a,.app-shell .tts-config-notice a { color: var(--primary-text); text-decoration: underline; text-underline-offset: 2px; }
+.app-shell .tts-config-notice,.app-shell .tts-consent-note,.app-shell .tts-stale-warning { margin: 0; padding: 13px 15px; border-radius: var(--radius-sm); font-size: var(--font-size-meta); line-height: 1.55; overflow-wrap: anywhere; }
+.app-shell .tts-actions { gap: 10px; margin: 0; }
+.app-shell .tts-actions .button { min-width: 0; min-height: 48px; height: auto; padding: 10px 14px; font-size: 13px; line-height: 1.4; white-space: normal; }
+.app-shell .tts-test-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.app-shell .tts-test-actions .button { width: auto; }
+.app-shell .tts-audio-preview { gap: 10px 14px; margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); }
+.app-shell .tts-audio-preview > span,.app-shell .pending-tts-preview > strong { color: var(--text-primary); font-size: var(--font-size-meta); line-height: 1.5; }
+.app-shell .tts-audio-preview audio { min-width: 0; height: 40px; }
+.app-shell .pending-tts-preview { padding: 16px; }
+.app-shell .pending-tts-preview .button { margin-top: 0; }
+.app-shell .tts-script { margin: 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.app-shell .tts-script summary { color: var(--text-primary); font-size: var(--font-size-meta); line-height: 1.5; }
+.app-shell .tts-script textarea { min-height: 112px; padding: 11px 12px; border-color: var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-primary); font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.app-shell .tts-limit-note,.app-shell .tts-error,.app-shell .tts-success { margin: 0; font-size: var(--font-size-meta); line-height: 1.55; }
+.app-shell .manual-narration-choice { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
+.app-shell .manual-narration-choice > div { display: grid; gap: 4px; min-width: 0; }
+.app-shell .manual-narration-choice strong { color: var(--text-primary); font-size: 14px; }
+.app-shell .manual-narration-choice span { color: var(--text-secondary); font-size: var(--font-size-meta); line-height: 1.55; }
+.app-shell .manual-narration-choice .button { flex: none; min-height: 44px; }
+
+@media (max-width: 560px) {
+  .app-shell .audio-step-intro { padding: 14px; }
+  .app-shell .audio-source-tabs { gap: 4px; padding: 5px; }
+  .app-shell .audio-source-tabs button { padding-inline: 7px; font-size: 12px; }
+  .app-shell .tts-fields { grid-template-columns: minmax(0, 1fr); grid-template-areas: "language" "voices" "style" "rate"; gap: 14px; }
+  .app-shell .tts-voice-fields { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .app-shell .tts-test-actions { grid-template-columns: minmax(0, 1fr); }
+  .app-shell .manual-narration-choice { align-items: stretch; flex-direction: column; gap: 12px; padding: 15px; }
+}

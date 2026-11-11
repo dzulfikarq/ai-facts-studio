@@ -201,7 +201,7 @@ if (conflictingTransitions.success) {
   assert.deepEqual(conflictingTransitions.data.scenes[0]!.motionCues, ["cut"], "legacy transition normalization preserves old Cut precedence");
   assert.deepEqual(conflictingTransitions.data.scenes[0]!.motionPlan.map((plan) => plan.cue), ["cut"], "legacy motionPlan remains synchronized after transition normalization");
 }
-assert.ok(mountainStoryboard.styleLock.illustrationStyle.includes("Premium 2D"));
+assert.ok(mountainStoryboard.styleLock.illustrationStyle.includes("Modern 2D Cartoon"));
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.illustrationWorkflow === "google-flow"), "new and legacy scenes default to persisted Google Flow workflow");
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.flowVisualMode === "animated-video"), "new scenes default to Google Flow animation mode");
 const legacyFlowModes = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map(({ flowVisualMode: _mode, flowPromptMode: _promptMode, ...scene }) => scene) });
@@ -514,18 +514,26 @@ assert.equal(trustedImage.type, "image");
 if (trustedImage.type === "image") trustedImage.asset = "cloud";
 assert.notEqual(visualCompositionFrame(trustedImageComposition).scale, 1, "built-in curated image framing preserves legacy auto-fit behavior");
 const rasterPrompt = buildIllustrationPrompt({ research: seaSalt, storyboard: saltStoryboard, scene: saltStoryboard.scenes[2]! });
-assert.match(rasterPrompt, /[Pp]ortrait 9:16/);
+assert.match(rasterPrompt, /[Vv]ertical 9:16/);
 assert.match(rasterPrompt, /Narasi|Scene narration/);
-assert.match(rasterPrompt, /NEGATIVE INSTRUCTIONS: no text.*no watermark.*no collage.*no multi-panel storyboard.*no generic icon cards/s);
+assert.match(rasterPrompt, /NEGATIVE INSTRUCTIONS: Avoid 3D.*No text.*collage.*multi-panel storyboard.*generic icon cards/s);
 assert.match(rasterPrompt, /palette/);
+assert.match(rasterPrompt, /Visual style: Modern 2D cartoon educational explainer; clean outlines, soft rounded shapes/s);
+assert.match(rasterPrompt, /Animation style: Smooth 2D motion.*slight squash and stretch.*gentle secondary motion/s);
+assert.match(rasterPrompt, /Composition and camera: Vertical 9:16, mobile-first.*mostly fixed camera.*no dramatic camera rotations/s);
+assert.match(rasterPrompt, /NEGATIVE INSTRUCTIONS: Avoid 3D, photorealism, realistic textures, CGI look, cinematic realism/s);
 assert.match(rasterPrompt, /SUNGAI flows-to LAUT.*SUNGAI carries MINERAL/s, "river prompt encodes mineral flow from mountain river toward sea");
+const animatedPrompt = buildIllustrationPrompt({ research: seaSalt, storyboard: saltStoryboard, scene: saltStoryboard.scenes[2]!, mode: "animated-video" });
+assert.match(animatedPrompt, /Create one continuous animated video clip/);
+assert.match(animatedPrompt, /Primary motion: Animate/);
+assert.match(animatedPrompt, /never chaotic or overly cinematic/);
 const oversizedPreviousReference = { sceneNumber: 1, name: "Previous scene", style: mountainStoryboard.styleLock.illustrationStyle, prompt: `PREVIOUS_PROMPT_MUST_NOT_BE_COPIED ${"previous prompt content ".repeat(600)}` };
 const followupPrompt = buildIllustrationPrompt({ research: mountain, storyboard: mountainStoryboard, scene: mountainStoryboard.scenes[1]!, previousReference: oversizedPreviousReference });
 assert.ok(followupPrompt.length <= 12000, "previous Flow prompt is not recursively copied into the next scene prompt");
 assert.equal(followupPrompt.includes("PREVIOUS_PROMPT_MUST_NOT_BE_COPIED"), false, "scene reference keeps only concise style context");
 const ozonePrompt = buildIllustrationPrompt({ research: solarProtection, storyboard: solarStoryboard, scene: solarStoryboard.scenes[2]! });
 assert.match(ozonePrompt, /LAPISAN OZON filters SINAR UV/, "ozone prompt encodes UV absorption before radiation reaches Earth");
-assert.match(ozonePrompt, /Premium 2D Editorial Educational Illustration.*one connected environment/s);
+assert.match(ozonePrompt, /Modern 2D Cartoon Educational Explainer.*one connected environment/s);
 assert.match(rasterPrompt, /one finished still illustration.*one full-scene illustration/s, "Flow prompt requests exactly one illustration, not a multi-panel storyboard");
 assert.match(rasterPrompt, /scientifically incorrect scale\/relationships/);
 const mountainFlowScenes = mountainStoryboard.scenes.slice(0, 3);
@@ -554,7 +562,7 @@ const flowPack = googleFlowPromptPack(mountain.title, mountainStoryboard.styleLo
 assert.equal(flowPack.json.scenes.length, 3);
 assert.match(flowPack.markdown, /Global Style Lock/);
 assert.match(flowPack.markdown, /Stable token:/);
-assert.match(flowPack.json.scenes[0]!.prompt, /no text/);
+assert.match(flowPack.json.scenes[0]!.prompt, /no text/i);
 assert.match(flowPack.json.scenes[0]!.prompt, /berlangsung sangat lama/, "scene one prompt includes relevant project-wide geological timescale");
 assert.match(flowPack.json.scenes[2]!.prompt, /melipat dan mengangkat kerak/, "scene three prompt includes project-wide crust folding and uplift context");
 const semanticPlan = {
@@ -1392,6 +1400,10 @@ const vectorProvider: AiGenerationProvider = {
     assert.equal(request.outputFormat, "ai-vector-illustration-v1");
     assert.ok(request.responseSchema, "AI Vector request carries strict structured schema");
     assert.match(request.prompt, /Depict scene visualDescription and narration/);
+    assert.match(request.prompt, /Modern 2D cartoon educational explainer/);
+    assert.match(request.prompt, /slight squash and stretch/);
+    assert.match(request.prompt, /Avoid 3D, photorealism, realistic textures/);
+    assert.match(request.prompt, /Do not add visible text/);
     assert.match(request.prompt, /Art direction: clean-flat-2d/);
     assert.doesNotMatch(request.prompt, /white beam of sunlight entering a clearly triangular glass prism/, "generic AI Vector prompt must not force prism topic on unrelated scenes");
     return { text: JSON.stringify(aiVectorFixture), model: "selected-test-model" };

@@ -1,13 +1,13 @@
 import { z } from "zod";
 
 export const googleFlowStyleLockSchema = z.object({
-  illustrationStyle: z.string().trim().min(1).max(160).default("Premium 2D Editorial Educational Illustration"),
-  colorPalette: z.string().trim().min(1).max(500).default("Deep teal, sea-glass green, soft cream, and restrained warm amber; follow project palette."),
-  lighting: z.string().trim().min(1).max(300).default("Soft directional editorial lighting with gentle depth; keep highlights controlled."),
-  visualComplexity: z.string().trim().min(1).max(300).default("Attractive, detailed, readable illustration; clear foreground, midground, and background."),
-  outlineShapeStyle: z.string().trim().min(1).max(300).default("Cohesive hand-shaped forms, clean silhouettes, restrained consistent outlines, subtle texture."),
-  compositionGuidelines: z.string().trim().min(1).max(500).default("One full-scene portrait 9:16 composition; strong focal point; leave upper and lower safe space for separately rendered headline and subtitles."),
-  consistencyInstructions: z.string().trim().min(1).max(500).default("Keep palette, lighting, outline weight, shape language, and texture consistent across scenes. Consistency is approximate, not guaranteed."),
+  illustrationStyle: z.string().trim().min(1).max(160).default("Modern 2D Cartoon Educational Explainer"),
+  colorPalette: z.string().trim().min(1).max(500).default("Bright but balanced colors; follow the project palette consistently."),
+  lighting: z.string().trim().min(1).max(300).default("Soft flat 2D lighting with minimal shading."),
+  visualComplexity: z.string().trim().min(1).max(300).default("Simple clean backgrounds, minimal detail, clear subject, easy to understand."),
+  outlineShapeStyle: z.string().trim().min(1).max(300).default("Clean outlines, soft rounded shapes, minimal texture, consistent visual language."),
+  compositionGuidelines: z.string().trim().min(1).max(500).default("Consistent framing across scenes; preserve safe space for separately rendered headline and subtitles."),
+  consistencyInstructions: z.string().trim().min(1).max(500).default("Keep palette, outline weight, rounded shape language, and minimal shading consistent across scenes. Consistency is approximate, not guaranteed."),
   referenceAssetIds: z.array(z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp|svg)$/)).max(8).default([]),
 }).strict();
 

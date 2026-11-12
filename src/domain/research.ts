@@ -16,14 +16,15 @@ export const motionCues = motionCueIds;
 export const sfxCues = ["whoosh", "impact", "rumble", "soft-pop"] as const;
 
 const boundedText = (max: number) => z.string().trim().min(1).max(max);
-const referenceSchema = z.object({
+export const researchReferenceSchema = z.object({
   id: boundedText(100),
   title: boundedText(200),
   publisher: boundedText(120),
   url: z.string().url().max(2048).refine((value) => /^https?:\/\//i.test(value), "URL harus memakai http atau https"),
   publishedAt: z.string().date().optional(),
-  checkedAt: z.string().date(),
+  checkedAt: z.string().date().optional(),
 }).strict();
+export type ResearchReference = z.infer<typeof researchReferenceSchema>;
 
 const sceneFields = {
   id: boundedText(100),
@@ -90,7 +91,7 @@ const packageFields = {
     showBranding: z.boolean(),
     brandName: z.string().trim().max(40),
   }).strict().default({ showCategory: true, showTitle: true, showSceneLabel: true, showSubtitles: true, showProgress: true, showBranding: false, brandName: "AI FACTS STUDIO" }),
-  references: z.array(referenceSchema).max(50),
+  references: z.array(researchReferenceSchema).max(50),
 };
 
 function validateRelations(data: { references: Array<{ id: string }>; scenes: Array<{ id: string; order: number; startSec: number; endSec: number; referenceIds: string[] }>; targetDurationSec: number }, ctx: z.RefinementCtx) {

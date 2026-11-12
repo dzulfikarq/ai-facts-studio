@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CircleAlert, Clock3, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleAlert, Clock3, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
-import { categories, researchWarnings, visualPresets, type ResearchPackage, type Scene } from "../domain/research";
+import { categories, researchReferenceSchema, researchWarnings, visualPresets, type ResearchPackage, type ResearchReference, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
+import type { ManualProjectBrief } from "../domain/manual-project";
 import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, retimeVisualStoryboard, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
@@ -21,7 +22,7 @@ import type { AiVectorIllustration } from "../domain/ai-vector-illustration";
 import type { VisualPreparationJob } from "../domain/visual-preparation";
 import type { MotionPreparationJob } from "../domain/motion-preparation";
 import { planSceneMotion, type MotionIntensity } from "../domain/motion-director";
-import { appendResearchScene, deleteResearchScene, durationInFrames, setSceneDuration } from "../domain/timeline";
+import { appendResearchScene, deleteResearchScene, durationInFrames, reorderResearchScene, setSceneDuration } from "../domain/timeline";
 import { defaultMotionPlan, defaultVisualComposition } from "../domain/visual-defaults";
 import { narrationScript } from "../domain/voice-timing";
 import { seedVolcanoVisualSample } from "../domain/volcano-visual-sample";
@@ -31,6 +32,7 @@ import { LEGACY_RENDERER_VERSION, RENDERER_VERSION } from "../video/renderer-ver
 import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
 import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
+import { ManualProjectPanel } from "./ManualProjectPanel";
 import { VideoEditorV2 } from "./VideoEditorV2";
 import { OutroLibraryPanel } from "./OutroLibraryPanel";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
@@ -59,6 +61,8 @@ type Job = {
 
 type Project = {
   id: string;
+  creationMode: "manual" | "ai-generated" | "imported" | "sample" | "legacy";
+  creationBrief?: ManualProjectBrief;
   researchPackage: ResearchPackage;
   visualStoryboard: VisualStoryboard;
   visualStoryboardError?: string;
@@ -182,7 +186,7 @@ function App() {
   const view = route.view;
   const activeStep: WorkspaceStep = route.view === "workspace" ? route.step : "materials";
   const [theme, setTheme] = useThemePreference();
-  const [createMode, setCreateMode] = useState<"import" | "ai">("ai");
+  const [createMode, setCreateMode] = useState<"ai" | "manual">("ai");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
@@ -736,8 +740,17 @@ function App() {
   async function createAiProject(researchPackage: ResearchPackage, requestId: string) {
     setBusy(true);
     try {
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, creationMode: "ai-generated", ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       setCreateDraftUnsaved(false);
+      await refresh().catch(() => undefined);
+      return { id: created.id, title: created.researchPackage.title };
+    } finally { setBusy(false); }
+  }
+
+  async function createManualProject(researchPackage: ResearchPackage, requestId: string, creationBrief: ManualProjectBrief) {
+    setBusy(true);
+    try {
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, creationMode: "manual", creationBrief, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       await refresh().catch(() => undefined);
       return { id: created.id, title: created.researchPackage.title };
     } finally { setBusy(false); }
@@ -749,7 +762,7 @@ function App() {
     setBusy(true);
     try {
       const researchPackage = await api<ResearchPackage>("/api/sample?topic=volcano-formation");
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, creationMode: "sample", ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       const seeded = seedVolcanoVisualSample(created.visualStoryboard);
       const prepared = await api<Project>(`/api/projects/${created.id}`, jsonRequest("PUT", { researchPackage: created.researchPackage, visualStoryboard: seeded }));
       await refresh();
@@ -770,7 +783,7 @@ function App() {
     setBusy(true);
     try {
       const researchPackage = JSON.parse(jsonDraft) as ResearchPackage;
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, creationMode: "imported", ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       await refresh();
       await openProject(created.id, undefined, true);
     } catch (error) { setMessage(friendlyError(error)); }
@@ -809,6 +822,15 @@ function App() {
     });
   }
 
+  function updateResearchReferences(references: ResearchPackage["references"]) {
+    const validIds = new Set(references.map((reference) => reference.id));
+    updateResearch((current) => ({
+      ...current,
+      references,
+      scenes: current.scenes.map((scene) => ({ ...scene, referenceIds: scene.referenceIds.filter((id) => validIds.has(id)) })),
+    }));
+  }
+
   function updateResearchSceneStructure(nextResearch: ResearchPackage) {
     if (!project) return;
     const storyboard = buildVisualStoryboard(nextResearch, project.visualStoryboard);
@@ -838,6 +860,17 @@ function App() {
       selectScene(id);
       setMessage("Scene ditambahkan. Lengkapi teks dan narasi, lalu simpan storyboard.");
       requestAnimationFrame(() => [...document.querySelectorAll<HTMLButtonElement>(".scene-row")].find((button) => button.dataset.sceneId === id)?.focus());
+    } catch (error) { setMessage(friendlyError(error)); }
+  }
+
+  function moveResearchScene(sceneId: string, delta: -1 | 1) {
+    if (!project || !research || sceneEditingLocked) return;
+    const index = research.scenes.findIndex((scene) => scene.id === sceneId);
+    const nextIndex = index + delta;
+    if (index < 0 || nextIndex < 0 || nextIndex >= research.scenes.length) return;
+    try {
+      updateResearchSceneStructure(reorderResearchScene(research, sceneId, nextIndex));
+      setMessage("Urutan scene diperbarui. Timing dan referensi ikut bersama scene; simpan storyboard.");
     } catch (error) { setMessage(friendlyError(error)); }
   }
 
@@ -2140,12 +2173,16 @@ function App() {
 
       {view === "dashboard" && <Dashboard projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
-        <div className="page-heading"><div><div className="eyebrow">MULAI DARI RISET</div><h1>Create video</h1><p>Generate draft dari topik bebas, impor Research Package v1.0/v1.1, atau gunakan sample. Versi lama otomatis di-upgrade.</p></div>
+        <div className="page-heading"><div><div className="eyebrow">BUAT VIDEO</div><h1>Create video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung api</button>
         </div>
-        <div className="create-mode-switch" role="tablist" aria-label="Cara membuat video">
-          <button type="button" role="tab" aria-selected={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>Generate with AI</button>
-          <button type="button" role="tab" aria-selected={createMode === "import"} className={createMode === "import" ? "selected" : ""} onClick={() => setCreateMode("import")}>Import Research Package</button>
+        <div className="create-mode-switch" role="group" aria-label="Mode pembuatan project">
+          <button type="button" aria-pressed={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>
+            <strong>Generate with AI</strong><span>Riset dan storyboard draft dibuat setelah Anda klik.</span>
+          </button>
+          <button type="button" aria-pressed={createMode === "manual"} className={createMode === "manual" ? "selected" : ""} onClick={() => setCreateMode("manual")}>
+            <strong>Buat Manual</strong><span>Tanpa AI. Susun storyboard sendiri di project.</span>
+          </button>
         </div>
         <section className="create-outro-choice" aria-labelledby="create-outro-title">
           <div className="create-outro-copy"><h2 id="create-outro-title">Outro Video (Opsional)</h2><p>Default library terpilih untuk project baru. Pilih Tanpa Outro kapan saja.</p></div>
@@ -2173,7 +2210,13 @@ function App() {
           onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
           onUnsavedChange={setCreateDraftUnsaved}
         /></div>
-        {createMode === "import" && <><div className="import-card">
+        <div hidden={createMode !== "manual"}><ManualProjectPanel
+          projectBusy={busy}
+          onCreateProject={createManualProject}
+          onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
+          onUnsavedChange={setCreateDraftUnsaved}
+        /></div>
+        <details className="create-import-advanced"><summary>Advanced · Import Research Package JSON</summary><div className="create-import-content"><div className="import-card">
           <div className="import-toolbar"><div><strong>Import Research Package</strong><p>JSON tersimpan lokal. Konten dianggap data, tidak menjalankan script.</p></div>
             <label className="button button-light file-button">Pilih file JSON<input type="file" accept=".json,application/json" onChange={(event) => void importFile(event.target.files?.[0])} /></label>
           </div>
@@ -2181,7 +2224,7 @@ function App() {
           <div className="import-footer"><button className="button button-primary" disabled={busy || !jsonDraft.trim()} onClick={() => void createFromJson()}>Buat storyboard <b>→</b></button></div>
         </div>
         <div className="notice-line"><span className="notice-icon">ⓘ</span><span>Import bukan verifikasi fakta. Tinjau klaim, URL, dan timing sebelum render atau publikasi.</span></div>
-        </>}
+        </div></details>
       </section>}
 
       {view === "settings" && <SettingsPage
@@ -2221,12 +2264,18 @@ function App() {
           {activeStep === "materials" && <div className="workspace-step-content materials-content">
             <div className="story-column">
               <div className="section-title"><div><h2>Storyboard</h2><p>Pilih scene untuk edit teks, narasi, timing, dan sumber.</p></div><div className="storyboard-actions"><span className="count-chip">{research.scenes.length} SCENES</span><button type="button" className="button button-light" onClick={addResearchScene} disabled={sceneEditingLocked || research.scenes.length >= 30} title={research.scenes.length >= 30 ? "Maksimal 30 scene" : undefined}><Plus size={16} aria-hidden="true"/>Tambah scene</button></div></div>
-              <div className="scene-list">
-                 {research.scenes.map((scene, index) => <button type="button" key={scene.id} data-scene-id={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => selectScene(scene.id)}>
-                   <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1}`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
-                 </button>)}
-               </div>
-              {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} onDelete={() => void removeResearchScene(selectedScene.id)} deleteDisabled={sceneEditingLocked || research.scenes.length <= 1} />}
+               {research.scenes.length ? <div className="scene-list">
+                  {research.scenes.map((scene, index) => <div className="scene-row-group" key={scene.id}>
+                    <button type="button" data-scene-id={scene.id} className={`scene-row ${selectedScene?.id === scene.id ? "chosen" : ""}`} aria-pressed={selectedScene?.id === scene.id} onClick={() => selectScene(scene.id)}>
+                      <span className="scene-number">{String(index + 1).padStart(2, "0")}</span><span className="scene-row-copy"><strong>{scene.onScreenText || `Scene ${index + 1} · belum diisi`}</strong><small>{scene.startSec}s — {scene.endSec}s <i /> {scene.templateId.replaceAll("-", " ")}</small></span><span className="scene-chevron" aria-hidden="true">›</span>
+                    </button>
+                    <div className="scene-reorder-actions">
+                      <button type="button" className="button button-light icon-button" aria-label={`Pindahkan scene ${index + 1} ke atas`} title="Pindahkan ke atas" disabled={sceneEditingLocked || index === 0} onClick={() => moveResearchScene(scene.id, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
+                      <button type="button" className="button button-light icon-button" aria-label={`Pindahkan scene ${index + 1} ke bawah`} title="Pindahkan ke bawah" disabled={sceneEditingLocked || index === research.scenes.length - 1} onClick={() => moveResearchScene(scene.id, 1)}><ArrowDown size={16} aria-hidden="true" /></button>
+                    </div>
+                  </div>)}
+                </div> : <div className="workflow-empty"><strong>Belum ada scene</strong><p>Tambahkan scene pertama untuk mulai menyusun storyboard.</p><button type="button" className="button button-primary" onClick={addResearchScene} disabled={sceneEditingLocked}>Tambah Scene Pertama</button></div>}
+               {selectedScene && <SceneEditor key={`${project.id}:${selectedScene.id}`} scene={selectedScene} references={research.references} onChange={(change) => updateScene(selectedScene.id, change)} onDelete={() => void removeResearchScene(selectedScene.id)} deleteDisabled={sceneEditingLocked || research.scenes.length <= 1} />}
             </div>
             <aside className="materials-aside">
               <div className="project-details-card">
@@ -2237,8 +2286,9 @@ function App() {
                   <label>Durasi target<input type="number" min="1" max="120" value={research.targetDurationSec} onChange={(event) => updateResearch((current) => ({ ...current, targetDurationSec: Number(event.target.value) }))} /> <small>detik · maks 120</small></label>
                 </div>
               </div>
-              <div className="references-card"><h3>Referensi riset · {research.references.length}</h3>
-                {research.references.length ? research.references.map((reference) => <div className="reference-item" key={reference.id}><strong>{reference.title}</strong><small>{reference.publisher} · diperiksa {reference.checkedAt}</small><a href={reference.url} target="_blank" rel="noreferrer">Buka sumber ↗</a></div>) : <p className="workflow-empty">Belum ada sumber. Tambahkan lewat Research Package JSON sebelum menandai fakta sudah ditinjau.</p>}
+              {project.creationMode === "manual" && <div className="manual-project-brief"><span>ASAL PROJECT · MANUAL</span><strong>Gaya {project.creationBrief?.deliveryStyle ?? "edukatif"}</strong>{project.creationBrief?.additionalInstructions && <p>{project.creationBrief.additionalInstructions}</p>}</div>}
+              <ReferencesEditor references={research.references} onChange={updateResearchReferences} />
+              <div className="references-card">
                 <p className="source-warning">Status fakta: <b>{project.researchReviewStatus === "verified-by-author" ? "Ditinjau pengguna" : "Belum ditinjau"}</b>. Sumber dan klaim tidak diverifikasi otomatis.</p>
               </div>
               {!!researchWarnings(research).length && <div className="workflow-alert attention"><span>{researchWarnings(research).join(" ")}</span></div>}
@@ -2331,6 +2381,7 @@ function App() {
 
           {activeStep === "narration" && <div className="workspace-step-content single narration-step">
             <div className="audio-step-intro"><strong>{project.audio ? `Audio aktif · ${project.audio.source === "tts" ? project.audio.tts?.voiceName ?? "AI Voice" : project.audio.name}` : project.narrationMode === "manual" ? "Mode durasi manual aktif" : "Belum ada audio aktif"}</strong><span>Kandidat AI Voice tidak mengganti audio aktif sampai Anda menyetujuinya. Membuka langkah ini tidak menjalankan synthesis.</span></div>
+            {!narrationScript(research) && <div className="workflow-alert attention" role="status"><span>Lengkapi narasi pada setiap scene di Materi & Storyboard sebelum membuat TTS atau mengunggah audio.</span><button type="button" onClick={() => void goToStep("materials")}>Edit storyboard</button></div>}
             <section className="audio-source-card">
               <div className="audio-source-tabs" role="group" aria-label="Sumber voice-over">
                 <button type="button" aria-pressed={audioMode === "ai"} className={audioMode === "ai" ? "selected" : ""} onClick={() => { setAudioMode("ai"); setTtsMessage(""); }}>Generate dengan AI Voice</button>
@@ -2371,7 +2422,7 @@ function App() {
                 onTest={() => void testVoice()}
                 onApprove={() => void approveTts()}
                 onRemove={() => void removeAudio()}
-              /> : <UploadPanel project={project} busy={busy} onUpload={(file) => void uploadAudio(file)} onRemove={() => void removeAudio()} />}
+              /> : <UploadPanel project={project} busy={busy} canUpload={Boolean(narrationScript(research))} onUpload={(file) => void uploadAudio(file)} onRemove={() => void removeAudio()} />}
             </section>
             {!project.audio && <div className="manual-narration-choice"><div><strong>Tanpa narasi?</strong><span>Gunakan durasi manual dari storyboard dan edit timing di Video Editor. Tidak ada request TTS.</span></div><button type="button" className={`button ${project.narrationMode === "manual" ? "button-light" : "button-primary"}`} onClick={() => void chooseManualTiming()} disabled={busy || project.narrationMode === "manual"}>{project.narrationMode === "manual" ? "Durasi manual dipilih" : "Gunakan durasi manual"}</button></div>}
           </div>}
@@ -2768,7 +2819,7 @@ function Dashboard({ projects, loading, busy, onSample, onOpen, onDelete }: { pr
         <button type="button" className="project-card-open" onClick={() => onOpen(item.id)} disabled={busy} aria-label={`Buka project ${item.researchPackage.title}`}>
           <span className="project-card-art" aria-hidden="true"><Film size={26} strokeWidth={1.7} /><small>9:16 · VIDEO</small></span>
           <span className="project-card-info">
-            <span className="project-card-status"><span className={`status-chip ${item.latestJob && !item.latestJobContentCurrent ? "failed" : item.latestJob?.state ?? "idle"}`}>{item.latestJob && !item.latestJobContentCurrent ? "SNAPSHOT LAMA" : jobLabel(item.latestJob?.state)}</span><span>{item.researchPackage.category}</span></span>
+             <span className="project-card-status"><span className={`status-chip ${item.latestJob && !item.latestJobContentCurrent ? "failed" : item.latestJob?.state ?? "idle"}`}>{item.latestJob && !item.latestJobContentCurrent ? "SNAPSHOT LAMA" : jobLabel(item.latestJob?.state)}</span><span>{item.researchPackage.category}</span>{(item.creationMode === "manual" || item.creationMode === "ai-generated") && <span className="creation-origin-chip">{item.creationMode === "manual" ? "MANUAL" : "AI"}</span>}</span>
             <strong>{item.researchPackage.title}</strong>
             <span className="project-card-meta"><span><Film size={14} aria-hidden="true" />{item.researchPackage.scenes.length} scene</span><span><Clock3 size={14} aria-hidden="true" />{(item.latestJob?.manifest?.durationSec ?? item.researchPackage.targetDurationSec).toFixed(0)} dtk</span></span>
             <small>Diperbarui {new Date(item.updatedAt).toLocaleDateString("id-ID")}</small>
@@ -2857,15 +2908,88 @@ function TtsPanel({ project, script, voices, loading, busy, saved, locale, gende
   </div>;
 }
 
-function UploadPanel({ project, busy, onUpload, onRemove }: { project: Project; busy: boolean; onUpload: (file?: File) => void; onRemove: () => void }) {
+function UploadPanel({ project, busy, canUpload, onUpload, onRemove }: { project: Project; busy: boolean; canUpload: boolean; onUpload: (file?: File) => void; onRemove: () => void }) {
   return <div className="upload-panel">
     <div className="audio-card">
       <div className="audio-icon">♫</div><div className="audio-copy"><strong>{project.audio?.name ?? "Voice-over manual"}</strong><small>{project.audio ? `${project.audio.durationSec.toFixed(1)} detik · ${formatBytes(project.audio.bytes)}` : "MP3, WAV, M4A · maks 100 MB / 120 detik"}</small></div>
-      <label className="button button-light upload-button">{project.audio ? "Ganti" : "Pilih audio"}<input type="file" accept="audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" disabled={busy} onChange={(event) => onUpload(event.target.files?.[0])} /></label>
+      <label className="button button-light upload-button">{project.audio ? "Ganti" : "Pilih audio"}<input type="file" accept="audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" disabled={busy || !canUpload} onChange={(event) => onUpload(event.target.files?.[0])} /></label>
     </div>
     {project.audio && <div className="tts-audio-preview"><span>Pratinjau voice-over</span><audio controls preload="metadata" src={`/${project.audio.file}`} aria-label="Pratinjau audio upload" /><button className="text-button danger-text" onClick={onRemove} disabled={busy}>Lepas</button></div>}
+    {!canUpload && <p className="workflow-empty">Isi narasi semua scene sebelum mengunggah audio.</p>}
     <p className="upload-note">Audio di-probe dengan ffprobe. Timing awal memakai estimasi berbobot dari naskah; koreksi manual tersedia di Edit Video.</p>
   </div>;
+}
+
+type ReferenceFields = Pick<ResearchReference, "title" | "publisher" | "url">;
+const emptyReferenceFields: ReferenceFields = { title: "", publisher: "", url: "" };
+
+function ReferencesEditor({ references, onChange }: { references: ResearchPackage["references"]; onChange: (references: ResearchPackage["references"]) => void }) {
+  const [draft, setDraft] = useState<ReferenceFields>(emptyReferenceFields);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<ReferenceFields>(emptyReferenceFields);
+  const [error, setError] = useState("");
+
+  function parseReference(fields: ReferenceFields, id: string) {
+    try {
+      const url = new URL(fields.url.trim());
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("URL harus memakai HTTP(S) tanpa kredensial.");
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes("HTTP(S)")) throw cause;
+      throw new Error("URL sumber tidak valid. Gunakan tautan HTTP atau HTTPS.");
+    }
+    const parsed = researchReferenceSchema.safeParse({
+      id,
+      title: fields.title.trim(),
+      publisher: fields.publisher.trim(),
+      url: fields.url.trim(),
+    });
+    if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Referensi tidak valid.");
+    return parsed.data;
+  }
+
+  function addReference(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (references.length >= 50) { setError("Maksimal 50 referensi per project."); return; }
+    try {
+      onChange([...references, parseReference(draft, `source-${crypto.randomUUID()}`)]);
+      setDraft(emptyReferenceFields);
+      setError("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Referensi tidak valid."); }
+  }
+
+  function saveEdit(event: React.FormEvent<HTMLFormElement>, reference: ResearchReference) {
+    event.preventDefault();
+    try {
+      const updated = parseReference(editDraft, reference.id);
+      onChange(references.map((item) => item.id === reference.id ? updated : item));
+      setEditingId(null);
+      setError("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Referensi tidak valid."); }
+  }
+
+  return <section className="references-card">
+    <div className="references-heading"><h3>Referensi riset · {references.length}</h3><span>Sumber tidak diverifikasi otomatis.</span></div>
+    {references.length ? references.map((reference) => <div className="reference-item" key={reference.id}>
+      {editingId === reference.id ? <form className="reference-form" onSubmit={(event) => saveEdit(event, reference)}>
+        <label><span>Judul sumber</span><input required maxLength={200} value={editDraft.title} onChange={(event) => setEditDraft((current) => ({ ...current, title: event.target.value }))} /></label>
+        <label><span>Penerbit</span><input required maxLength={120} value={editDraft.publisher} onChange={(event) => setEditDraft((current) => ({ ...current, publisher: event.target.value }))} /></label>
+        <label><span>URL</span><input required type="url" maxLength={2048} value={editDraft.url} onChange={(event) => setEditDraft((current) => ({ ...current, url: event.target.value }))} /></label>
+        <div><button type="submit" className="button button-primary button-small">Simpan referensi</button><button type="button" className="button button-light button-small" onClick={() => { setEditingId(null); setError(""); }}>Batal</button></div>
+      </form> : <>
+        <strong>{reference.title}</strong><small>{reference.publisher} · {reference.checkedAt ? `ditinjau ${reference.checkedAt}` : "belum ditinjau"}</small><a href={reference.url} target="_blank" rel="noreferrer">Buka sumber ↗</a>
+        <div className="reference-actions"><button type="button" className="button button-light button-small" onClick={() => { setEditingId(reference.id); setEditDraft({ title: reference.title, publisher: reference.publisher, url: reference.url }); setError(""); }}>Edit</button><button type="button" className="button button-light button-small" onClick={() => { onChange(references.filter((item) => item.id !== reference.id)); setError(""); }}>Hapus</button></div>
+      </>}
+    </div>) : <p className="workflow-empty">Belum ada referensi. Referensi baru berstatus belum ditinjau.</p>}
+    <details className="reference-add-details"><summary>Tambah referensi</summary>
+      <form className="reference-form" onSubmit={addReference}>
+        <label><span>Judul sumber</span><input required maxLength={200} value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} /></label>
+        <label><span>Penerbit</span><input required maxLength={120} value={draft.publisher} onChange={(event) => setDraft((current) => ({ ...current, publisher: event.target.value }))} /></label>
+        <label><span>URL</span><input required type="url" maxLength={2048} placeholder="https://..." value={draft.url} onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value }))} /></label>
+        <button type="submit" className="button button-primary button-small" disabled={references.length >= 50}>Tambah referensi</button>
+      </form>
+    </details>
+    {error && <p className="reference-error" role="alert">{error}</p>}
+  </section>;
 }
 
 function SceneEditor({ scene, references, onChange, onDelete, deleteDisabled }: { scene: Scene; references: ResearchPackage["references"]; onChange: (change: (scene: Scene) => Scene) => void; onDelete: () => void; deleteDisabled: boolean }) {
@@ -2903,7 +3027,7 @@ function SceneEditor({ scene, references, onChange, onDelete, deleteDisabled }: 
       <label><span>On-screen text</span><input maxLength={120} placeholder="Tulis teks utama scene" value={scene.onScreenText} onChange={(event) => changeOnScreenText(event.target.value)} /></label>
       <label><span>Narration / caption</span><textarea rows={3} maxLength={2000} placeholder="Tulis narasi untuk scene ini" value={scene.narrationText} onChange={(event) => changeNarration(event.target.value)} /></label>
     </section>
-    <fieldset className="scene-reference-picker"><legend>Sumber klaim</legend>{references.length ? references.map((reference) => <label key={reference.id}><input type="checkbox" checked={scene.referenceIds.includes(reference.id)} onChange={(event) => onChange((current) => ({ ...current, referenceIds: event.target.checked ? [...current.referenceIds, reference.id] : current.referenceIds.filter((id) => id !== reference.id) }))} /><span><strong>{reference.title}</strong><small>{reference.publisher}</small></span></label>) : <small>Tambahkan referensi lewat Research Package JSON.</small>}</fieldset>
+    <fieldset className="scene-reference-picker"><legend>Sumber klaim</legend>{references.length ? references.map((reference) => <label key={reference.id}><input type="checkbox" checked={scene.referenceIds.includes(reference.id)} onChange={(event) => onChange((current) => ({ ...current, referenceIds: event.target.checked ? [...current.referenceIds, reference.id] : current.referenceIds.filter((id) => id !== reference.id) }))} /><span><strong>{reference.title}</strong><small>{reference.publisher}</small></span></label>) : <small>Tambahkan referensi di panel Referensi Riset.</small>}</fieldset>
     <details className="advanced-editor"><summary><span><strong>Advanced scene controls</strong><small>Arahan visual editorial</small></span><b aria-hidden="true">⌄</b></summary>
       <section className="advanced-scene-section"><div className="editor-section-heading"><h3>Visual direction</h3><p>Catatan editorial; bukan prompt generasi gambar.</p></div>
         <label><span>Deskripsi visual</span><textarea rows={3} maxLength={500} placeholder="Contoh: lapisan batuan terlihat dari samping" value={scene.visualDescription} onChange={(event) => onChange((current) => ({ ...current, visualDescription: event.target.value }))} /></label>

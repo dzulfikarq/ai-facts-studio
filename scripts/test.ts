@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { captionSegmentsSchema, createCaptionSegments } from "../src/domain/captions";
 import { validateAudioQuality } from "../src/domain/media-validation";
 import { isAnimatedMediaFile, sceneMediaSchema } from "../src/domain/scene-media";
-import { appendResearchScene, canStartNewJob, deleteResearchScene, durationInFrames, sceneTimes, setSceneDuration, timelineDuration } from "../src/domain/timeline";
+import { appendResearchScene, canStartNewJob, deleteResearchScene, durationInFrames, reorderResearchScene, sceneTimes, setSceneDuration, timelineDuration } from "../src/domain/timeline";
 import { outroSelectionSchema } from "../src/domain/outro";
 import { estimateSceneTimings, narrationScript } from "../src/domain/voice-timing";
 import { parseResearchPackage } from "../src/domain/research";
@@ -49,6 +49,7 @@ import { openverseLicenseIds } from "../src/domain/asset-library";
 import { motionActionProgress, motionActionSchema, motionPathProgress, motionTargetExists, planSceneMotion } from "../src/domain/motion-director";
 import { motionBeatFromAction, updateMotionBeat } from "../src/domain/motion-beats";
 import { seedVolcanoVisualSample } from "../src/domain/volcano-visual-sample";
+import { buildManualResearchPackage, manualProjectInputSchema } from "../src/domain/manual-project";
 
 const samples = ["mountain-formation", "volcano-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
 assert.deepEqual(parseAppRoute("http://localhost/"), { view: "dashboard" }, "dashboard route survives direct navigation");
@@ -1245,6 +1246,18 @@ assert.equal(atLimit.allowed, false, "one recent job should consume default slot
 assert.equal(atLimit.nextAllowedAt, new Date(now - 1000 + 24 * 60 * 60 * 1000).toISOString());
 assert.equal(canStartNewJob([new Date(now - 24 * 60 * 60 * 1000).toISOString()], now, 1).allowed, true, "job at 24h cutoff should no longer consume slot");
 
+const manualInput = manualProjectInputSchema.parse({ topic: "Mengapa laut asin?", language: "id-ID", targetDurationSec: 30, deliveryStyle: "edukatif", additionalInstructions: "Gunakan bahasa sederhana.", sourceUrls: ["https://example.org/source"] });
+assert.equal(manualProjectInputSchema.safeParse({ ...manualInput, sourceUrls: ["javascript:alert(1)"] }).success, false, "manual sources reject non-HTTP URLs");
+const manualDraft = buildManualResearchPackage(manualInput, "manual-package-id");
+assert.equal(parseResearchPackage(manualDraft).success, true, "manual draft satisfies existing Research Package schema");
+assert.equal(manualDraft.scenes.length, 1, "manual draft has one schema-compatible placeholder scene");
+assert.equal(manualDraft.scenes[0]!.onScreenText, "", "manual placeholder has no fabricated on-screen facts");
+assert.equal(manualDraft.scenes[0]!.visualDescription, "", "manual placeholder has no fabricated visual direction");
+assert.equal(manualDraft.references[0]!.checkedAt, undefined, "manual source remains unverified");
+assert.equal(narrationScript(manualDraft), "", "placeholder narration cannot be sent to TTS");
+const completedManualDraft = { ...manualDraft, scenes: manualDraft.scenes.map((scene) => ({ ...scene, narrationText: "Naskah yang ditulis pengguna." })) };
+assert.equal(narrationScript(completedManualDraft), "Naskah yang ditulis pengguna.", "completed manual narration becomes processable");
+
 assert.equal(durationInFrames(mountain), 56 * 30);
 assert.equal(durationInFrames(mountain, 43.5), 43.5 * 30);
 const outroSelection = { assetId: "f46e6843-a5e8-438e-bc8f-21c58515f268", enabled: true, trimInSec: 0.2, trimOutSec: 1.3, audioEnabled: false };
@@ -1269,6 +1282,11 @@ assert.equal(deletedScene.scenes[1]!.startSec, mountain.scenes[2]!.startSec - (m
 assert.deepEqual(deletedScene.scenes.map((scene) => scene.order), deletedScene.scenes.map((_, index) => index + 1), "deleting scene renumbers display order");
 assert.equal(parseResearchPackage(deletedScene).success, true, "deleted-scene timeline remains a valid Research Package");
 assert.throws(() => deleteResearchScene({ ...mountain, scenes: [mountain.scenes[0]!] }, mountain.scenes[0]!.id), /minimal satu scene/i);
+const reordered = reorderResearchScene(mountain, mountain.scenes[1]!.id, 0);
+assert.deepEqual(reordered.scenes.map((scene) => scene.id), [mountain.scenes[1]!.id, mountain.scenes[0]!.id, ...mountain.scenes.slice(2).map((scene) => scene.id)], "scene reorder preserves stable IDs and requested order");
+assert.deepEqual(reordered.scenes.map((scene) => scene.order), reordered.scenes.map((_, index) => index + 1), "scene reorder normalizes order numbers");
+assert.ok(reordered.scenes.every((scene, index) => scene.endSec - scene.startSec === mountain.scenes.find((prior) => prior.id === scene.id)!.endSec - mountain.scenes.find((prior) => prior.id === scene.id)!.startSec), "scene reorder preserves each scene duration");
+assert.equal(parseResearchPackage(reordered).success, true, "reordered storyboard remains valid and references stay attached");
 
 const script = narrationScript(mountain);
 assert.equal(script, mountain.scenes.map((scene) => scene.narrationText.trim()).join("\n\n"));

@@ -67,6 +67,26 @@ export function deleteResearchScene(research: ResearchPackage, sceneId: string):
   return { ...research, targetDurationSec: Math.max(1, Math.ceil(scenes.at(-1)!.endSec)), scenes };
 }
 
+export function reorderResearchScene(research: ResearchPackage, sceneId: string, nextIndex: number): ResearchPackage {
+  const currentIndex = research.scenes.findIndex((scene) => scene.id === sceneId);
+  if (currentIndex < 0) throw new Error(`Scene ${sceneId} tidak ditemukan.`);
+  if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= research.scenes.length) throw new Error("Urutan scene tidak valid.");
+  if (currentIndex === nextIndex) return research;
+  const scenes = [...research.scenes];
+  const [moved] = scenes.splice(currentIndex, 1);
+  scenes.splice(nextIndex, 0, moved!);
+  let cursor = research.scenes[0]!.startSec;
+  const reordered = scenes.map((scene, index) => {
+    const duration = scene.endSec - scene.startSec;
+    const startSec = Math.round(cursor * 1000) / 1000;
+    const endSec = Math.round((startSec + duration) * 1000) / 1000;
+    cursor = endSec;
+    return { ...scene, order: index + 1, startSec, endSec };
+  });
+  if (cursor > 120) throw new Error("Durasi total video tidak boleh melebihi 120 detik.");
+  return { ...research, targetDurationSec: Math.max(research.targetDurationSec, Math.ceil(cursor)), scenes: reordered };
+}
+
 export function canStartNewJob(createdAt: string[], nowMs: number, limit = 1) {
   const cutoff = nowMs - 24 * 60 * 60 * 1000;
   const recent = createdAt.map((value) => Date.parse(value)).filter((value) => Number.isFinite(value) && value > cutoff);

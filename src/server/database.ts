@@ -6,6 +6,9 @@ import { buildVisualStoryboard, legacyMotionApprovalFingerprint, retimeVisualSto
 import { aiGenerationSchema } from "./ai-generation/provider";
 import { visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
 import { outroSelectionSchema } from "../domain/outro";
+import type { ManualProjectBrief } from "../domain/manual-project";
+
+export type ProjectCreationMode = "manual" | "ai-generated" | "imported" | "sample" | "legacy";
 
 export const dataDir = path.resolve(process.env.DATA_DIR ?? "data");
 mkdirSync(dataDir, { recursive: true });
@@ -254,6 +257,8 @@ export type StoredAudio = {
 };
 
 export type StoredProject = {
+  creationMode?: ProjectCreationMode;
+  creationBrief?: ManualProjectBrief;
   researchPackage: import("../domain/research").ResearchPackage;
   visualStoryboard: VisualStoryboard;
   visualAssets: VisualAsset[];
@@ -284,6 +289,7 @@ export type JobRow = {
 
 export function projectFromRow(row: { id: string; data_json: string; created_at: string; updated_at: string }) {
   const project = JSON.parse(row.data_json) as StoredProject;
+  if (!project.creationMode || !["manual", "ai-generated", "imported", "sample", "legacy"].includes(project.creationMode)) project.creationMode = "legacy";
   const normalizedResearch = parseResearchPackage(project.researchPackage);
   if (normalizedResearch.success) project.researchPackage = normalizedResearch.data;
   const originalStoryboard = project.visualStoryboard === undefined ? undefined : structuredClone(project.visualStoryboard);

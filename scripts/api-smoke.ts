@@ -10,6 +10,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { visualApprovalFingerprint, type VisualStoryboardScene } from "../src/domain/visual-storyboard";
 import { parseResearchPackage } from "../src/domain/research";
+import { buildManualResearchPackage } from "../src/domain/manual-project";
 import { RENDERER_VERSION } from "../src/video/renderer-version";
 
 const execFileAsync = promisify(execFile);
@@ -117,6 +118,7 @@ try {
   assert.equal(viteReady, true, "Vite frontend and API proxy should start on configured port");
   const migratedProject = await fetch(`${baseUrl}/api/projects/${legacyProjectId}`).then((response) => response.json());
   assert.equal(migratedProject.researchPackage.schemaVersion, "1.1", "legacy v1.0 project should migrate on read");
+  assert.equal(migratedProject.creationMode, "legacy", "projects without origin metadata receive safe legacy default");
   assert.equal(migratedProject.latestJob.rendererVersion, 1, "legacy jobs should retain V1 renderer metadata");
   assert.equal(migratedProject.latestJobContentCurrent, true, "legacy snapshot should remain current after compatible migration");
   const migratedStatus = await fetch(`${baseUrl}/api/status`).then((response) => response.json());
@@ -208,14 +210,16 @@ try {
   assert.equal((await fetch(`${baseUrl}/api/outros/${firstOutro.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "" }) })).status, 400, "empty Outro names are rejected");
   await fetch(`${baseUrl}/api/outros/${firstOutro.id}/default`, { method: "POST" }).then(async (response) => { assert.equal(response.status, 200, await response.text()); });
   const projectRequestId = randomUUID();
+  const manualCreationMetadata = { creationMode: "manual", creationBrief: { deliveryStyle: "edukatif", additionalInstructions: "" } };
   const defaultProject = await fetch(`${baseUrl}/api/projects`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, ...manualCreationMetadata }),
   }).then((response) => response.json());
   outroProjectIds.push(defaultProject.id);
+  assert.equal(defaultProject.creationMode, "manual", "manual project stores origin metadata alongside default Outro");
   assert.equal(defaultProject.outro.assetId, firstOutro.id, "new projects snapshot current library default at creation");
   await fetch(`${baseUrl}/api/outros/${secondOutro.id}/default`, { method: "POST" }).then(async (response) => { assert.equal(response.status, 200, await response.text()); });
   const retriedCreate = await fetch(`${baseUrl}/api/projects`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, ...manualCreationMetadata }),
   }).then((response) => response.json());
   assert.equal(retriedCreate.id, defaultProject.id, "idempotent project retry survives a library-default change");
   assert.equal(retriedCreate.outro.assetId, firstOutro.id, "idempotent retry preserves original project Outro selection");
@@ -242,7 +246,7 @@ try {
   assert.equal((await fetch(`${baseUrl}/api/projects/${defaultProject.id}`).then((response) => response.json())).outroAsset.archived, true, "archived Outro remains attached to its existing project");
   assert.match((await fetch(`${baseUrl}/outros/${firstOutro.file}`)).headers.get("content-type") ?? "", /^video\/mp4/i, "archive keeps referenced media available");
   const archivedRetryResponse = await fetch(`${baseUrl}/api/projects`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, outroId: firstOutro.id }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, outroId: firstOutro.id, ...manualCreationMetadata }),
   });
   assert.equal(archivedRetryResponse.status, 200, "idempotent replay succeeds even after original Outro is archived");
   assert.equal((await archivedRetryResponse.json()).id, defaultProject.id, "archived-asset replay returns the original project");
@@ -313,6 +317,41 @@ try {
   assert.equal((await fetch(`${baseUrl}/api/projects`).then((response) => response.json())).length, projectCountBeforeIdempotentCreate + 1, "retry creates exactly one Video Library record");
   assert.equal((await createIdempotently({ ...research, title: `${research.title} changed` })).status, 409, "request ID cannot be reused for a different project payload");
   assert.equal((await fetch(`${baseUrl}/api/projects/${firstIdempotentProject.id}`, { method: "DELETE" })).status, 200);
+
+  const manualRequestId = randomUUID();
+  const manualResearch = buildManualResearchPackage({ topic: "Topik manual smoke", language: "id-ID", targetDurationSec: 30, deliveryStyle: "edukatif", additionalInstructions: "", sourceUrls: [] }, manualRequestId);
+  const manualPayload = { researchPackage: manualResearch, requestId: manualRequestId, creationMode: "manual", creationBrief: { deliveryStyle: "edukatif", additionalInstructions: "" }, outroId: null };
+  const generationAttemptCount = () => {
+    const smokeDb = new DatabaseSync(databasePath);
+    const row = smokeDb.prepare("SELECT COUNT(*) AS count FROM ai_generation_attempts").get() as { count: number };
+    smokeDb.close();
+    return row.count;
+  };
+  const attemptsBeforeManual = generationAttemptCount();
+  const projectsBeforeManual = (await fetch(`${baseUrl}/api/projects`).then((response) => response.json())).length;
+  const [manualFirstResponse, manualRetryResponse] = await Promise.all([
+    fetch(`${baseUrl}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(manualPayload) }),
+    fetch(`${baseUrl}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(manualPayload) }),
+  ]);
+  const [manualFirst, manualRetry] = await Promise.all([manualFirstResponse.json(), manualRetryResponse.json()]);
+  assert.deepEqual([manualFirstResponse.status, manualRetryResponse.status].sort(), [200, 201], "concurrent manual submissions replay one idempotent create");
+  assert.equal(manualFirst.id, manualRetry.id, "manual retry returns same project ID");
+  assert.equal(manualFirst.creationMode, "manual");
+  assert.deepEqual(manualFirst.creationBrief, manualPayload.creationBrief);
+  assert.equal(manualFirst.researchReviewStatus, "needs-review", "manual project starts unverified");
+  assert.equal(manualFirst.audio, null, "manual project starts without audio");
+  assert.deepEqual(manualFirst.visualAssets, [], "manual project starts without generated or Flow visuals");
+  assert.equal(manualFirst.researchPackage.references.length, 0, "manual project starts without references unless user supplied them");
+  assert.ok(manualFirst.visualStoryboard.scenes.every((scene: { approved: boolean }) => !scene.approved), "manual placeholder scene starts without approval");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${manualFirst.id}`).then((response) => response.json())).creationMode, "manual", "manual origin persists after reload");
+  assert.equal((await fetch(`${baseUrl}/api/projects`).then((response) => response.json())).length, projectsBeforeManual + 1, "double submit creates only one manual project");
+  const blockedManualTts = await fetch(`${baseUrl}/api/projects/${manualFirst.id}/tts`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locale: "id-ID", voiceId: "test-voice", speakingRate: 1, style: "documentary" }),
+  });
+  assert.equal(blockedManualTts.status, 400, "placeholder narration blocks TTS before provider use");
+  assert.equal((await blockedManualTts.json()).code, "narration-incomplete");
+  assert.equal(generationAttemptCount(), attemptsBeforeManual, "manual creation and blocked placeholder TTS make no AI research-generation request");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${manualFirst.id}`, { method: "DELETE" })).status, 200);
 
   const recoveryProject = await fetch(`${baseUrl}/api/projects`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research }),
@@ -646,6 +685,18 @@ try {
 
   const audioPath = path.join(tempDir, "voice.wav");
   await execFileAsync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", audioPath]);
+  const incompleteManualId = randomUUID();
+  const incompleteManual = await fetch(`${baseUrl}/api/projects`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ researchPackage: buildManualResearchPackage({ topic: "Manual upload gate", language: "id-ID", targetDurationSec: 30, deliveryStyle: "edukatif", additionalInstructions: "", sourceUrls: [] }, incompleteManualId), requestId: incompleteManualId, creationMode: "manual", creationBrief: { deliveryStyle: "edukatif", additionalInstructions: "" }, outroId: null }),
+  }).then((response) => response.json());
+  const incompleteAudioForm = new FormData();
+  incompleteAudioForm.append("audio", new Blob([await readFile(audioPath)], { type: "audio/wav" }), "incomplete.wav");
+  const blockedManualUpload = await fetch(`${baseUrl}/api/projects/${incompleteManual.id}/audio`, { method: "POST", body: incompleteAudioForm });
+  assert.equal(blockedManualUpload.status, 400, "placeholder narration blocks manual audio upload before timing changes");
+  assert.equal((await blockedManualUpload.json()).code, "narration-incomplete");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${incompleteManual.id}`).then((response) => response.json())).audio, null, "blocked upload leaves draft audio unchanged");
+  await fetch(`${baseUrl}/api/projects/${incompleteManual.id}`, { method: "DELETE" });
   const form = new FormData();
   form.append("audio", new Blob([await readFile(audioPath)], { type: "audio/wav" }), "voice.wav");
   const uploadedResponse = await fetch(`${baseUrl}/api/projects/${projectId}/audio`, { method: "POST", body: form });

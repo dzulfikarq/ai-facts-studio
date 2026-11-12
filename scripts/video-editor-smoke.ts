@@ -6,7 +6,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { openBrowser } from "@remotion/renderer";
+import { DatabaseSync } from "node:sqlite";
 import { applyVisualStoryboard, visualStoryboardQualityGate } from "../src/domain/visual-storyboard";
+import { buildManualResearchPackage } from "../src/domain/manual-project";
 
 const root = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-video-editor-"));
@@ -67,6 +69,12 @@ for (const stream of [apiServer.stdout, apiServer.stderr]) stream?.on("data", (c
 let viteServer: ChildProcess | undefined;
 let browser: Awaited<ReturnType<typeof openBrowser>> | undefined;
 
+function generationAttemptCount() {
+  const db = new DatabaseSync(path.join(tempDir, "data", "ai-facts-studio.sqlite"));
+  try { return (db.prepare("SELECT COUNT(*) AS count FROM ai_generation_attempts").get() as { count: number }).count; }
+  finally { db.close(); }
+}
+
 try {
   await waitFor(async () => {
     if (apiServer.exitCode !== null) throw new Error(`API exited ${apiServer.exitCode}; recent logs:\n${apiLogs.slice(-20).join("\n")}`);
@@ -80,8 +88,8 @@ try {
   await waitFor(async () => { try { return (await fetch(`${viteUrl}/api/status`)).ok; } catch { return false; } }, "Vite startup");
 
   const mountain = JSON.parse(await readFile(path.join(root, "samples/mountain-formation.json"), "utf8"));
-  const createProject = async (researchPackage: unknown) => {
-    const response = await fetch(`${apiUrl}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage }) });
+  const createProject = async (researchPackage: unknown, creationMode?: "manual") => {
+    const response = await fetch(`${apiUrl}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage, ...(creationMode ? { creationMode, creationBrief: { deliveryStyle: "edukatif", additionalInstructions: "" } } : {}) }) });
     assert.equal(response.status, 201, `project creation: ${await response.clone().text()}`);
     const project = await response.json();
     projectIds.push(project.id);
@@ -99,7 +107,7 @@ try {
   oneScene.targetDurationSec = 7;
   oneScene.scenes = [{ ...oneScene.scenes[0], order: 1, startSec: 0, endSec: 7 }];
   oneScene.narration = oneScene.scenes[0].narrationText;
-  const exportProject = await createProject(oneScene);
+  const exportProject = await createProject(oneScene, "manual");
   const fixtureSeed = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 6), 16);
   const fixtureColor = (offset: number) => `0x${((fixtureSeed + offset * 7919) & 0xffffff).toString(16).padStart(6, "0")}`;
   const flowFixtures = [1, 2, 3].map((index) => ({ name: `scene-0${index}-gunung-terbentuk.png`, color: fixtureColor(index) }));
@@ -113,7 +121,7 @@ try {
   const retryFixtureBytes = await readFile(retryFixturePath);
   const flowMotionClipPath = path.join(tempDir, "flow-motion-fixture.mp4");
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x2288cc:s=720x1280:r=30:d=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", "-y", flowMotionClipPath]);
-  const flowMotionProject = await createProject(oneScene);
+  const flowMotionProject = await createProject(oneScene, "manual");
   const flowMotionUpload = new FormData();
   flowMotionUpload.append("media", new Blob([Uint8Array.from(await readFile(flowMotionClipPath))], { type: "video/mp4" }), "flow-motion-fixture.mp4");
   const flowMotionUploadResponse = await fetch(`${apiUrl}/api/projects/${flowMotionProject.id}/scenes/${flowMotionProject.researchPackage.scenes[0].id}/media`, { method: "POST", body: flowMotionUpload });
@@ -234,6 +242,105 @@ try {
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLInputElement>(".ai-topic-field input") && !document.querySelector<HTMLInputElement>(".ai-topic-field input")!.disabled && document.querySelector(".ai-advanced-flow"))), "manual AI workflow controls are ready");
   const generatedSmokeTitle = `Auto-create smoke ${randomUUID().slice(0, 8)}`;
   assert.equal(await setFormValue(".ai-topic-field input", generatedSmokeTitle), true, "manual AI workflow accepts topic input");
+  const manualSmokeTitle = `Manual create smoke ${randomUUID().slice(0, 8)}`;
+  const selectCreationMode = async (label: string) => {
+    const found = await page.evaluate((value) => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>(".create-mode-switch button")].find((item) => item.textContent?.includes(value));
+      button?.click();
+      return Boolean(button);
+    }, label);
+    if (!found) return false;
+    await waitFor(() => page.evaluate((value) => [...document.querySelectorAll<HTMLButtonElement>(".create-mode-switch button")].some((button) => button.textContent?.includes(value) && button.getAttribute("aria-pressed") === "true"), label), `${label} mode selected`);
+    return true;
+  };
+  assert.equal(await selectCreationMode("Buat Manual"), true, "manual creation mode can be selected");
+  await waitFor(() => page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>(".manual-create-panel");
+    return Boolean(panel && !panel.closest("[hidden]") && getComputedStyle(panel).display !== "none");
+  }), "manual creation form");
+  await waitFor(() => page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>(".manual-create-panel button[type='submit']");
+    return Boolean(button && !button.disabled && button.textContent?.trim() === "Buat Project Manual");
+  }), "manual create button is ready and labeled");
+  await page.setViewport({ width: 1440, height: 1400, deviceScaleFactor: 1 });
+  await captureViewport("create-manual-light-desktop.png");
+  await assertResponsiveNoOverflow("Manual Create Video");
+  await page.setViewport({ width: 1440, height: 1400, deviceScaleFactor: 1 });
+  await page.evaluate(() => {
+    const switcher = document.querySelector<HTMLDetailsElement>(".theme-switcher")!;
+    switcher.open = true;
+    [...switcher.querySelectorAll<HTMLButtonElement>(".theme-choices button")].find((button) => button.textContent?.trim() === "Dark")?.click();
+  });
+  await waitFor(() => page.evaluate(() => document.documentElement.dataset.theme === "dark"), "Manual form supports Dark theme");
+  await page.evaluate(() => { document.querySelector<HTMLDetailsElement>(".theme-switcher")!.open = false; });
+  await captureViewport("create-manual-dark-desktop.png");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".theme-choices button")].find((button) => button.textContent?.trim() === "System")?.click());
+  await waitFor(() => page.evaluate(() => document.documentElement.dataset.themePreference === "system"), "Manual form restores System theme");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".manual-create-panel .ai-form-grid > label").length), 5, "manual form exposes five main inputs");
+  assert.equal(await setFormValue(".manual-create-panel .ai-topic-field input", manualSmokeTitle), true, "manual mode accepts project topic");
+  assert.equal(await setFormValue(".manual-create-panel .ai-instructions-field textarea", "Catatan brief manual."), true, "manual mode accepts additional instructions");
+  await page.evaluate(() => { const advanced = document.querySelector<HTMLDetailsElement>(".manual-source-advanced"); if (advanced) advanced.open = true; });
+  assert.equal(await setFormValue(".manual-source-advanced textarea", "https://example.org/manual-source"), true, "manual source URL stays under Advanced");
+  assert.equal(await selectCreationMode("Generate with AI"), true, "AI mode remains selectable");
+  assert.equal(await page.evaluate((title) => document.querySelector<HTMLInputElement>(".ai-topic-field input")?.value === title, generatedSmokeTitle), true, "AI input survives switching modes");
+  assert.equal(await selectCreationMode("Buat Manual"), true, "manual mode can be reselected");
+  assert.equal(await page.evaluate((title) => document.querySelector<HTMLInputElement>(".manual-create-panel .ai-topic-field input")?.value === title, manualSmokeTitle), true, "manual input survives switching modes");
+  const aiAttemptsBeforeManualCreate = generationAttemptCount();
+  await page.evaluate(() => {
+    const submit = document.querySelector<HTMLButtonElement>(".manual-create-panel button[type='submit']");
+    submit?.click();
+    submit?.click();
+  });
+  await waitFor(() => page.evaluate(() => location.pathname.startsWith("/projects/") && Boolean(document.querySelector(".workflow-stepper"))), "manual create opens Materials & Storyboard");
+  const manualProjects = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<any>) => projects.filter((item) => item.researchPackage.title === manualSmokeTitle));
+  assert.equal(manualProjects.length, 1, "manual double submit creates exactly one project");
+  const manualProject = manualProjects[0]!;
+  projectIds.push(manualProject.id);
+  assert.equal(manualProject.creationMode, "manual");
+  assert.equal(manualProject.creationBrief.additionalInstructions, "Catatan brief manual.");
+  assert.equal(manualProject.researchPackage.scenes.length, 1, "manual project starts with one schema-compatible placeholder");
+  assert.equal(manualProject.researchPackage.scenes[0].onScreenText, "");
+  assert.equal(manualProject.researchPackage.scenes[0].visualDescription, "");
+  assert.equal(manualProject.researchPackage.references[0].checkedAt, undefined, "manual source remains unverified");
+  assert.equal(manualProject.audio, null);
+  assert.deepEqual(manualProject.visualAssets, []);
+  assert.ok(manualProject.visualStoryboard.scenes.every((scene: { approved: boolean }) => !scene.approved));
+  assert.equal(generationAttemptCount(), aiAttemptsBeforeManualCreate, "manual project create makes no AI research-generation request");
+  await page.goto({ url: `${viteUrl}/projects/${manualProject.id}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".scene-editor") && document.querySelectorAll(".scene-row").length === 1)), "manual project reload restores Materials & Storyboard");
+  const originalManualSceneId = manualProject.researchPackage.scenes[0].id as string;
+  await clickButton(".storyboard-actions button", "add scene to manual project");
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".scene-row").length === 2), "manual scene appears");
+  const addedManualSceneId = await page.evaluate(() => document.querySelector<HTMLButtonElement>(".scene-row.chosen")?.dataset.sceneId ?? "");
+  assert.ok(addedManualSceneId && addedManualSceneId !== originalManualSceneId, "manual scene receives a stable ID");
+  assert.equal(await setFormValue(".basic-content-section label:nth-of-type(1) input", "Scene manual kedua"), true, "manual scene on-screen text is editable");
+  assert.equal(await setFormValue(".basic-content-section label:nth-of-type(2) textarea", "Narasi ditulis pengguna untuk scene kedua."), true, "manual scene narration is editable");
+  await page.evaluate(() => { const advanced = document.querySelector<HTMLDetailsElement>(".advanced-editor"); if (advanced) advanced.open = true; });
+  assert.equal(await setFormValue(".advanced-scene-section textarea", "Visual direction manual untuk scene kedua."), true, "manual visual direction is editable");
+  await page.evaluate(() => { const advanced = document.querySelector<HTMLDetailsElement>(".reference-add-details"); if (advanced) advanced.open = true; });
+  assert.equal(await setFormValue(".reference-add-details label:nth-of-type(1) input", "Sumber manual"), true, "manual reference title is editable");
+  assert.equal(await setFormValue(".reference-add-details label:nth-of-type(2) input", "Example Publisher"), true, "manual reference publisher is editable");
+  assert.equal(await setFormValue(".reference-add-details label:nth-of-type(3) input", "https://example.org/manual-source"), true, "manual reference URL is editable");
+  await clickButton(".reference-add-details form button", "add manual reference");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".reference-item .reference-actions button"))), "manual reference appears");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".reference-item .reference-actions button")?.click());
+  assert.equal(await setFormValue(".reference-item form input", "Sumber manual diedit"), true, "manual reference can be edited");
+  await clickButton(".reference-item form button[type='submit']", "save manual reference edit");
+  await waitFor(() => page.evaluate(() => document.querySelector(".reference-item strong")?.textContent === "Sumber manual diedit"), "manual reference edit persists in draft");
+  await page.evaluate(() => document.querySelector<HTMLInputElement>(".scene-reference-picker input")?.click());
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.scene-reorder-actions button[aria-label="Pindahkan scene 2 ke atas"]')?.click());
+  await waitFor(() => page.evaluate((sceneId) => document.querySelector<HTMLButtonElement>(".scene-row")?.dataset.sceneId === sceneId, addedManualSceneId), "manual scene reorder updates the stable-ID list");
+  await clickButton('button[aria-label="Simpan perubahan"]', "save manual storyboard and references");
+  await waitFor(async () => {
+    const saved = await fetch(`${apiUrl}/api/projects/${manualProject.id}`).then((response) => response.json());
+    return saved.researchPackage.scenes[0]?.id === addedManualSceneId && saved.researchPackage.scenes[0]?.referenceIds.length === 1 && saved.researchPackage.references[0]?.title === "Sumber manual diedit" && saved.researchPackage.references[0]?.checkedAt === undefined;
+  }, "manual scene order, copy, and references persist");
+  await waitFor(() => page.evaluate(() => !document.querySelector(".topbar-save")), "manual workspace save completes before reload");
+  await page.goto({ url: `${viteUrl}/projects/${manualProject.id}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate((sceneId) => document.querySelector<HTMLButtonElement>(".scene-row")?.dataset.sceneId === sceneId, addedManualSceneId), "manual project reload restores reordered scene");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
+  await waitFor(() => page.evaluate(() => location.pathname === "/create" && Boolean(document.querySelector(".ai-generate-panel"))), "Create Video reopens after manual project");
+  assert.equal(await setFormValue(".ai-topic-field input", generatedSmokeTitle), true, "AI form remains usable after manual creation");
   await page.evaluate(() => { const details = document.querySelector<HTMLDetailsElement>(".ai-advanced-flow"); if (details) details.open = true; });
   await clickButton(".ai-manual-actions button", "manual prompt");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".manual-prompt") && document.querySelector(".workflow-alert.attention")?.textContent?.includes("Menunggu output AI"))), "manual prompt enters waiting state");

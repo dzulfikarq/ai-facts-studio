@@ -1,7 +1,9 @@
 import type { ResearchPackage } from "./research";
 
 export function narrationScript(research: Pick<ResearchPackage, "scenes">) {
-  return research.scenes.map((scene) => scene.narrationText.trim()).filter(Boolean).join("\n\n");
+  const narration = research.scenes.map((scene) => scene.narrationText.trim());
+  if (narration.some((text) => !text || ["narasi belum diisi.", "tulis narasi untuk scene ini."].includes(text.toLocaleLowerCase("id-ID")))) return "";
+  return narration.join("\n\n");
 }
 
 export function estimateSceneTimings(research: ResearchPackage, audioDurationSec: number, wordsPerMinute = 150, speakingRate = 1): ResearchPackage {

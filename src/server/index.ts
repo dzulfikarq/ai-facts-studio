@@ -1503,6 +1503,17 @@ app.get("/api/projects/:id/scene-media-health", async (request, response) => {
 app.post("/api/projects", (request, response) => {
   const parsed = parseResearchPackage(request.body?.researchPackage);
   if (!parsed.success) return apiError(response, 400, "Research package tidak valid.", { issues: parsed.error.issues });
+  const creationModeResult = request.body?.creationMode === undefined
+    ? null
+    : z.enum(["manual", "ai-generated", "imported", "sample"]).safeParse(request.body.creationMode);
+  if (creationModeResult && !creationModeResult.success) return apiError(response, 400, "Asal project tidak valid.", { code: "invalid-creation-mode" });
+  const creationMode = creationModeResult?.success ? creationModeResult.data : "legacy";
+  const creationBriefResult = request.body?.creationBrief === undefined ? null : z.object({
+    deliveryStyle: z.enum(["edukatif", "storytelling", "santai"]),
+    additionalInstructions: z.string().trim().max(1000),
+  }).strict().safeParse(request.body.creationBrief);
+  if (creationBriefResult && !creationBriefResult.success) return apiError(response, 400, "Informasi project manual tidak valid.", { code: "invalid-creation-brief", issues: creationBriefResult.error.issues });
+  if (creationMode === "manual" && !creationBriefResult?.success) return apiError(response, 400, "Informasi project manual belum lengkap.", { code: "missing-creation-brief" });
   const rawRequestId = request.body?.requestId;
   const requestIdResult = rawRequestId === undefined ? null : z.string().uuid().safeParse(rawRequestId);
   if (requestIdResult && !requestIdResult.success) return apiError(response, 400, "Request ID idempotency tidak valid.", { code: "invalid-request-id" });
@@ -1524,6 +1535,8 @@ app.post("/api/projects", (request, response) => {
   if (hasOutroId && requestedOutroId?.success && requestedOutroId.data && !selectedAsset) return apiError(response, 409, "Outro yang dipilih tidak tersedia untuk project baru.", { code: "outro-not-available" });
   const now = new Date().toISOString();
   const stored: StoredProject = {
+    creationMode,
+    ...(creationBriefResult?.success ? { creationBrief: creationBriefResult.data } : {}),
     researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null,
     narrationMode: "unset", researchReviewStatus: "needs-review",
     outro: selectedAsset ? { assetId: selectedAsset.id, enabled: true, trimInSec: 0, trimOutSec: selectedAsset.duration_sec, audioEnabled: false } : null,
@@ -2255,11 +2268,16 @@ app.delete("/api/projects/:id/visual-assets/:assetId", async (request, response)
 
 app.post("/api/projects/:id/audio", audioUpload.single("audio"), async (request, response) => {
   const id = String(request.params.id);
-  if (!projectRow(id)) {
+  const draftRow = projectRow(id);
+  if (!draftRow) {
     if (request.file) await removeOrQueueCleanup("audio", request.file.path);
     return apiError(response, 404, "Project tidak ditemukan.");
   }
   if (!request.file) return apiError(response, 400, "File audio tidak ditemukan.");
+  if (!narrationScript(projectFromRow(draftRow).researchPackage)) {
+    await removeOrQueueCleanup("audio", request.file.path);
+    return apiError(response, 400, "Isi narasi pada setiap scene sebelum mengunggah audio.", { code: "narration-incomplete" });
+  }
   if (activeRenderJob) {
     await removeOrQueueCleanup("audio", request.file.path);
     return apiError(response, 409, "Audio tidak dapat diubah saat render berjalan.");
@@ -2636,7 +2654,7 @@ app.post("/api/projects/:id/tts", async (request, response) => {
   if (!row) return apiError(response, 404, "Project tidak ditemukan.");
   const project = projectFromRow(row);
   const script = narrationScript(project.researchPackage);
-  if (!script) return apiError(response, 400, "Naskah kosong. Isi narrationText pada storyboard terlebih dahulu.");
+  if (!script) return apiError(response, 400, "Isi narasi pada setiap scene di Materi & Storyboard terlebih dahulu.", { code: "narration-incomplete" });
   if (script.length > maxTtsCharacters) return apiError(response, 413, `Naskah melebihi batas ${maxTtsCharacters} karakter TTS.`);
   activeProjectTasks.add(id);
   try {

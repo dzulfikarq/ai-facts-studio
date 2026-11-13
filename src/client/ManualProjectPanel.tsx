@@ -1,5 +1,4 @@
 import React, { useRef, useState } from "react";
-import { ChevronDown, Link2 } from "lucide-react";
 import { buildManualResearchPackage, manualProjectInputSchema, type ManualProjectBrief, type ManualProjectInput } from "../domain/manual-project";
 import type { ResearchPackage } from "../domain/research";
 import type { WorkspaceStep } from "./workflow";
@@ -78,25 +77,23 @@ export function ManualProjectPanel({ projectBusy, onCreateProject, onOpenProject
     }
   }
 
-  return <form className="manual-create-panel" onSubmit={(event) => void submit(event)}>
-    <section className="ai-settings-panel manual-generation-form">
+  return <form className="manual-create-panel ai-generate-panel" onSubmit={(event) => void submit(event)}>
+    <section className="ai-generation-form ai-settings-panel">
       <div className="settings-panel-heading"><div><h2>Buat Manual</h2><p>Buat draft tanpa AI. Tulis storyboard sendiri setelah project dibuka.</p></div><span className="settings-mode-badge development">DRAFT MANUAL</span></div>
       <div className="ai-form-grid">
-        <label className="ai-topic-field"><span>Judul / Topik <b>*</b></span><input required minLength={3} maxLength={120} placeholder="Contoh: Mengapa langit berwarna biru?" value={input.topic} onChange={(event) => updateInput("topic", event.target.value)} disabled={locked} /></label>
+        <label className="ai-topic-field"><span>Judul / topik <b>*</b></span><input required minLength={3} maxLength={120} placeholder="Contoh: Kenapa langit berwarna biru?" value={input.topic} onChange={(event) => updateInput("topic", event.target.value)} disabled={locked} /></label>
         <label className="ai-choice-field"><span>Bahasa</span><select value={input.language} onChange={(event) => updateInput("language", event.target.value as ManualProjectInput["language"])} disabled={locked}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option></select></label>
-        <label className="ai-choice-field"><span>Durasi Target</span><select value={input.targetDurationSec} onChange={(event) => updateInput("targetDurationSec", Number(event.target.value) as ManualProjectInput["targetDurationSec"])} disabled={locked}><option value={30}>30 detik</option><option value={45}>45 detik</option><option value={60}>60 detik</option></select></label>
-        <label className="ai-choice-field"><span>Gaya Penyampaian</span><select value={input.deliveryStyle} onChange={(event) => updateInput("deliveryStyle", event.target.value as ManualProjectInput["deliveryStyle"])} disabled={locked}><option value="edukatif">Edukatif</option><option value="storytelling">Storytelling</option><option value="santai">Santai</option></select></label>
-        <label className="ai-wide-field ai-instructions-field"><span>Instruksi Tambahan</span><textarea rows={3} maxLength={1000} placeholder="Catatan untuk project manual (opsional)" value={input.additionalInstructions} onChange={(event) => updateInput("additionalInstructions", event.target.value)} disabled={locked} /></label>
-        <details className="manual-source-advanced ai-wide-field">
-          <summary><span className="manual-source-icon"><Link2 size={18} aria-hidden="true" /></span><span className="manual-source-copy"><strong>URL sumber opsional</strong><small>Simpan tautan untuk ditinjau di storyboard.</small></span><ChevronDown className="manual-source-chevron" size={18} aria-hidden="true" /></summary>
-          <label><span>URL Sumber</span><textarea rows={3} placeholder="https://..." value={sourceText} onChange={(event) => {
+        <label className="ai-choice-field"><span>Durasi target</span><select value={input.targetDurationSec} onChange={(event) => updateInput("targetDurationSec", Number(event.target.value) as ManualProjectInput["targetDurationSec"])} disabled={locked}><option value={30}>30 detik</option><option value={45}>45 detik</option><option value={60}>60 detik</option></select></label>
+        <label className="ai-choice-field"><span>Gaya penyampaian</span><select value={input.deliveryStyle} onChange={(event) => updateInput("deliveryStyle", event.target.value as ManualProjectInput["deliveryStyle"])} disabled={locked}><option value="edukatif">Edukatif</option><option value="storytelling">Storytelling</option><option value="santai">Santai</option></select></label>
+        <label className="ai-wide-field ai-instructions-field"><span>Instruksi tambahan</span><textarea rows={3} maxLength={1000} placeholder="Contoh: gunakan analogi sederhana untuk anak SMP" value={input.additionalInstructions} onChange={(event) => updateInput("additionalInstructions", event.target.value)} disabled={locked} /></label>
+        <label className="ai-wide-field ai-source-field"><span>URL sumber opsional</span><textarea rows={3} placeholder="https://..." value={sourceText} onChange={(event) => {
             setSourceText(event.target.value);
             updateInput("sourceUrls", event.target.value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean));
-          }} disabled={locked} /><small className="ai-field-help">Satu URL per baris · maksimal 10 · tidak di-fetch otomatis.</small></label>
-        </details>
+          }} disabled={locked} /><small className="ai-field-help">Satu URL per baris. Aplikasi tidak fetch atau memverifikasi URL.</small></label>
       </div>
       {error && <div className="workflow-alert danger" role="alert"><span>{error}{issues.length > 0 && <ul>{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}</span></div>}
-      <div className="manual-create-actions"><span>Storyboard awal hanya placeholder kosong. Tidak ada fakta, audio, visual Flow, atau approval yang dibuat.</span><button type="submit" className="button button-primary" disabled={locked}>{busy || projectBusy ? "Menyimpan project…" : "Buat Project Manual"}</button></div>
+      <div className="ai-generation-actions"><button type="submit" className="button button-primary" disabled={locked}>{busy || projectBusy ? "Menyimpan project…" : "Buat Project Manual"}</button></div>
+      <div className="ai-generation-status-row"><span className="settings-status-pill configured">Draft Manual</span><span>Storyboard dimulai dengan placeholder tanpa fakta, audio, visual Flow, atau approval.</span></div>
     </section>
   </form>;
 }

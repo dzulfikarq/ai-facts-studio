@@ -276,15 +276,15 @@ try {
   await captureViewport("create-manual-dark-desktop.png");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".theme-choices button")].find((button) => button.textContent?.trim() === "System")?.click());
   await waitFor(() => page.evaluate(() => document.documentElement.dataset.themePreference === "system"), "Manual form restores System theme");
-  assert.equal(await page.evaluate(() => document.querySelectorAll(".manual-create-panel .ai-form-grid > label").length), 5, "manual form exposes five main inputs");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".manual-create-panel .ai-form-grid > .ai-topic-field, .manual-create-panel .ai-form-grid > .ai-choice-field, .manual-create-panel .ai-form-grid > .ai-instructions-field").length), 5, "manual form exposes five main inputs");
   assert.equal(await setFormValue(".manual-create-panel .ai-topic-field input", manualSmokeTitle), true, "manual mode accepts project topic");
   assert.equal(await setFormValue(".manual-create-panel .ai-instructions-field textarea", "Catatan brief manual."), true, "manual mode accepts additional instructions");
-  await page.evaluate(() => { const advanced = document.querySelector<HTMLDetailsElement>(".manual-source-advanced"); if (advanced) advanced.open = true; });
-  assert.equal(await setFormValue(".manual-source-advanced textarea", "https://example.org/manual-source"), true, "manual source URL stays under Advanced");
+  assert.equal(await setFormValue(".manual-create-panel .ai-source-field textarea", "https://example.org/manual-source"), true, "manual source URL uses shared AI form field");
   assert.equal(await selectCreationMode("Generate with AI"), true, "AI mode remains selectable");
   assert.equal(await page.evaluate((title) => document.querySelector<HTMLInputElement>(".ai-topic-field input")?.value === title, generatedSmokeTitle), true, "AI input survives switching modes");
   assert.equal(await selectCreationMode("Buat Manual"), true, "manual mode can be reselected");
   assert.equal(await page.evaluate((title) => document.querySelector<HTMLInputElement>(".manual-create-panel .ai-topic-field input")?.value === title, manualSmokeTitle), true, "manual input survives switching modes");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLTextAreaElement>(".manual-create-panel .ai-source-field textarea")?.value === "https://example.org/manual-source"), true, "manual source survives switching modes");
   const aiAttemptsBeforeManualCreate = generationAttemptCount();
   await page.evaluate(() => {
     const submit = document.querySelector<HTMLButtonElement>(".manual-create-panel button[type='submit']");

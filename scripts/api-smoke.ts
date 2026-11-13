@@ -212,10 +212,11 @@ try {
   const projectRequestId = randomUUID();
   const manualCreationMetadata = { creationMode: "manual", creationBrief: { deliveryStyle: "edukatif", additionalInstructions: "" } };
   const defaultProject = await fetch(`${baseUrl}/api/projects`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, ...manualCreationMetadata }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: research, requestId: projectRequestId, animationStyleId: "2d-paper-cutout", ...manualCreationMetadata }),
   }).then((response) => response.json());
   outroProjectIds.push(defaultProject.id);
   assert.equal(defaultProject.creationMode, "manual", "manual project stores origin metadata alongside default Outro");
+  assert.equal(defaultProject.animationStyleId, "2d-paper-cutout", "selected stable animation-style ID persists at project creation");
   assert.equal(defaultProject.outro.assetId, firstOutro.id, "new projects snapshot current library default at creation");
   await fetch(`${baseUrl}/api/outros/${secondOutro.id}/default`, { method: "POST" }).then(async (response) => { assert.equal(response.status, 200, await response.text()); });
   const retriedCreate = await fetch(`${baseUrl}/api/projects`, {
@@ -223,6 +224,7 @@ try {
   }).then((response) => response.json());
   assert.equal(retriedCreate.id, defaultProject.id, "idempotent project retry survives a library-default change");
   assert.equal(retriedCreate.outro.assetId, firstOutro.id, "idempotent retry preserves original project Outro selection");
+  assert.equal(retriedCreate.animationStyleId, "2d-paper-cutout", "idempotent retry preserves original animation-style selection");
   const switchedLibrary = await fetch(`${baseUrl}/api/outros`).then((response) => response.json());
   assert.equal(switchedLibrary.defaultOutroId, secondOutro.id, "only selected library item becomes default");
   assert.equal(switchedLibrary.outros.filter((asset: { isDefault: boolean }) => asset.isDefault).length, 1, "library has at most one active default");
@@ -231,13 +233,20 @@ try {
   }).then((response) => response.json());
   outroProjectIds.push(explicitNoOutro.id);
   assert.equal(explicitNoOutro.outro, null, "Tanpa Outro overrides library default at project creation");
+  assert.equal(explicitNoOutro.animationStyleId, "expressive-2d-cartoon", "older create clients receive the default style");
   const projectOutro = { ...defaultProject.outro, trimInSec: 0.1, trimOutSec: 0.9, audioEnabled: true };
   const projectOutroSave = await fetch(`${baseUrl}/api/projects/${defaultProject.id}`, {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: defaultProject.researchPackage, outro: projectOutro }),
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: defaultProject.researchPackage, outro: projectOutro, animationStyleId: "stylized-3d-cartoon" }),
   });
   assert.equal(projectOutroSave.status, 200, await projectOutroSave.clone().text());
   const reopenedOutroProject = await fetch(`${baseUrl}/api/projects/${defaultProject.id}`).then((response) => response.json());
   assert.deepEqual(reopenedOutroProject.outro, projectOutro, "per-project enabled/trim/audio settings persist independently of default changes");
+  assert.equal(reopenedOutroProject.animationStyleId, "stylized-3d-cartoon", "project animation-style setting persists across reload");
+  const invalidAnimationStyleSave = await fetch(`${baseUrl}/api/projects/${defaultProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: reopenedOutroProject.researchPackage, animationStyleId: "Kartun 3D Stylized" }),
+  });
+  assert.equal(invalidAnimationStyleSave.status, 400, "display names cannot be used as animation-style IDs");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${defaultProject.id}`).then((response) => response.json())).animationStyleId, "stylized-3d-cartoon", "invalid style update does not mutate saved project");
   const archivedOutroResponse = await fetch(`${baseUrl}/api/outros/${firstOutro.id}`, { method: "DELETE" });
   const archivedOutro = await archivedOutroResponse.json();
   assert.equal(archivedOutroResponse.status, 200);
@@ -565,7 +574,20 @@ try {
   assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: reopenedFlowProject.researchPackage, visualStoryboard: approvedFlowBoard }),
   })).status, 200, "imported illustration can be approved after review");
-  const approvedFlowProject = await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json());
+  let approvedFlowProject = await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json());
+  const animationPromptBoard = structuredClone(approvedFlowProject.visualStoryboard);
+  animationPromptBoard.scenes[0] = { ...animationPromptBoard.scenes[0], flowPrompt: "Imported illustration remains; this animation prompt is only metadata.", flowVisualMode: "animated-video", flowPromptMode: "animated-video", flowPromptAnimationStyleId: "expressive-2d-cartoon" };
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: approvedFlowProject.researchPackage, visualStoryboard: animationPromptBoard, animationStyleId: "expressive-2d-cartoon" }),
+  })).status, 200, "animation prompt style metadata persists with imported visual");
+  assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: approvedFlowProject.researchPackage, visualStoryboard: animationPromptBoard, animationStyleId: "stylized-3d-cartoon" }),
+  })).status, 200, "changing project animation style does not require prompt regeneration");
+  approvedFlowProject = await fetch(`${baseUrl}/api/projects/${assetProject.id}`).then((response) => response.json());
+  assert.equal(approvedFlowProject.animationStyleId, "stylized-3d-cartoon", "changed project style persists on reload");
+  assert.equal(approvedFlowProject.visualStoryboard.scenes[0].flowPromptAnimationStyleId, "expressive-2d-cartoon", "old prompt metadata remains stale until explicit regeneration");
+  assert.equal(approvedFlowProject.visualStoryboard.scenes[0].approved, true, "style change preserves unrelated media approval");
+  assert.deepEqual(approvedFlowProject.visualStoryboard.scenes[0].composition, animationPromptBoard.scenes[0].composition, "style change preserves imported visual composition");
   const promptOnlyEdit = structuredClone(approvedFlowProject.visualStoryboard);
   promptOnlyEdit.scenes[0].flowPrompt += "\nOptional hand-edited details.";
   assert.equal((await fetch(`${baseUrl}/api/projects/${assetProject.id}`, {

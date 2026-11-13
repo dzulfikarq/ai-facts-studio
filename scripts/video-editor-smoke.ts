@@ -239,6 +239,18 @@ try {
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && document.querySelector(".ai-generate-panel") !== null), "Create Video route");
   await captureViewport("create-light-desktop.png");
   await assertResponsiveNoOverflow("Create Video");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-card").length), 6, "Create Video renders six animation styles");
+  assert.equal(await page.evaluate(() => document.querySelector('.animation-style-card.selected')?.getAttribute("data-animation-style-id")), "expressive-2d-cartoon", "expressive 2D is selected by default");
+  const previewRequestsBefore = generationAttemptCount();
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.animation-style-card[data-animation-style-id="stylized-3d-cartoon"] .animation-style-preview-button')?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLDialogElement>(".animation-style-dialog")?.open === true), "fixed style example preview dialog");
+  assert.equal(await page.evaluate(() => document.querySelector(".animation-style-dialog")?.textContent?.includes("Contoh Animasi")), true, "gallery preview is labelled as an animation example");
+  assert.equal(await page.evaluate(() => document.querySelector(".animation-style-dialog")?.textContent?.includes("Preview belum tersedia")), true, "missing MP4 uses explicit fallback");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-dialog video").length), 0, "no MP4 is claimed or loaded when asset is absent");
+  assert.equal(generationAttemptCount(), previewRequestsBefore, "fixed preview does not request AI generation");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.animation-style-dialog button[aria-label="Tutup preview animasi"]')?.click());
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.animation-style-card[data-animation-style-id="stylized-3d-cartoon"] .animation-style-choice')?.click());
+  assert.equal(await page.evaluate(() => document.querySelector('.animation-style-card.selected')?.getAttribute("data-animation-style-id")), "stylized-3d-cartoon", "style card selection updates selected state");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLInputElement>(".ai-topic-field input") && !document.querySelector<HTMLInputElement>(".ai-topic-field input")!.disabled && document.querySelector(".ai-advanced-flow"))), "manual AI workflow controls are ready");
   const generatedSmokeTitle = `Auto-create smoke ${randomUUID().slice(0, 8)}`;
   assert.equal(await setFormValue(".ai-topic-field input", generatedSmokeTitle), true, "manual AI workflow accepts topic input");
@@ -254,6 +266,7 @@ try {
     return true;
   };
   assert.equal(await selectCreationMode("Buat Manual"), true, "manual creation mode can be selected");
+  assert.equal(await page.evaluate(() => document.querySelector('.animation-style-card.selected')?.getAttribute("data-animation-style-id")), "stylized-3d-cartoon", "animation style selection survives switching to Manual");
   await waitFor(() => page.evaluate(() => {
     const panel = document.querySelector<HTMLElement>(".manual-create-panel");
     return Boolean(panel && !panel.closest("[hidden]") && getComputedStyle(panel).display !== "none");
@@ -281,6 +294,7 @@ try {
   assert.equal(await setFormValue(".manual-create-panel .ai-instructions-field textarea", "Catatan brief manual."), true, "manual mode accepts additional instructions");
   assert.equal(await setFormValue(".manual-create-panel .ai-source-field textarea", "https://example.org/manual-source"), true, "manual source URL uses shared AI form field");
   assert.equal(await selectCreationMode("Generate with AI"), true, "AI mode remains selectable");
+  assert.equal(await page.evaluate(() => document.querySelector('.animation-style-card.selected')?.getAttribute("data-animation-style-id")), "stylized-3d-cartoon", "animation style selection survives switching to AI");
   assert.equal(await page.evaluate((title) => document.querySelector<HTMLInputElement>(".ai-topic-field input")?.value === title, generatedSmokeTitle), true, "AI input survives switching modes");
   assert.equal(await selectCreationMode("Buat Manual"), true, "manual mode can be reselected");
   assert.equal(await page.evaluate((title) => document.querySelector<HTMLInputElement>(".manual-create-panel .ai-topic-field input")?.value === title, manualSmokeTitle), true, "manual input survives switching modes");
@@ -297,6 +311,7 @@ try {
   const manualProject = manualProjects[0]!;
   projectIds.push(manualProject.id);
   assert.equal(manualProject.creationMode, "manual");
+  assert.equal(manualProject.animationStyleId, "stylized-3d-cartoon", "Manual Create persists selected style ID");
   assert.equal(manualProject.creationBrief.additionalInstructions, "Catatan brief manual.");
   assert.equal(manualProject.researchPackage.scenes.length, 1, "manual project starts with one schema-compatible placeholder");
   assert.equal(manualProject.researchPackage.scenes[0].onScreenText, "");
@@ -340,6 +355,12 @@ try {
   await waitFor(() => page.evaluate((sceneId) => document.querySelector<HTMLButtonElement>(".scene-row")?.dataset.sceneId === sceneId, addedManualSceneId), "manual project reload restores reordered scene");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && Boolean(document.querySelector(".ai-generate-panel"))), "Create Video reopens after manual project");
+  assert.equal(await page.evaluate(() => {
+    const choice = document.querySelector<HTMLButtonElement>('.animation-style-card[data-animation-style-id="stylized-3d-cartoon"] .animation-style-choice');
+    choice?.click();
+    return Boolean(choice);
+  }), true, "AI Create exposes 3D style after reopening the form");
+  await waitFor(() => page.evaluate(() => document.querySelector('.animation-style-card.selected')?.getAttribute("data-animation-style-id") === "stylized-3d-cartoon"), "AI Create selects 3D style");
   assert.equal(await setFormValue(".ai-topic-field input", generatedSmokeTitle), true, "AI form remains usable after manual creation");
   await page.evaluate(() => { const details = document.querySelector<HTMLDetailsElement>(".ai-advanced-flow"); if (details) details.open = true; });
   await clickButton(".ai-manual-actions button", "manual prompt");
@@ -356,9 +377,10 @@ try {
   });
   await waitFor(() => page.evaluate(() => location.pathname.startsWith("/projects/") && document.querySelector(".workflow-stepper") !== null), "valid manual output auto-creates project and opens Materials");
   assert.notEqual(await page.evaluate(() => new URLSearchParams(location.search).get("step")), "visual", "AI auto-create opens Materials rather than Visual Storyboard");
-  const generatedSmokeProjects = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<{ id: string; researchPackage: { title: string } }>) => projects.filter((project) => project.researchPackage.title === generatedSmokeTitle));
+  const generatedSmokeProjects = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<{ id: string; animationStyleId?: string; researchPackage: { title: string } }>) => projects.filter((project) => project.researchPackage.title === generatedSmokeTitle));
   assert.equal(generatedSmokeProjects.length, 1, "double submit creates only one project");
   projectIds.push(generatedSmokeProjects[0]!.id);
+  assert.equal(generatedSmokeProjects[0]!.animationStyleId, "stylized-3d-cartoon", "AI Create persists selected style ID");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-icon[aria-label="Pengaturan"]')?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/settings" && document.querySelector(".settings-page") !== null), "Settings route");
@@ -373,6 +395,49 @@ try {
   assert.equal(editorRoute.path, `/projects/${mountainProject.id}/editor`, "Video Editor has one canonical project route");
   assert.equal(await page.evaluate(() => new URLSearchParams(location.search).get("step")), null, "Video Editor step uses its canonical route");
   assert.equal(editorRoute.scene, mountainProject.visualStoryboard.scenes[0].sceneId, "selected scene is URL-backed");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Pengaturan Video"))?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".editor-animation-style-controls select"))), "project-level animation style setting");
+  assert.equal(await page.evaluate(() => document.querySelectorAll<HTMLSelectElement>(".editor-animation-style-controls select option").length), 6, "Video Editor project setting exposes all six styles");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLSelectElement>(".editor-animation-style-controls select")?.value), "expressive-2d-cartoon", "legacy project uses default style without prompt migration");
+  assert.equal(await setMotionControl(".editor-animation-style-controls select", "stylized-3d-cartoon"), true, "project-level style can be changed");
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "style update marks project unsaved");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "project animation style save completes");
+  assert.equal((await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json())).animationStyleId, "stylized-3d-cartoon", "Video Editor style setting survives persistence");
+  const stalePromptProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  const stalePromptBoard = structuredClone(stalePromptProject.visualStoryboard);
+  const stalePromptSceneIds = stalePromptBoard.scenes.slice(0, 2).map((scene: { sceneId: string }) => scene.sceneId);
+  for (const [index, sceneId] of stalePromptSceneIds.entries()) {
+    const sceneIndex = stalePromptBoard.scenes.findIndex((scene: { sceneId: string }) => scene.sceneId === sceneId);
+    stalePromptBoard.scenes[sceneIndex] = { ...stalePromptBoard.scenes[sceneIndex], flowPrompt: `Old prompt ${index + 1} generated for expressive 2D.`, flowPromptMode: "animated-video", flowVisualMode: "animated-video", flowPromptAnimationStyleId: "expressive-2d-cartoon", flowStatus: "prompt-ready" };
+  }
+  assert.equal((await fetch(`${apiUrl}/api/projects/${mountainProject.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: stalePromptProject.researchPackage, visualStoryboard: stalePromptBoard, animationStyleId: "stylized-3d-cartoon" }) })).status, 200, "stale prompt fixture saves without changing style setting");
+  await page.goto({ url: `${viteUrl}/projects/${mountainProject.id}/editor?scene=${encodeURIComponent(stalePromptSceneIds[0])}`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".video-editor-v2"))), "reloaded editor reads stale prompt metadata");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Pengaturan Video"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-animation-style-stale")?.textContent?.includes("2 prompt lama") === true), "project settings show stale animation prompts");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-animation-style-stale button")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".confirm-submit")?.textContent?.includes("Buat ulang prompt") === true), "prompt regeneration requires explicit confirmation");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".confirm-submit")?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "regenerated prompt marks project unsaved");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "regenerated prompt save completes");
+  await waitFor(async () => {
+    const saved = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+    return stalePromptSceneIds.every((sceneId: string) => {
+      const scene = saved.visualStoryboard.scenes.find((item: { sceneId: string }) => item.sceneId === sceneId);
+      return scene?.flowPromptAnimationStyleId === "stylized-3d-cartoon" && !scene.flowPrompt.startsWith("Old prompt");
+    });
+  }, "batch stale animation prompts regenerate with new style");
+  const regeneratedStyleProject = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());
+  for (const sceneId of stalePromptSceneIds) {
+    const regenerated = regeneratedStyleProject.visualStoryboard.scenes.find((scene: { sceneId: string }) => scene.sceneId === sceneId);
+    assert.match(regenerated.flowPrompt, /stylized-3d-cartoon/);
+    assert.deepEqual(regenerated.composition, stalePromptBoard.scenes.find((scene: { sceneId: string }) => scene.sceneId === sceneId).composition, "prompt regeneration preserves existing visual composition");
+    assert.equal(regenerated.approved, stalePromptBoard.scenes.find((scene: { sceneId: string }) => scene.sceneId === sceneId).approved, "prompt regeneration preserves visual approval");
+  }
+  assert.equal(regeneratedStyleProject.animationStyleId, "stylized-3d-cartoon", "prompt regeneration preserves project style");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.editor-video-settings-heading button[aria-label="Tutup pengaturan video"]')?.click());
   await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>(".editor-scene-item")[1]?.click());
   await waitFor(() => page.evaluate((sceneId) => new URLSearchParams(location.search).get("scene") === sceneId, mountainProject.visualStoryboard.scenes[1].sceneId), "scene selection updates URL");
   const restoredEditorUrl = await page.evaluate(() => location.href);

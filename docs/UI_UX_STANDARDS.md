@@ -26,6 +26,7 @@
 - Video scene controls must keep trim, fit/crop, loop/freeze, and opt-in audio keyboard-accessible; clip audio stays off by default and separate from narration approval.
 - One Video Editor owns Visual, Gerak, Klip, Teks, Transisi, and Audio Inspector tabs. Keep prompt creation in Visual, transitions in Transisi, and approval controls in Visual. New scenes default to no added effects and Cut. Transition, trim, scene duration, and overlay edits preserve artwork approval; artwork/copy/Motion Beat changes invalidate affected approval.
 - Inspector tabs support keyboard focus/navigation, retain selected scene and playhead, and mount only active panel. Keep Flow clip audio opt-in and separate from narration approval; Audio tab monitors and links back to Narasi.
+- Animation Style Gallery uses stable IDs, shared Create draft state across AI/Manual modes, local fixed poster/optional preview assets, and explicit missing-preview fallback. Video Editor style changes must not auto-regenerate prompts or mutate media/approval; stale animated prompts need an explicit scene or batch regenerate action.
 
 ## Verification
 

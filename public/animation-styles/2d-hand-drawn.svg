@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" fill="none">
+  <rect width="640" height="420" fill="#F9F1DC"/><path fill="#E9E0C8" d="M0 335c116-28 213-25 315 4 110-30 218-31 325-3v84H0z"/>
+  <path stroke="#51493F" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" d="M94 354c47-70 104-149 184-244 77 90 140 171 201 246-113 28-266 28-385-2Z"/>
+  <path stroke="#51493F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" d="m272 129 9-18 20 24-10 15-22-4m-69 74q24 16 49 5m74 0q22 12 44-1M256 257q33 21 64 0"/>
+  <path stroke="#D66D4F" stroke-width="10" stroke-linecap="round" d="M274 320c-10-40 27-55 9-91-19-39 14-50 17-78"/><path stroke="#D66D4F" stroke-width="6" stroke-linecap="round" d="m287 164 14-17 11 19"/>
+  <path stroke="#5B8B69" stroke-width="5" stroke-linecap="round" d="M35 354c8-28 20-36 31-40m-31 40c-8-27-18-35-29-39m593 40c9-28 21-36 32-40m-32 40c-9-27-19-35-30-39"/>
+  <path fill="#D8C9A7" d="M417 123c0-18 15-33 33-33 12 0 22 6 28 16 4-3 10-5 15-5 16 0 29 13 29 29 0 4-1 7-2 10H417z"/>
+  <circle cx="509" cy="63" r="23" stroke="#C89855" stroke-width="4"/><path stroke="#C89855" stroke-width="4" stroke-linecap="round" d="M509 28V17m-28 18-8-9m64 9 8-9"/>
+</svg>

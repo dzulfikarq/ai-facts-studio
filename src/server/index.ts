@@ -13,6 +13,7 @@ import { openverseLicenseIds, reusableSceneInputSchema } from "../domain/asset-l
 import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
+import { animationStyleIdSchema, DEFAULT_ANIMATION_STYLE_ID } from "../domain/animation-styles";
 import { applyVisualStoryboard, buildVisualStoryboard, compositionForVisualScene, retimeVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
 import type { VisualPreparationJob, VisualPreparationScene } from "../domain/visual-preparation";
 import type { MotionPreparationJob, MotionPreparationScene } from "../domain/motion-preparation";
@@ -1514,6 +1515,11 @@ app.post("/api/projects", (request, response) => {
   }).strict().safeParse(request.body.creationBrief);
   if (creationBriefResult && !creationBriefResult.success) return apiError(response, 400, "Informasi project manual tidak valid.", { code: "invalid-creation-brief", issues: creationBriefResult.error.issues });
   if (creationMode === "manual" && !creationBriefResult?.success) return apiError(response, 400, "Informasi project manual belum lengkap.", { code: "missing-creation-brief" });
+  const animationStyleResult = request.body?.animationStyleId === undefined
+    ? null
+    : animationStyleIdSchema.safeParse(request.body.animationStyleId);
+  if (animationStyleResult && !animationStyleResult.success) return apiError(response, 400, "Gaya animasi tidak valid.", { code: "invalid-animation-style", issues: animationStyleResult.error.issues });
+  const animationStyleId = animationStyleResult?.success ? animationStyleResult.data : DEFAULT_ANIMATION_STYLE_ID;
   const rawRequestId = request.body?.requestId;
   const requestIdResult = rawRequestId === undefined ? null : z.string().uuid().safeParse(rawRequestId);
   if (requestIdResult && !requestIdResult.success) return apiError(response, 400, "Request ID idempotency tidak valid.", { code: "invalid-request-id" });
@@ -1537,6 +1543,7 @@ app.post("/api/projects", (request, response) => {
   const stored: StoredProject = {
     creationMode,
     ...(creationBriefResult?.success ? { creationBrief: creationBriefResult.data } : {}),
+    animationStyleId,
     researchPackage: parsed.data, visualStoryboard: buildVisualStoryboard(parsed.data), visualAssets: [], audio: null, pendingTts: null,
     narrationMode: "unset", researchReviewStatus: "needs-review",
     outro: selectedAsset ? { assetId: selectedAsset.id, enabled: true, trimInSec: 0, trimOutSec: selectedAsset.duration_sec, audioEnabled: false } : null,
@@ -1568,6 +1575,10 @@ app.put("/api/projects/:id", async (request, response) => {
     ? z.enum(["unset", "audio", "manual"]).safeParse(request.body.narrationMode)
     : null;
   if (narrationMode && !narrationMode.success) return apiError(response, 400, "Pilihan mode narasi tidak valid.", { code: "invalid-narration-mode" });
+  const animationStyleResult = request.body && Object.hasOwn(request.body, "animationStyleId")
+    ? animationStyleIdSchema.safeParse(request.body.animationStyleId)
+    : null;
+  if (animationStyleResult && !animationStyleResult.success) return apiError(response, 400, "Gaya animasi tidak valid.", { code: "invalid-animation-style", issues: animationStyleResult.error.issues });
   const project = projectFromRow(row);
   if (invalidStoryboardResponse(response, project)) return;
   let selectedOutro = project.outro ?? null;
@@ -1623,6 +1634,7 @@ app.put("/api/projects/:id", async (request, response) => {
   const factsChanged = factReviewContent(project.researchPackage) !== factReviewContent(storyboardResearch.data);
   project.researchPackage = storyboardResearch.data;
   project.visualStoryboard = storyboard;
+  if (animationStyleResult?.success) project.animationStyleId = animationStyleResult.data;
   project.outro = selectedOutro;
   if (narrationMode?.success) project.narrationMode = narrationMode.data;
   if (factsChanged) project.researchReviewStatus = "needs-review";

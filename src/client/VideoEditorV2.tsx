@@ -5,6 +5,7 @@ import type { AnyZodObject } from "remotion";
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Film, ImagePlus, Pause, Play, Plus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import { applyVisualStoryboard, compositionForVisualScene, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
+import { ANIMATION_STYLE_PRESETS, type AnimationStyleId } from "../domain/animation-styles";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
 import { durationInFrames, FPS, sceneTimes, timelineDuration } from "../domain/timeline";
@@ -55,9 +56,12 @@ const motionEasingLabels: Record<MotionCuePlan["easing"], string> = { linear: "L
 const isMotionEffect = (cue: MotionCuePlan["cue"]): cue is MotionEffectCue => cue !== "cut" && cue !== "dissolve" && cue !== "slide-transition" && cue !== "wipe";
 const isMotionEffectPlan = (plan: MotionCuePlan) => isMotionEffect(plan.cue) && !isSceneTransitionPlan(plan);
 
-export function VideoEditorV2({ research, storyboard, gate, saved, busy, generatingSceneId, assets, projectId, outros, outro, outroAsset, outroError, audio, audioMatchesNarration, hasPendingAudio, narrationMode, selectedSceneId, sceneMediaErrors, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onMotionDirectionChange, onTitleChange, onOutroChange, onOpenOutroLibrary, onDurationChange, onCaptionSegmentsChange, onOverlaySettingsChange, onSelectScene, onBack, onOpenNarration, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionBeatPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
+export function VideoEditorV2({ research, storyboard, animationStyleId, onAnimationStyleChange, onRegenerateStaleFlowPrompts, gate, saved, busy, generatingSceneId, assets, projectId, outros, outro, outroAsset, outroError, audio, audioMatchesNarration, hasPendingAudio, narrationMode, selectedSceneId, sceneMediaErrors, imageProviderCatalog, preparation, motionPreparation, aiMode, plannerAvailable, models, selectedModel, planningSceneId, vectorAvailable, vectorizingSceneId, librarySceneId, libraryInitialTab, onChange, onMotionDirectionChange, onTitleChange, onOutroChange, onOpenOutroLibrary, onDurationChange, onCaptionSegmentsChange, onOverlaySettingsChange, onSelectScene, onBack, onOpenNarration, onExport, onSave, onGenerate, onUseCurrentComposition, onSetSharedVisualWorld, onOpenLibrary, onCloseLibrary, onDeleteAsset, onUploadAsset, onUseAsset, onApplyGeneratedAiImage, onImportOpenverse, onImportTabler, onUseReusableScene, onSaveReusableScene, onConfirmUserAsset, onSelectModel, onPlan, onGenerateVector, onPrepareIssues, onGenerateMotion, onMotionBeatPreset, onPrepareMotion, onCancelMotion, onRetryMotion, onSelectAiImageSource, onGenerateAiImage, onFlowPromptChange, onFlowVisualModeChange, onRemoveSceneMedia, onStyleLockChange, onPrepareFlowPrompts, onApplyStyleLock, onUploadFlowReference, onImportFlowIllustration, onPrepareSceneMedia, onApplySceneMedia, onApplyFlowBatch }: {
   research: ResearchPackage;
   storyboard: VisualStoryboard;
+  animationStyleId: AnimationStyleId;
+  onAnimationStyleChange: (styleId: AnimationStyleId) => void;
+  onRegenerateStaleFlowPrompts: () => void;
   gate: VisualQualityGate;
   saved: boolean;
   busy: boolean;
@@ -124,7 +128,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   onRetryMotion: (sceneIds: string[], intensity: MotionIntensity) => void;
   onSelectAiImageSource: (sceneId: string) => Promise<boolean>;
   onGenerateAiImage: (sceneId: string, provider: string, model: string, prompt: string, resolution: string) => Promise<VisualAsset | null>;
-  onFlowPromptChange: (sceneId: string, prompt: string) => void;
+  onFlowPromptChange: (sceneId: string, prompt: string, generatedAnimationStyleId?: AnimationStyleId | null) => void;
   onFlowVisualModeChange: (sceneId: string, mode: "still-image" | "animated-video") => void;
   onRemoveSceneMedia: (sceneId: string) => void;
   onStyleLockChange: (styleLock: GoogleFlowStyleLock) => void;
@@ -166,6 +170,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
   const uploadInput = useRef<HTMLInputElement>(null);
   const motionClipGesture = useRef<{ pointerId: number; actionId: string; startX: number; railWidth: number; startTimeSec: number; timingScale: number } | null>(null);
   const selectedScene = storyboard.scenes.find((scene) => scene.sceneId === selectedSceneId) ?? storyboard.scenes[0]!;
+  const staleAnimationPromptCount = storyboard.scenes.filter((scene) => scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && scene.flowPrompt && scene.flowPromptAnimationStyleId !== animationStyleId).length;
   const selectedComposition = useMemo(() => compositionForVisualScene(storyboard, selectedScene), [storyboard, selectedScene]);
   const registerBatchLauncher = useCallback((open: (() => void) | null) => setBatchLauncher(() => open), []);
   const selectedMotionAction = selectedMotionBeatRef?.sceneId === selectedScene.sceneId
@@ -476,8 +481,12 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
     </header>
 
     {videoSettingsOpen && <section id="editor-video-settings" className="editor-video-settings" aria-labelledby="editor-video-settings-title">
-      <div className="editor-video-settings-heading"><div><span className="eyebrow">PENGATURAN LEVEL VIDEO</span><h2 id="editor-video-settings-title">Outro</h2><p>Outro ditambahkan setelah scene terakhir; durasi scene dan narasi tetap.</p></div><button type="button" className="button button-light icon-button" aria-label="Tutup pengaturan video" onClick={() => setVideoSettingsOpen(false)}><X size={16} aria-hidden="true"/></button></div>
-      <div className="editor-outro-controls">
+       <div className="editor-video-settings-heading"><div><span className="eyebrow">PENGATURAN LEVEL VIDEO</span><h2 id="editor-video-settings-title">Gaya Animasi & Outro</h2><p>Gaya berlaku untuk prompt baru semua scene; perubahan tidak membuat ulang prompt atau media otomatis.</p></div><button type="button" className="button button-light icon-button" aria-label="Tutup pengaturan video" onClick={() => setVideoSettingsOpen(false)}><X size={16} aria-hidden="true"/></button></div>
+       <div className="editor-animation-style-controls">
+         <label className="editor-field">Gaya Animasi<select value={animationStyleId} onChange={(event) => onAnimationStyleChange(event.target.value as AnimationStyleId)} disabled={busy}>{ANIMATION_STYLE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+         {staleAnimationPromptCount > 0 && <div className="editor-animation-style-stale" role="status"><span>{staleAnimationPromptCount} prompt lama belum memakai gaya ini. Media impor dan approval tetap.</span><button type="button" className="button button-light" onClick={onRegenerateStaleFlowPrompts} disabled={busy}><RotateCcw size={14} aria-hidden="true"/>Buat Ulang Prompt dengan Gaya Baru</button></div>}
+       </div>
+       <div className="editor-outro-controls">
         <label className="editor-field">Outro Video<select aria-label="Pilih outro video" value={outro?.assetId ?? ""} onChange={(event) => {
           const asset = outros.find((item) => item.id === event.target.value);
           onOutroChange(asset ? { assetId: asset.id, enabled: true, trimInSec: 0, trimOutSec: asset.durationSec, audioEnabled: false } : null);
@@ -807,7 +816,7 @@ export function VideoEditorV2({ research, storyboard, gate, saved, busy, generat
             <button type="button" className="button button-light full-button" onClick={onOpenNarration}>Kelola audio dan suara di Narasi</button>
           </>}
 
-          {tab === "visual" && selectedScene.illustrationWorkflow === "google-flow" && <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} busy={busy} showPanel onFlowPromptChange={onFlowPromptChange} onFlowVisualModeChange={onFlowVisualModeChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onPrepareSceneMedia={onPrepareSceneMedia} onApplySceneMedia={onApplySceneMedia} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>}
+          {tab === "visual" && selectedScene.illustrationWorkflow === "google-flow" && <GoogleFlowPanel research={research} storyboard={storyboard} scene={selectedScene} assets={assets} animationStyleId={animationStyleId} busy={busy} showPanel onFlowPromptChange={onFlowPromptChange} onFlowVisualModeChange={onFlowVisualModeChange} onStyleLockChange={onStyleLockChange} onPreparePrompts={onPrepareFlowPrompts} onApplyStyleLock={onApplyStyleLock} onUploadReference={onUploadFlowReference} onUploadIllustration={onImportFlowIllustration} onPrepareSceneMedia={onPrepareSceneMedia} onApplySceneMedia={onApplySceneMedia} onApplyBatch={onApplyFlowBatch} onRegisterBatchLauncher={registerBatchLauncher}/>}
         </div>
         {tab === "visual" && <footer className="editor-inspector-footer">
           {sceneIssueList.length > 0 && <details className="editor-advanced editor-validation"><summary>{needsArtwork ? "Masalah visual" : `${sceneIssueList.length} pemeriksaan`}</summary>{needsArtwork && <p>Ilustrasi belum tersedia.</p>}{!needsArtwork && <ul>{sceneIssueList.map((issue) => <li key={issue}>{issue}</li>)}</ul>}</details>}

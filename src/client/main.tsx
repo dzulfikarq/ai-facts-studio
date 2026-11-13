@@ -14,6 +14,7 @@ import type { VisualAsset } from "../domain/visual-assets";
 import { isAnimatedMediaFile, type SceneMedia } from "../domain/scene-media";
 import type { OutroLibraryAsset, OutroSelection } from "../domain/outro";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
+import { DEFAULT_ANIMATION_STYLE_ID, getAnimationStylePreset, type AnimationStyleId } from "../domain/animation-styles";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { AssetPlacement, ReusableSceneEntry } from "./SmartAssetLibraryDialog";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
@@ -33,6 +34,7 @@ import { WorkflowStepper } from "./WorkflowStepper";
 import { ReviewStep } from "./ReviewStep";
 import { AiGenerationPanel, GeminiTextQuotaSummary, type ProductionStatus } from "./AiGenerationPanel";
 import { ManualProjectPanel } from "./ManualProjectPanel";
+import { AnimationStyleGallery } from "./AnimationStyleGallery";
 import { VideoEditorV2 } from "./VideoEditorV2";
 import { OutroLibraryPanel } from "./OutroLibraryPanel";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
@@ -63,6 +65,7 @@ type Project = {
   id: string;
   creationMode: "manual" | "ai-generated" | "imported" | "sample" | "legacy";
   creationBrief?: ManualProjectBrief;
+  animationStyleId?: AnimationStyleId;
   researchPackage: ResearchPackage;
   visualStoryboard: VisualStoryboard;
   visualStoryboardError?: string;
@@ -187,6 +190,7 @@ function App() {
   const activeStep: WorkspaceStep = route.view === "workspace" ? route.step : "materials";
   const [theme, setTheme] = useThemePreference();
   const [createMode, setCreateMode] = useState<"ai" | "manual">("ai");
+  const [selectedCreateAnimationStyleId, setSelectedCreateAnimationStyleId] = useState<AnimationStyleId>(DEFAULT_ANIMATION_STYLE_ID);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
@@ -740,7 +744,7 @@ function App() {
   async function createAiProject(researchPackage: ResearchPackage, requestId: string) {
     setBusy(true);
     try {
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, creationMode: "ai-generated", ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, creationMode: "ai-generated", animationStyleId: selectedCreateAnimationStyleId, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       setCreateDraftUnsaved(false);
       await refresh().catch(() => undefined);
       return { id: created.id, title: created.researchPackage.title };
@@ -750,7 +754,7 @@ function App() {
   async function createManualProject(researchPackage: ResearchPackage, requestId: string, creationBrief: ManualProjectBrief) {
     setBusy(true);
     try {
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, creationMode: "manual", creationBrief, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, requestId, creationMode: "manual", creationBrief, animationStyleId: selectedCreateAnimationStyleId, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       await refresh().catch(() => undefined);
       return { id: created.id, title: created.researchPackage.title };
     } finally { setBusy(false); }
@@ -762,7 +766,7 @@ function App() {
     setBusy(true);
     try {
       const researchPackage = await api<ResearchPackage>("/api/sample?topic=volcano-formation");
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, creationMode: "sample", ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, creationMode: "sample", animationStyleId: selectedCreateAnimationStyleId, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       const seeded = seedVolcanoVisualSample(created.visualStoryboard);
       const prepared = await api<Project>(`/api/projects/${created.id}`, jsonRequest("PUT", { researchPackage: created.researchPackage, visualStoryboard: seeded }));
       await refresh();
@@ -783,7 +787,7 @@ function App() {
     setBusy(true);
     try {
       const researchPackage = JSON.parse(jsonDraft) as ResearchPackage;
-      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, creationMode: "imported", ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
+      const created = await api<Project>("/api/projects", jsonRequest("POST", { researchPackage, creationMode: "imported", animationStyleId: selectedCreateAnimationStyleId, ...(selectedCreateOutroId === undefined ? {} : { outroId: selectedCreateOutroId }) }));
       await refresh();
       await openProject(created.id, undefined, true);
     } catch (error) { setMessage(friendlyError(error)); }
@@ -1308,12 +1312,12 @@ function App() {
     finally { setBusy(false); }
   }
 
-  function saveFlowPrompt(sceneId: string, prompt: string) {
+  function saveFlowPrompt(sceneId: string, prompt: string, generatedAnimationStyleId?: AnimationStyleId | null) {
     if (!project) return;
     setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
       if (scene.sceneId !== sceneId) return scene;
       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
+        return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, ...(generatedAnimationStyleId !== undefined ? { flowPromptAnimationStyleId: generatedAnimationStyleId ?? undefined } : {}), flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
   }
@@ -1327,10 +1331,10 @@ function App() {
     if (!project || !prompts.length) return;
     const byScene = new Map(prompts.map((item) => [item.sceneId, item.prompt]));
     setProject((current) => current ? { ...current, visualStoryboard: { ...current.visualStoryboard, scenes: current.visualStoryboard.scenes.map((scene) => {
-      const prompt = byScene.get(scene.sceneId);
-      if (!prompt || scene.flowPrompt) return scene;
-      const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
+       const prompt = byScene.get(scene.sceneId);
+       if (!prompt || scene.flowPrompt) return scene;
+       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
+       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowPromptAnimationStyleId: scene.flowVisualMode === "animated-video" ? current.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID : undefined, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
     setMessage(`${prompts.length} prompt Flow disiapkan; ilustrasi yang sudah ada tidak diubah.`);
@@ -1339,9 +1343,9 @@ function App() {
   async function applyFlowStyleLock(prompts: Array<{ sceneId: string; prompt: string }>) {
     if (!project || busy) return;
     if (project.visualStoryboard.scenes.some((scene) => scene.flowPrompt) && !await askConfirmation({
-      title: "Terapkan Style Lock ke semua prompt?",
-      message: "Prompt Flow tersimpan akan dibuat ulang. Ilustrasi dan approval scene tidak diubah.",
-      confirmLabel: "Perbarui semua prompt",
+      title: "Buat ulang prompt Google Flow?",
+      message: "Prompt scene terpilih akan dibuat ulang memakai Gaya Animasi dan Style Lock project. Media, visual, serta approval tidak diubah.",
+      confirmLabel: "Buat ulang prompt",
       cancelLabel: "Pertahankan prompt",
       tone: "warning",
     })) return;
@@ -1350,10 +1354,32 @@ function App() {
       const prompt = byScene.get(scene.sceneId);
       if (!prompt) return scene;
       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-       return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
+        return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowPromptAnimationStyleId: scene.flowVisualMode === "animated-video" ? current.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID : undefined, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
-    setMessage("Style Lock diterapkan ke prompt semua scene. Ilustrasi tidak berubah.");
+    setMessage(`${prompts.length} prompt Google Flow diperbarui. Media, visual, dan approval tidak berubah.`);
+  }
+
+  function regenerateStaleFlowPrompts() {
+    if (!project || !research) return;
+    const storyboard = project.visualStoryboard;
+    const animationStyleId = project.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID;
+    const prompts = storyboard.scenes.filter((scene) => scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && scene.flowPrompt && scene.flowPromptAnimationStyleId !== animationStyleId).map((scene) => {
+      const index = storyboard.scenes.findIndex((item) => item.sceneId === scene.sceneId);
+      const previous = storyboard.scenes.slice(0, index).reverse().find((item) => item.flowPrompt || compositionForVisualScene(storyboard, item).layers.some((layer) => layer.nodes.some((node) => node.type === "image")));
+      return {
+        sceneId: scene.sceneId,
+        prompt: buildIllustrationPrompt({ research, storyboard, scene, styleLock: storyboard.styleLock, mode: scene.flowVisualMode, animationStyleId,
+          ...(previous ? { previousReference: { sceneNumber: previous.sceneNumber, name: previous.headline, style: scene.flowVisualMode === "animated-video" ? getAnimationStylePreset(animationStyleId).name : storyboard.styleLock.illustrationStyle } } : {}),
+        }),
+      };
+    });
+    void applyFlowStyleLock(prompts);
+  }
+
+  function updateProjectAnimationStyle(animationStyleId: AnimationStyleId) {
+    setProject((current) => current ? { ...current, animationStyleId } : current);
+    setSaved(false);
   }
 
   async function uploadFlowReference(file: File): Promise<VisualAsset | null> {
@@ -1832,7 +1858,7 @@ function App() {
     if (!project || !research) return null;
     setBusy(true);
     try {
-      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard, outro: project.outro }));
+      const updated = await api<Project>(`/api/projects/${project.id}`, jsonRequest("PUT", { researchPackage: research, visualStoryboard: project.visualStoryboard, outro: project.outro, ...(project.animationStyleId ? { animationStyleId: project.animationStyleId } : {}) }));
       setProject(updated);
       setResearch(updated.researchPackage);
       setSaved(true);
@@ -2184,6 +2210,10 @@ function App() {
             <strong>Buat Manual</strong><span>Tanpa AI. Susun storyboard sendiri di project.</span>
           </button>
         </div>
+        <AnimationStyleGallery selectedId={selectedCreateAnimationStyleId} onChange={(styleId) => {
+          setSelectedCreateAnimationStyleId(styleId);
+          setCreateDraftUnsaved(true);
+        }} disabled={busy} description="Pilihan sama berlaku untuk Generate with AI dan Buat Manual. Preview memakai aset lokal tetap; bukan hasil project." />
         <section className="create-outro-choice" aria-labelledby="create-outro-title">
           <div className="create-outro-copy"><h2 id="create-outro-title">Outro Video (Opsional)</h2><p>Default library terpilih untuk project baru. Pilih Tanpa Outro kapan saja.</p></div>
           <label>Outro Video
@@ -2298,6 +2328,9 @@ function App() {
           {activeStep === "video-editor" && <VideoEditorV2
             research={research}
             storyboard={project.visualStoryboard}
+            animationStyleId={project.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID}
+            onAnimationStyleChange={updateProjectAnimationStyle}
+            onRegenerateStaleFlowPrompts={regenerateStaleFlowPrompts}
             gate={visualGate!}
             saved={saved}
             busy={busy || project.visualPreparation?.status === "running" || project.motionPreparation?.status === "running"}

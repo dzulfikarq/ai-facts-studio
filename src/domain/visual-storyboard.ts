@@ -9,6 +9,7 @@ import { visualSemanticPlanSchema, type VisualSemanticPlan } from "./visual-sema
 import { motionActionsSchema, motionIntensitySchema, motionKeyframesWithinSafeCanvas, motionTargetNode, type MotionIntensity } from "./motion-director";
 import { defaultGoogleFlowStyleLock, googleFlowStyleLockSchema, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken } from "./google-flow";
 import { sceneMediaSchema } from "./scene-media";
+import { animationStyleIdSchema } from "./animation-styles";
 
 export { visualObjectIds, visualObjectLibrary, visualObjectsForText } from "./visual-objects";
 export type { VisualObjectId } from "./visual-objects";
@@ -97,6 +98,7 @@ export const visualStoryboardSceneSchema = z.object({
   sceneToken: z.string().trim().min(1).max(100).optional(),
   recommendedFilename: z.string().trim().min(1).max(180).optional(),
   flowPrompt: z.string().max(12000).optional(),
+  flowPromptAnimationStyleId: animationStyleIdSchema.optional(),
   flowVisualMode: z.enum(["still-image", "animated-video"]).default("still-image"),
   flowPromptMode: z.enum(["still-image", "animated-video"]).default("still-image"),
   sceneMedia: sceneMediaSchema.optional(),
@@ -336,8 +338,9 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       approved: false,
       approvedFingerprint: null,
       sceneToken: prior?.sceneToken ?? stableGoogleFlowSceneToken(scene.id),
-      recommendedFilename: recommendedGoogleFlowFilename({ sceneId: scene.id, sceneNumber: index + 1, headline: scene.onScreenText || `Scene ${index + 1}`, sceneToken: prior?.sceneToken }),
-      ...(prior?.flowPrompt ? { flowPrompt: prior.flowPrompt } : {}),
+       recommendedFilename: recommendedGoogleFlowFilename({ sceneId: scene.id, sceneNumber: index + 1, headline: scene.onScreenText || `Scene ${index + 1}`, sceneToken: prior?.sceneToken }),
+       ...(prior?.flowPrompt ? { flowPrompt: prior.flowPrompt } : {}),
+       ...(prior?.flowPromptAnimationStyleId ? { flowPromptAnimationStyleId: prior.flowPromptAnimationStyleId } : {}),
        flowStatus: sameCopy ? prior?.flowStatus ?? (hasRaster || prior?.sceneMedia ? "illustration-imported" as const : prior?.flowPrompt ? "prompt-ready" as const : "awaiting-illustration" as const)
          : hasRaster || prior?.sceneMedia ? prior?.authoringConfirmed ? "ready-for-review" as const : "illustration-imported" as const
           : prior?.flowPrompt ? "prompt-ready" as const : "awaiting-illustration" as const,

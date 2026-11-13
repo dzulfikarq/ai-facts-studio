@@ -22,6 +22,10 @@
 .editor-video-settings-heading p { margin: 0; color: var(--text-secondary); font-size: 12px; }
 .editor-outro-controls { display: grid; grid-template-columns: minmax(180px,1fr) minmax(180px,1.25fr) minmax(180px,1fr); align-items: center; gap: 10px 14px; margin-top: 10px; }
 .editor-outro-controls>.editor-field { margin: 0; }
+.editor-animation-style-controls { display: grid; grid-template-columns: minmax(220px,320px) minmax(0,1fr); align-items: end; gap: 10px 14px; margin-top: 10px; }
+.editor-animation-style-controls>.editor-field { margin: 0; }
+.editor-animation-style-stale { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.editor-animation-style-stale .button { flex: none; min-height: 38px; font-size: 12px; }
 .editor-outro-toggle { min-width: 0; min-height: 40px; display: flex; align-items: center; gap: 8px; color: var(--text-primary); font-size: 13px; }
 .editor-outro-toggle input { width: 18px; height: 18px; flex: none; margin: 0; accent-color: var(--primary); }
 .editor-outro-preview { min-width: 0; display: flex; align-items: center; gap: 9px; }
@@ -261,6 +265,10 @@
 .google-flow-actions .button,.google-flow-project-actions .button { min-height: 40px; padding-inline: 10px; font-size: 12px; }
 .google-flow-identity { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); font-size: 12px; }
 .google-flow-identity small,.google-flow-identity span { color: var(--text-secondary); overflow-wrap: anywhere; }
+.google-flow-animation-style { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; color: var(--text-secondary); font-size: 12px; }
+.google-flow-animation-style strong { color: var(--text-primary); }
+.google-flow-style-stale { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--text-primary); font-size: 12px; line-height: 1.5; }
+.google-flow-style-stale .button { min-height: 38px; justify-self: start; font-size: 12px; }
 .google-flow-prompt-details { display: grid; gap: 9px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .google-flow-prompt-details>summary { color: var(--text-primary); cursor: pointer; font-size: 12px; font-weight: 700; }
 .google-flow-prompt { min-height: 118px; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -336,7 +344,7 @@
 .google-flow-batch-dialog>footer .button { min-height: 42px; }
 .google-flow-batch-dialog button:focus-visible,.google-flow-batch-dialog select:focus-visible,.google-flow-panel button:focus-visible,.google-flow-panel a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 620px) {
-  .editor-outro-controls { grid-template-columns: minmax(0,1fr); }
+  .editor-outro-controls,.editor-animation-style-controls { grid-template-columns: minmax(0,1fr); }
   .editor-outro-trim { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .editor-video-settings { max-height: 42vh; }
   .google-flow-style-fields { grid-template-columns: minmax(0,1fr); }

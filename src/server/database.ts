@@ -7,6 +7,7 @@ import { aiGenerationSchema } from "./ai-generation/provider";
 import { visualAssetSchema, type VisualAsset } from "../domain/visual-assets";
 import { outroSelectionSchema } from "../domain/outro";
 import type { ManualProjectBrief } from "../domain/manual-project";
+import type { AnimationStyleId } from "../domain/animation-styles";
 
 export type ProjectCreationMode = "manual" | "ai-generated" | "imported" | "sample" | "legacy";
 
@@ -259,6 +260,7 @@ export type StoredAudio = {
 export type StoredProject = {
   creationMode?: ProjectCreationMode;
   creationBrief?: ManualProjectBrief;
+  animationStyleId?: AnimationStyleId;
   researchPackage: import("../domain/research").ResearchPackage;
   visualStoryboard: VisualStoryboard;
   visualAssets: VisualAsset[];

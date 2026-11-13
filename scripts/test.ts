@@ -23,6 +23,8 @@ import { aiVectorIllustrationSchema, parseAiVectorIllustration, vectorIllustrati
 import { motionCuePlanSchema, updateVisualImageNode, visualCompositionSchema, visualImageNodes } from "../src/domain/visual-composition";
 import { VisualCompositionView } from "../src/video/visual-primitives";
 import { buildIllustrationPrompt } from "../src/domain/illustration-prompt";
+import { ANIMATION_STYLE_PRESETS, DEFAULT_ANIMATION_STYLE_ID, animationStyleIdSchema, getAnimationStylePreset } from "../src/domain/animation-styles";
+import { AnimationStyleGallery } from "../src/client/AnimationStyleGallery";
 import { googleFlowPromptPack, matchGoogleFlowFiles, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken, validGoogleFlowAssignments } from "../src/domain/google-flow";
 import { visualAssetSchema, validateRasterImage } from "../src/domain/visual-assets";
 import { visualSemanticPlanSchema } from "../src/domain/visual-semantic-plan";
@@ -207,6 +209,11 @@ assert.ok(mountainStoryboard.scenes.every((scene) => scene.illustrationWorkflow 
 assert.ok(mountainStoryboard.scenes.every((scene) => scene.flowVisualMode === "animated-video"), "new scenes default to Google Flow animation mode");
 const legacyFlowModes = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map(({ flowVisualMode: _mode, flowPromptMode: _promptMode, ...scene }) => scene) });
 assert.ok(legacyFlowModes.scenes.every((scene) => scene.flowVisualMode === "still-image" && scene.flowPromptMode === "still-image"), "legacy storyboard defaults to still-image prompts without breaking schema compatibility");
+const animationStyleTaggedBoard = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map((scene, index) => ({ ...scene, flowPrompt: `Flow prompt ${index}`, flowVisualMode: "animated-video", flowPromptMode: "animated-video", flowPromptAnimationStyleId: ANIMATION_STYLE_PRESETS[index % ANIMATION_STYLE_PRESETS.length]!.id })) });
+assert.ok(animationStyleTaggedBoard.scenes.every((scene, index) => scene.flowPromptAnimationStyleId === ANIMATION_STYLE_PRESETS[index % ANIMATION_STYLE_PRESETS.length]!.id), "stable animation-style metadata validates per scene");
+const legacyPromptMetadata = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map((scene) => ({ ...scene, flowPrompt: "Legacy animation prompt", flowVisualMode: "animated-video", flowPromptMode: "animated-video" })) });
+assert.ok(legacyPromptMetadata.scenes.every((scene) => scene.flowPromptAnimationStyleId === undefined), "legacy prompts load without implicit style rewrite");
+assert.equal(buildVisualStoryboard(mountain, animationStyleTaggedBoard).scenes[0]!.flowPromptAnimationStyleId, animationStyleTaggedBoard.scenes[0]!.flowPromptAnimationStyleId, "prompt style metadata survives storyboard save/reload merge");
 const testMediaHash = (character: string) => character.repeat(64);
 const testSceneMedia = sceneMediaSchema.parse({
   type: "video", name: "flow-clip.gif", file: `${testMediaHash("b")}.mp4`, sha256: testMediaHash("b"), bytes: 4096,
@@ -222,6 +229,10 @@ const mediaStoryboard = { ...mountainStoryboard, scenes: mountainStoryboard.scen
 const mediaResearch = applyVisualStoryboard(mountain, mediaStoryboard);
 assert.equal(mediaResearch.scenes[0]!.sceneMedia?.sha256, testSceneMedia.sha256, "animated media projects from Visual Storyboard into Research Package");
 assert.equal(buildVisualStoryboard(mediaResearch, mediaStoryboard).scenes[0]!.sceneMedia?.file, testSceneMedia.file, "animated media survives storyboard rebuild/reload path");
+const mediaWithAnimationStyle = { ...mediaStoryboard, scenes: mediaStoryboard.scenes.map((scene, index) => index === 0 ? { ...scene, flowPrompt: "Saved Flow animation prompt", flowVisualMode: "animated-video" as const, flowPromptMode: "animated-video" as const, flowPromptAnimationStyleId: DEFAULT_ANIMATION_STYLE_ID } : scene) };
+const mediaStyleRebuild = buildVisualStoryboard(mediaResearch, mediaWithAnimationStyle);
+assert.equal(mediaStyleRebuild.scenes[0]!.sceneMedia?.file, testSceneMedia.file, "style metadata merge leaves imported animated media untouched");
+assert.equal(mediaStyleRebuild.scenes[0]!.flowPromptAnimationStyleId, DEFAULT_ANIMATION_STYLE_ID, "style metadata and media both survive storyboard rebuild");
 const oldWorkflowBoard = visualStoryboardSchema.parse({ ...mountainStoryboard, scenes: mountainStoryboard.scenes.map(({ illustrationWorkflow: _workflow, ...scene }) => scene) });
 assert.ok(oldWorkflowBoard.scenes.every((scene) => scene.illustrationWorkflow === "google-flow"), "legacy persisted storyboard fills Google Flow source preference without migration loss");
 assert.ok(mountainStoryboard.scenes.every((scene) => /^flow-[a-f0-9]{16}$/.test(scene.sceneToken) && scene.recommendedFilename.includes(scene.sceneToken)), "all scenes persist stable token and tokenized recommended filename");
@@ -527,7 +538,36 @@ assert.match(rasterPrompt, /SUNGAI flows-to LAUT.*SUNGAI carries MINERAL/s, "riv
 const animatedPrompt = buildIllustrationPrompt({ research: seaSalt, storyboard: saltStoryboard, scene: saltStoryboard.scenes[2]!, mode: "animated-video" });
 assert.match(animatedPrompt, /Create one continuous animated video clip/);
 assert.match(animatedPrompt, /Primary motion: Animate/);
-assert.match(animatedPrompt, /never chaotic or overly cinematic/);
+assert.match(animatedPrompt, /expressive-2d-cartoon · Kartun 2D Ekspresif/);
+assert.match(animatedPrompt, /Scene duration: exactly .* seconds\. Compose for portrait 9:16/);
+assert.match(animatedPrompt, /Maintain the selected preset across all scenes in this project/);
+assert.deepEqual(ANIMATION_STYLE_PRESETS.map((preset) => preset.id), ["expressive-2d-cartoon", "2d-motion-graphics", "2d-cinematic", "2d-hand-drawn", "2d-paper-cutout", "stylized-3d-cartoon"]);
+assert.equal(DEFAULT_ANIMATION_STYLE_ID, "expressive-2d-cartoon");
+assert.equal(animationStyleIdSchema.safeParse("stylized-3d-cartoon").success, true, "stable 3D style ID validates");
+assert.equal(animationStyleIdSchema.safeParse("Kartun 3D Stylized").success, false, "display names are not style identifiers");
+assert.equal(getAnimationStylePreset("legacy-unknown-style").id, DEFAULT_ANIMATION_STYLE_ID, "unknown and legacy style IDs fall back without throwing");
+for (const preset of ANIMATION_STYLE_PRESETS) {
+  assert.ok(preset.thumbnail.startsWith("/animation-styles/"), `${preset.id} uses fixed local poster`);
+  assert.equal(existsSync(new URL(`../public${preset.thumbnail}`, import.meta.url)), true, `${preset.id} poster exists locally`);
+  assert.equal(preset.previewVideo, null, `${preset.id} does not claim unavailable MP4 preview`);
+}
+assert.equal(new Set(ANIMATION_STYLE_PRESETS.map((preset) => `${preset.prompt.style}\n${preset.prompt.motion}\n${preset.prompt.negative}`)).size, 6, "all preset prompt configurations differ");
+const presetPrompts = ANIMATION_STYLE_PRESETS.map((preset) => buildIllustrationPrompt({ research: seaSalt, storyboard: saltStoryboard, scene: saltStoryboard.scenes[2]!, mode: "animated-video", animationStyleId: preset.id }));
+assert.equal(new Set(presetPrompts).size, 6, "same scene produces six different animation prompts");
+for (const [index, preset] of ANIMATION_STYLE_PRESETS.entries()) assert.match(presetPrompts[index]!, new RegExp(preset.id));
+assert.match(presetPrompts[1]!, /Flat vector educational motion graphics.*scientific diagrams/s);
+assert.match(presetPrompts[2]!, /Cinematic hand-painted 2D animation.*atmospheric depth/s);
+assert.match(presetPrompts[3]!, /Traditional hand-drawn 2D animation.*organic linework/s);
+assert.match(presetPrompts[4]!, /Layered 2D paper cutout animation.*tactile paper fibers/s);
+assert.match(presetPrompts[5]!, /Stylized 3D cartoon animation.*soft global illumination/s);
+assert.doesNotMatch(presetPrompts[5]!, /Avoid 3D/i, "3D preset negative instructions do not prohibit 3D");
+assert.doesNotMatch(presetPrompts[5]!, /Soft flat 2D lighting|Required minimal shading/i, "default 2D Style Lock does not contradict 3D preset");
+assert.match(presetPrompts[5]!, /Project Style Lock.*selected preset controls/s, "Style Lock remains subordinate to selected animation style");
+const galleryMarkup = renderToStaticMarkup(React.createElement(AnimationStyleGallery, { selectedId: DEFAULT_ANIMATION_STYLE_ID, onChange: () => {} }));
+assert.equal((galleryMarkup.match(/<article class="animation-style-card/g) ?? []).length, 6, "Create gallery renders six presets");
+assert.match(galleryMarkup, /data-animation-style-id="expressive-2d-cartoon"/);
+assert.match(galleryMarkup, /aria-pressed="true"/);
+assert.equal((galleryMarkup.match(/<video\b/g) ?? []).length, 0, "gallery does not eagerly load preview videos");
 const oversizedPreviousReference = { sceneNumber: 1, name: "Previous scene", style: mountainStoryboard.styleLock.illustrationStyle, prompt: `PREVIOUS_PROMPT_MUST_NOT_BE_COPIED ${"previous prompt content ".repeat(600)}` };
 const followupPrompt = buildIllustrationPrompt({ research: mountain, storyboard: mountainStoryboard, scene: mountainStoryboard.scenes[1]!, previousReference: oversizedPreviousReference });
 assert.ok(followupPrompt.length <= 12000, "previous Flow prompt is not recursively copied into the next scene prompt");

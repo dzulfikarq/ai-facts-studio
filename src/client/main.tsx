@@ -2213,7 +2213,7 @@ function App() {
         <AnimationStyleGallery selectedId={selectedCreateAnimationStyleId} onChange={(styleId) => {
           setSelectedCreateAnimationStyleId(styleId);
           setCreateDraftUnsaved(true);
-        }} disabled={busy} description="Pilihan sama berlaku untuk Generate with AI dan Buat Manual. Preview memakai aset lokal tetap; bukan hasil project." />
+        }} disabled={busy} description="Pilihan gaya berlaku untuk Generate with AI dan Buat Manual." />
         <section className="create-outro-choice" aria-labelledby="create-outro-title">
           <div className="create-outro-copy"><h2 id="create-outro-title">Outro Video (Opsional)</h2><p>Default library terpilih untuk project baru. Pilih Tanpa Outro kapan saja.</p></div>
           <label>Outro Video

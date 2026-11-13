@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import { ChevronDown, Link2 } from "lucide-react";
 import { buildManualResearchPackage, manualProjectInputSchema, type ManualProjectBrief, type ManualProjectInput } from "../domain/manual-project";
 import type { ResearchPackage } from "../domain/research";
 import type { WorkspaceStep } from "./workflow";
@@ -87,11 +88,11 @@ export function ManualProjectPanel({ projectBusy, onCreateProject, onOpenProject
         <label className="ai-choice-field"><span>Gaya Penyampaian</span><select value={input.deliveryStyle} onChange={(event) => updateInput("deliveryStyle", event.target.value as ManualProjectInput["deliveryStyle"])} disabled={locked}><option value="edukatif">Edukatif</option><option value="storytelling">Storytelling</option><option value="santai">Santai</option></select></label>
         <label className="ai-wide-field ai-instructions-field"><span>Instruksi Tambahan</span><textarea rows={3} maxLength={1000} placeholder="Catatan untuk project manual (opsional)" value={input.additionalInstructions} onChange={(event) => updateInput("additionalInstructions", event.target.value)} disabled={locked} /></label>
         <details className="manual-source-advanced ai-wide-field">
-          <summary>Advanced · URL sumber opsional</summary>
+          <summary><span className="manual-source-icon"><Link2 size={18} aria-hidden="true" /></span><span className="manual-source-copy"><strong>URL sumber opsional</strong><small>Simpan tautan untuk ditinjau di storyboard.</small></span><ChevronDown className="manual-source-chevron" size={18} aria-hidden="true" /></summary>
           <label><span>URL Sumber</span><textarea rows={3} placeholder="https://..." value={sourceText} onChange={(event) => {
             setSourceText(event.target.value);
             updateInput("sourceUrls", event.target.value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean));
-          }} disabled={locked} /><small className="ai-field-help">Satu URL per baris. Sumber tidak di-fetch atau diverifikasi otomatis.</small></label>
+          }} disabled={locked} /><small className="ai-field-help">Satu URL per baris · maksimal 10 · tidak di-fetch otomatis.</small></label>
         </details>
       </div>
       {error && <div className="workflow-alert danger" role="alert"><span>{error}{issues.length > 0 && <ul>{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}</span></div>}

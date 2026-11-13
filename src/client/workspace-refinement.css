@@ -101,7 +101,14 @@
 .manual-create-panel .ai-form-grid { align-items: stretch; }
 .manual-source-advanced { grid-column: 1/-1; min-width: 0; padding: 3px 13px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); }
 .manual-source-advanced>summary,.create-import-advanced>summary,.reference-add-details>summary { min-height: 42px; display: flex; align-items: center; color: var(--text-primary); font-size: 13px; font-weight: 650; cursor: pointer; }
-.manual-source-advanced>summary { min-height: 20px; align-items: flex-start; margin-bottom: 8px; }
+.manual-source-advanced>summary { min-height: 52px; align-items: center; gap: 12px; }
+.manual-source-advanced:not([open])>summary { height: 100%; }
+.manual-source-icon { display: grid; width: 40px; height: 40px; flex: none; place-items: center; border-radius: 11px; background: var(--primary-soft); color: var(--primary-text); }
+.manual-source-copy { display: grid; min-width: 0; gap: 3px; }
+.manual-source-copy strong { color: var(--text-primary); font-size: 13px; font-weight: 650; }
+.manual-source-copy small { color: var(--text-secondary); font-size: 12px; font-weight: 450; line-height: 1.4; }
+.manual-source-chevron { flex: none; color: var(--text-secondary); }
+.manual-source-advanced[open] .manual-source-chevron { transform: rotate(180deg); }
 .manual-source-advanced label { display: grid; gap: 8px; }
 .manual-source-advanced textarea { width: 100%; min-height: 84px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font: inherit; }
 .manual-source-advanced textarea:focus-visible,.reference-form input:focus-visible { outline: 3px solid color-mix(in srgb,var(--primary) 35%,transparent); outline-offset: 1px; border-color: var(--primary); }
@@ -129,6 +136,10 @@
   .manual-create-actions .button { width: 100%; }
   .scene-row-group { grid-template-columns: minmax(0,1fr); }
   .scene-reorder-actions { justify-content: flex-end; }
+}
+
+@media(max-width:820px) {
+  .manual-source-advanced:not([open])>summary { height: auto; min-height: 64px; }
 }
 
 .scene-editor {

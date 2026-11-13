@@ -547,10 +547,21 @@ assert.equal(animationStyleIdSchema.safeParse("stylized-3d-cartoon").success, tr
 assert.equal(animationStyleIdSchema.safeParse("Kartun 3D Stylized").success, false, "display names are not style identifiers");
 assert.equal(getAnimationStylePreset("legacy-unknown-style").id, DEFAULT_ANIMATION_STYLE_ID, "unknown and legacy style IDs fall back without throwing");
 for (const preset of ANIMATION_STYLE_PRESETS) {
-  assert.ok(preset.thumbnail.startsWith("/animation-styles/"), `${preset.id} uses fixed local poster`);
-  assert.equal(existsSync(new URL(`../public${preset.thumbnail}`, import.meta.url)), true, `${preset.id} poster exists locally`);
-  assert.equal(preset.previewVideo, null, `${preset.id} does not claim unavailable MP4 preview`);
+  if (preset.source && preset.thumbnail && preset.previewVideo) {
+    assert.ok(preset.thumbnail.startsWith("/animation-styles/") && preset.thumbnail.endsWith(".jpg"), `${preset.id} uses fixed raster poster`);
+    assert.equal(existsSync(new URL(`../public${preset.thumbnail}`, import.meta.url)), true, `${preset.id} poster exists locally`);
+    assert.ok(preset.previewVideo.startsWith("/animation-styles/") && preset.previewVideo.endsWith(".mp4"), `${preset.id} preview is local MP4`);
+    assert.equal(existsSync(new URL(`../public${preset.previewVideo}`, import.meta.url)), true, `${preset.id} preview exists locally`);
+    assert.equal(preset.source.license, "CC BY 3.0", `${preset.id} uses verified distributable license`);
+    assert.ok(preset.source.url.startsWith("https://") && preset.source.licenseUrl.startsWith("https://"), `${preset.id} records source and license URLs`);
+  } else {
+    assert.equal(preset.thumbnail, null, `${preset.id} has no substitute artwork before asset verification`);
+    assert.equal(preset.previewVideo, null, `${preset.id} does not claim unavailable MP4 preview`);
+    assert.equal(preset.source, null, `${preset.id} does not claim unverified provenance`);
+    assert.ok(preset.showcaseNote, `${preset.id} explains why showcase is not ready`);
+  }
 }
+assert.equal(ANIMATION_STYLE_PRESETS.filter((preset) => preset.previewVideo).length, 4, "only four sourced styles claim showcase media");
 assert.equal(new Set(ANIMATION_STYLE_PRESETS.map((preset) => `${preset.prompt.style}\n${preset.prompt.motion}\n${preset.prompt.negative}`)).size, 6, "all preset prompt configurations differ");
 const presetPrompts = ANIMATION_STYLE_PRESETS.map((preset) => buildIllustrationPrompt({ research: seaSalt, storyboard: saltStoryboard, scene: saltStoryboard.scenes[2]!, mode: "animated-video", animationStyleId: preset.id }));
 assert.equal(new Set(presetPrompts).size, 6, "same scene produces six different animation prompts");
@@ -567,6 +578,7 @@ const galleryMarkup = renderToStaticMarkup(React.createElement(AnimationStyleGal
 assert.equal((galleryMarkup.match(/<article class="animation-style-card/g) ?? []).length, 6, "Create gallery renders six presets");
 assert.match(galleryMarkup, /data-animation-style-id="expressive-2d-cartoon"/);
 assert.match(galleryMarkup, /aria-pressed="true"/);
+assert.match(galleryMarkup, /Showcase belum siap/);
 assert.equal((galleryMarkup.match(/<video\b/g) ?? []).length, 0, "gallery does not eagerly load preview videos");
 const oversizedPreviousReference = { sceneNumber: 1, name: "Previous scene", style: mountainStoryboard.styleLock.illustrationStyle, prompt: `PREVIOUS_PROMPT_MUST_NOT_BE_COPIED ${"previous prompt content ".repeat(600)}` };
 const followupPrompt = buildIllustrationPrompt({ research: mountain, storyboard: mountainStoryboard, scene: mountainStoryboard.scenes[1]!, previousReference: oversizedPreviousReference });

@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" fill="none">
-  <defs><filter id="shadow" x="30" y="30" width="580" height="380" color-interpolation-filters="sRGB"><feDropShadow dx="5" dy="8" stdDeviation="4" flood-color="#513B54" flood-opacity=".2"/></filter></defs>
-  <path fill="#F3E8D2" d="M0 0h640v420H0z"/><path fill="#C6DFD8" d="M0 0h640v282c-96-29-183-16-276 15-121-41-232-29-364 5z"/>
-  <circle cx="504" cy="88" r="36" fill="#F4C66A"/><path fill="#85B9A8" d="M0 285c99-43 179-31 272 10 96-46 224-47 368-4v129H0z"/>
-  <g filter="url(#shadow)"><path fill="#B27669" d="m95 363 186-253 185 253c-117 30-254 31-371 0Z"/><path fill="#D4977D" d="m281 110 47 64-39 25-46-16z"/><path fill="#E6B477" d="M260 222h50v141h-50z"/><path fill="#D76854" d="M274 254h25v109h-25z"/>
-  <path stroke="#805260" stroke-width="8" stroke-linecap="round" d="M223 252q19 16 37 0m76 0q18 15 36 0M256 281q28 18 55 0"/></g>
-  <path fill="#F0B85E" d="M260 327c-13-38 25-51 9-87-17-38 11-50 16-72"/><path stroke="#F8E3B7" stroke-width="4" d="M73 380h494"/>
-  <path fill="#EFE2CC" d="M404 148c0-16 13-29 29-29 11 0 20 5 25 14 4-3 9-4 14-4 14 0 26 12 26 27 0 3 0 6-1 9H404z"/>
-</svg>

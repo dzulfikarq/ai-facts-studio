@@ -580,11 +580,14 @@
 .animation-style-choice:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 .animation-style-choice:disabled { cursor: not-allowed; opacity: .7; }
 .animation-style-choice>img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: var(--radius-sm); background: var(--surface-muted); }
+.animation-style-poster-missing { display: grid; place-items: center; aspect-ratio: 16/9; border: 1px dashed var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; }
 .animation-style-card-copy { display: grid; gap: 4px; min-width: 0; }
 .animation-style-card-copy strong { color: var(--text-primary); font-size: 13px; line-height: 1.35; }
 .animation-style-card-copy small { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.animation-style-card-copy .animation-style-readiness { padding-top: 5px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 .animation-style-selected { justify-self: start; padding: 4px 7px; border-radius: var(--radius-pill); background: var(--primary); color: var(--text-on-primary); font-size: 11px; font-weight: 650; }
-.animation-style-preview-button { min-height: 38px; justify-self: start; font-size: 12px; }
+.animation-style-preview-button { min-height: 42px; justify-self: start; font-size: 12px; }
+.animation-style-preview-button:disabled { cursor: not-allowed; opacity: .65; }
 .animation-style-dialog { width: min(720px,calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 0; overflow: auto; }
 .animation-style-dialog-content { display: grid; gap: 16px; padding: 20px; }
 .animation-style-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -592,11 +595,15 @@
 .animation-style-dialog-heading p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
 .animation-style-example-label { color: var(--primary-text); font-size: 11px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
 .animation-style-preview-media { display: grid; justify-items: start; gap: 10px; }
-.animation-style-preview-media video,.animation-style-preview-unavailable img { display: block; width: 100%; max-height: min(56vh,460px); aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); background: var(--surface-muted); }
+.animation-style-preview-media video { display: block; width: 100%; max-height: min(56vh,460px); aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); background: var(--surface-muted); }
 .animation-style-preview-unavailable { display: grid; gap: 7px; min-width: 0; }
-.animation-style-preview-unavailable img { object-fit: cover; }
 .animation-style-preview-unavailable p { margin: 0; color: var(--text-primary); font-size: 14px; font-weight: 650; }
 .animation-style-preview-unavailable small { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.animation-style-source { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); }
+.animation-style-source p { display: grid; grid-template-columns: 68px minmax(0,1fr); gap: 8px; margin: 0; font-size: 12px; line-height: 1.45; }
+.animation-style-source p strong { color: var(--text-primary); }
+.animation-style-source a { min-width: 0; color: var(--primary-text); overflow-wrap: anywhere; }
+.animation-style-source small { color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
 .animation-style-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); }
 
 @media(max-width:900px) {

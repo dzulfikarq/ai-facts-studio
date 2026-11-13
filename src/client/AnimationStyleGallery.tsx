@@ -37,20 +37,26 @@ export function AnimationStyleGallery({ selectedId, onChange, disabled = false, 
     <div className="animation-style-grid" role="group" aria-label="Pilihan gaya animasi">
       {ANIMATION_STYLE_PRESETS.map((preset) => <article className={`animation-style-card ${selectedId === preset.id ? "selected" : ""}`} data-animation-style-id={preset.id} key={preset.id}>
         <button type="button" className="animation-style-choice" aria-pressed={selectedId === preset.id} onClick={() => onChange(preset.id)} disabled={disabled}>
-          <img src={preset.thumbnail} alt={`Poster ${preset.name}`} loading="lazy" />
-          <span className="animation-style-card-copy"><strong>{preset.name}</strong><small>{preset.description}</small></span>
+          {preset.thumbnail ? <img src={preset.thumbnail} alt={`Frame pratinjau ${preset.name}`} loading="lazy" /> : <span className="animation-style-poster-missing">Showcase belum siap</span>}
+          <span className="animation-style-card-copy"><strong>{preset.name}</strong><small>{preset.description}</small><small className="animation-style-readiness">{preset.source ? `Preview lokal · ${preset.source.license}` : preset.showcaseNote}</small></span>
           {selectedId === preset.id && <span className="animation-style-selected">Dipilih</span>}
         </button>
-        <button type="button" className="button button-light animation-style-preview-button" onClick={() => openPreview(preset)}>Lihat Preview</button>
+        <button type="button" className="button button-light animation-style-preview-button" onClick={() => openPreview(preset)} disabled={disabled || !preset.previewVideo}>{preset.previewVideo ? "Lihat Preview" : "Preview belum tersedia"}</button>
       </article>)}
     </div>
     <dialog ref={dialog} className="animation-style-dialog" aria-labelledby={previewHeadingId} onClose={() => { video.current?.pause(); setPreviewId(null); }}>
       {preview && <div className="animation-style-dialog-content">
         <header className="animation-style-dialog-heading"><div><span className="animation-style-example-label">Contoh Animasi</span><h2 id={previewHeadingId}>{preview.name}</h2><p>{preview.description}</p></div><button type="button" className="button button-light icon-button" aria-label="Tutup preview animasi" onClick={closePreview}><X size={16} aria-hidden="true"/></button></header>
         {preview.previewVideo ? <div className="animation-style-preview-media">
-          <video ref={video} src={preview.previewVideo} poster={preview.thumbnail} controls muted loop playsInline preload="none" aria-label={`Contoh Animasi ${preview.name}`}/>
-          <button type="button" className="button button-light" onClick={() => { if (video.current) { video.current.currentTime = 0; void video.current.play(); } }}>Putar Ulang</button>
-        </div> : <div className="animation-style-preview-unavailable"><img src={preview.thumbnail} alt=""/><p>Preview belum tersedia</p><small>Poster ini tetap; preview MP4 lokal belum disediakan.</small></div>}
+         <video ref={video} src={preview.previewVideo} poster={preview.thumbnail ?? undefined} controls muted loop playsInline preload="none" aria-label={`Contoh Animasi ${preview.name}`}/>
+           <button type="button" className="button button-light" onClick={() => { if (video.current) { video.current.currentTime = 0; void video.current.play(); } }}>Putar Ulang</button>
+         </div> : <div className="animation-style-preview-unavailable"><p>Preview belum tersedia</p><small>{preview.showcaseNote}</small></div>}
+        {preview.source && <div className="animation-style-source" aria-label="Kredit aset showcase">
+          <p><strong>Karya</strong><a href={preview.source.url} target="_blank" rel="noreferrer">{preview.source.title}</a></p>
+          <p><strong>Kreator</strong><span>{preview.source.creator}</span></p>
+          <p><strong>Lisensi</strong><a href={preview.source.licenseUrl} target="_blank" rel="noreferrer">{preview.source.license}</a></p>
+          <small>{preview.source.changes}</small>
+        </div>}
         <div className="animation-style-dialog-actions"><button type="button" className="button button-light" onClick={closePreview}>Tutup</button><button type="button" className="button button-primary" onClick={choosePreviewStyle} disabled={disabled}>Pilih Gaya Ini</button></div>
       </div>}
     </dialog>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, BookOpen, Film, Sparkles } from "lucide-react";
+import { ArrowLeft, BookOpen, Film, PencilLine, Sparkles } from "lucide-react";
 import { z } from "zod";
 import { ANIMATION_STYLE_PRESETS } from "../domain/animation-styles";
 import {
@@ -18,7 +18,6 @@ import type { AppRoute } from "./routes";
 import { appRouteHref } from "./routes";
 
 type SeriesRoute = Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>;
-type SavedDraft = { id: string; title: string; stage: string; seriesId: string | null; updatedAt: string };
 type StoryDraft = {
   id: string;
   source: StorySource;
@@ -44,7 +43,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-const initialSource: StorySource = {
+export const initialStorySource: StorySource = {
   title: "",
   storyText: "",
   language: "id-ID",
@@ -56,20 +55,18 @@ const initialSource: StorySource = {
   rightsNotes: "",
 };
 
-export function StoryGenerationStart({ onOpenDraft }: { onOpenDraft: (id: string) => void }) {
-  const [source, setSource] = useState<StorySource>(initialSource);
-  const [drafts, setDrafts] = useState<SavedDraft[]>([]);
+export function StoryGenerationStart({ onOpenDraft, onSourceChange }: { onOpenDraft: (id: string) => void; onSourceChange: (source: StorySource) => void }) {
+  const [source, setSource] = useState<StorySource>(initialStorySource);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const parsed = useMemo(() => storySourceSchema.safeParse(source), [source]);
 
-  useEffect(() => {
-    void request<SavedDraft[]>("/api/story-generation/drafts").then(setDrafts).catch((cause) => setError(cause instanceof Error ? cause.message : "Draft cerita gagal dimuat."));
-  }, []);
+  useEffect(() => { onSourceChange(source); }, [onSourceChange, source]);
 
   function update<K extends keyof StorySource>(key: K, value: StorySource[K]) {
-    setSource((current) => ({ ...current, [key]: value }));
+    const next = { ...source, [key]: value };
+    setSource(next);
     setRequestId(crypto.randomUUID());
   }
 
@@ -87,31 +84,28 @@ export function StoryGenerationStart({ onOpenDraft }: { onOpenDraft: (id: string
     finally { setBusy(false); }
   }
 
-  return <div className="series-generation-start series-library-layout">
-    <form className="series-panel" onSubmit={(event) => void createDraft(event)}>
-      <div className="series-section-heading"><div><span className="eyebrow">SOURCE STORY · NO AI CALL</span><h2>Generate from Story</h2><p>Simpan source utuh dahulu. Analisis, rencana, Story Bible, dan episode selalu menunggu aksi Anda.</p></div><BookOpen aria-hidden="true" size={21}/></div>
+  return <div className="series-generation-start">
+    <form className="series-panel series-source-form" onSubmit={(event) => void createDraft(event)}>
+      <div className="series-card-title"><span className="series-icon-tile"><PencilLine aria-hidden="true" size={21}/></span><div><h2>Generate from Story</h2><p>Simpan source utuh dahulu. Analisis, rencana, Story Bible, dan episode selalu menunggu aksi Anda.</p></div></div>
       {error && <p className="workflow-alert danger" role="alert">{error}</p>}
-      <label className="series-form-field">Judul cerita<input required maxLength={160} value={source.title} onChange={(event) => update("title", event.target.value)} /></label>
-      <label className="series-form-field">Isi cerita<textarea required maxLength={100000} rows={15} value={source.storyText} onChange={(event) => update("storyText", event.target.value)} aria-describedby="story-source-note" /></label>
-      <small id="story-source-note" className="series-muted">Source disimpan persis seperti dimasukkan, terpisah dari semua output AI. Maksimal 100.000 karakter.</small>
+      <label className="series-form-field">Judul cerita<input id="series-story-title" required maxLength={160} value={source.title} placeholder="Masukkan judul cerita…" onChange={(event) => update("title", event.target.value)} /></label>
+      <label className="series-form-field">Isi cerita<textarea id="series-story-text" required maxLength={100000} rows={5} value={source.storyText} onChange={(event) => update("storyText", event.target.value)} placeholder="Tulis isi cerita lengkap di sini…" /></label>
       <div className="series-form-grid">
-        <label className="series-form-field">Bahasa <input required value={source.language} pattern="[a-z]{2}-[A-Z]{2}" placeholder="id-ID" onChange={(event) => update("language", event.target.value)} /></label>
-        <label className="series-form-field">Durasi target per episode (detik)<input type="number" min={30} max={120} value={source.targetDurationSeconds} onChange={(event) => update("targetDurationSeconds", Number(event.target.value))} /><small>Default 62 detik. Flow: maks 8 klip × 8 detik = 64 detik per episode.</small></label>
-        <label className="series-form-field">Kredit harian tersedia<input type="number" min={1} max={1000000} value={source.dailyCreditsAvailable} onChange={(event) => update("dailyCreditsAvailable", Number(event.target.value))} /><small>Input manual. Aplikasi tidak membaca saldo Flow.</small></label>
-        <label className="series-form-field">Animation Style<select value={source.animationStyleId} onChange={(event) => update("animationStyleId", event.target.value as StorySource["animationStyleId"])}>{ANIMATION_STYLE_PRESETS.filter((preset) => preset.id !== "stylized-3d-cartoon").map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select><small>2D preset only; 3D/CGI is blocked for this workflow.</small></label>
+        <label className="series-form-field">Bahasa<input required value={source.language} pattern="[a-z]{2}-[A-Z]{2}" placeholder="id-ID" onChange={(event) => update("language", event.target.value)} /></label>
+        <label className="series-form-field">Durasi target per episode (detik)<input type="number" min={30} max={120} value={source.targetDurationSeconds} onChange={(event) => update("targetDurationSeconds", Number(event.target.value))} /><small>Default 62 detik. Flow: maks 8 klip × 8 detik = 64 detik.</small></label>
+        <label className="series-form-field">Kredit harian tersedia<input type="number" min={1} max={1000000} value={source.dailyCreditsAvailable} onChange={(event) => update("dailyCreditsAvailable", Number(event.target.value))} /></label>
+        <label className="series-form-field">Animation Style<select value={source.animationStyleId} onChange={(event) => update("animationStyleId", event.target.value as StorySource["animationStyleId"])}>{ANIMATION_STYLE_PRESETS.filter((preset) => preset.id !== "stylized-3d-cartoon").map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
       </div>
-      <label className="series-form-field">Instruksi tambahan (opsional)<textarea rows={3} maxLength={4000} value={source.additionalInstructions} onChange={(event) => update("additionalInstructions", event.target.value)} /></label>
-      <label className="series-form-field">URL sumber (opsional)<input type="url" maxLength={2000} value={source.sourceUrl} onChange={(event) => update("sourceUrl", event.target.value)} placeholder="https://…" /></label>
-      <label className="series-form-field">Catatan hak penggunaan (opsional)<textarea rows={3} maxLength={4000} value={source.rightsNotes} onChange={(event) => update("rightsNotes", event.target.value)} placeholder="Mis. cerita sendiri, izin adaptasi, atau sumber lisensi yang perlu ditinjau" /></label>
+      <label className="series-form-field">Instruksi tambahan (opsional)<textarea rows={2} maxLength={4000} value={source.additionalInstructions} onChange={(event) => update("additionalInstructions", event.target.value)} placeholder="Contoh: fokus suasana, tone, atau gaya narasi tertentu…" /></label>
+      <div className="series-form-grid series-source-meta-grid">
+        <label className="series-form-field">URL sumber (opsional)<input type="url" maxLength={2000} value={source.sourceUrl} onChange={(event) => update("sourceUrl", event.target.value)} placeholder="https://…" /></label>
+        <label className="series-form-field">Catatan hak penggunaan (opsional)<textarea rows={2} maxLength={4000} value={source.rightsNotes} onChange={(event) => update("rightsNotes", event.target.value)} placeholder="Contoh: izin adaptasi…" /></label>
+      </div>
       {source.targetDurationSeconds > 64 && <p className="workflow-alert attention" role="status">{source.targetDurationSeconds} detik membutuhkan {storyFlowBudget(source.targetDurationSeconds, source.dailyCreditsAvailable).plannedClips} klip / {storyFlowBudget(source.targetDurationSeconds, source.dailyCreditsAvailable).estimatedCredits} kredit. Melebihi batas 8 klip; storyboard Flow tidak bisa dibuat sampai target diturunkan atau strategi editing manual dipilih.</p>}
       {!parsed.success && source.title && source.storyText && <p className="workflow-alert attention" role="alert">{parsed.error.issues[0]?.message}</p>}
       <button type="submit" className="button button-primary full-button" disabled={busy || !parsed.success}>{busy ? "Menyimpan source…" : "Simpan source dan mulai review"}<span aria-hidden="true">→</span></button>
-      <small className="series-muted">Cerita salinan dari internet tidak otomatis bebas hak cipta. Tinjau hak adaptasi sebelum produksi/publikasi.</small>
+      <small className="series-rights-note">Cerita salinan dari internet tidak otomatis bebas hak cipta. Tinjau hak adaptasi sebelum produksi/publikasi.</small>
     </form>
-    <section className="series-panel">
-      <div className="series-section-heading"><div><span className="eyebrow">RESUME WORKFLOW</span><h2>Saved Story Drafts</h2></div><span className="count-chip">{drafts.length}</span></div>
-      {drafts.length ? <div className="series-library-list">{drafts.map((draft) => <button type="button" className="series-library-card series-draft-card" key={draft.id} onClick={() => onOpenDraft(draft.id)}><span className="series-library-icon"><BookOpen aria-hidden="true" size={19}/></span><span><strong>{draft.title}</strong><small>{stageLabel(draft.stage)} · {new Date(draft.updatedAt).toLocaleString()}</small></span><b aria-hidden="true">→</b></button>)}</div> : <div className="workflow-empty"><strong>Belum ada draft</strong><span>Source dan rencana tersimpan di database lokal.</span></div>}
-    </section>
   </div>;
 }
 

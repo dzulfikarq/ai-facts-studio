@@ -148,10 +148,70 @@ try {
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "project dashboard");
   const storySeriesJson = await readFile("fixtures/story-series/bilik-empat-episode-01.json", "utf8");
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: `${viteUrl}/series`, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-generation-start form"))), "Generate from Story source form");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-generation-start form") && document.querySelector(".series-estimate-panel"))), "Generate from Story dashboard cards");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector("#saved-story-drafts .series-empty-state, #saved-story-drafts .series-draft-list") && document.querySelector("#series-library .series-library-empty, #series-library .series-library-summary-list"))), "Story Series drafts and library load");
+  assert.equal(await page.evaluate(() => document.querySelector(".series-hero h1")?.textContent), "Story Series", "Story Series page shows reference hierarchy");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>('.series-mode-switch button[aria-pressed="true"]')?.textContent?.includes("Generate from Story")), true, "Generate from Story remains active default mode");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".series-dashboard-aside > .series-panel").length), 3, "drafts, library, and live estimate occupy right dashboard column");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".series-sidebar-link.active")?.textContent?.trim()), "Story Series", "series sidebar highlights current route");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLSelectElement>('.series-form-field select')?.value), "cinematic-2d-motion-comic", "new story source defaults to locked hand-painted 2D horror style");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLOptionElement>('.series-form-field select option')].some((option) => option.value === "stylized-3d-cartoon")), false, "Generate from Story does not offer 3D style fallback");
+  await page.setViewport({ width: 1672, height: 941, deviceScaleFactor: 1 });
+  await captureViewport("story-series-reference-1672x941.png");
+  const selectTheme = async (theme: "Light" | "Dark" | "System") => page.evaluate((label) => {
+    const menu = document.querySelector<HTMLDetailsElement>(".theme-switcher");
+    if (!menu?.open) menu?.querySelector("summary")?.click();
+    [...(menu?.querySelectorAll<HTMLButtonElement>(".theme-choices button") ?? [])].find((button) => button.title === `${label} theme`)?.click();
+    if (menu) menu.open = false;
+  }, theme);
+  await selectTheme("Dark");
+  await waitFor(() => page.evaluate(() => document.documentElement.dataset.theme === "dark"), "Story Series dark theme applies");
+  await captureViewport("story-series-dark-1672x941.png");
+  await selectTheme("System");
+  await waitFor(() => page.evaluate(() => document.documentElement.dataset.themePreference === "system"), "Story Series returns to system theme");
+  for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 900 }, { width: 768, height: 900 }, { width: 375, height: 844 }, { width: 320, height: 844 }]) {
+    await page.setViewport({ width, height, deviceScaleFactor: 1 });
+    const layout = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      columns: getComputedStyle(document.querySelector<HTMLElement>(".series-dashboard-grid")!).gridTemplateColumns.split(" ").length,
+    }));
+    assert.equal(layout.scrollWidth <= width, true, `Story Series dashboard has no horizontal overflow at ${width}px: ${JSON.stringify(layout)}`);
+    assert.equal(layout.columns, width <= 1024 ? 1 : 2, `Story Series dashboard uses expected columns at ${width}px`);
+    if (width === 1440) await captureViewport("story-series-1440x900.png");
+    if (width === 1024) await captureViewport("story-series-1024x900.png");
+    if (width === 768) await captureViewport("story-series-768x900.png");
+    if (width === 375) await captureViewport("story-series-375x844.png");
+  }
+  await page.setViewport({ width: 1672, height: 941, deviceScaleFactor: 1 });
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".series-empty-state button")?.click());
+  await waitFor(() => page.evaluate(() => document.activeElement?.id === "series-story-text"), "empty-state action focuses story textarea");
+  await page.evaluate(() => {
+    const duration = document.querySelectorAll<HTMLInputElement>(".series-source-form input[type=number]")[0]!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(duration, "40");
+    duration.dispatchEvent(new Event("input", { bubbles: true }));
+    duration.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".series-estimate-metric")[1]?.textContent?.includes("5 klip")), "production estimate follows form duration");
+  await page.evaluate(() => {
+    const duration = document.querySelectorAll<HTMLInputElement>(".series-source-form input[type=number]")[0]!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(duration, "62");
+    duration.dispatchEvent(new Event("input", { bubbles: true }));
+    duration.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".series-estimate-metric")[1]?.textContent?.includes("8 klip")), "estimate resets to live default before source save");
+  await page.evaluate(() => {
+    const title = document.querySelector<HTMLInputElement>("#series-story-title")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(title, "Mode switch preserves draft");
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".series-mode-switch button")].find((button) => button.textContent?.startsWith("Import JSON"))?.click());
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-import-panel:not([hidden])"))), "Import JSON mode remains functional");
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".series-empty-state button")?.click());
+  await waitFor(() => page.evaluate(() => document.activeElement?.id === "series-story-text"), "empty-state action switches mode and focuses story textarea");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLInputElement>("#series-story-title")?.value), "Mode switch preserves draft", "switching JSON mode preserves unsaved Story form state");
   const storyAiAttemptsBeforeBrowser = generationAttemptCount();
   await page.evaluate(() => {
     const form = document.querySelector<HTMLFormElement>(".series-generation-start form")!;
@@ -218,8 +278,12 @@ try {
     if (width === 390) await captureViewport("story-generation-mobile.png");
   }
 
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: `${viteUrl}/series`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-mode-switch"))), "Story Series mode selector");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-draft-item") && document.querySelector(".series-library-summary-item"))), "saved draft and library cards use persisted records");
+  assert.equal(await page.evaluate(() => document.querySelector(".series-draft-item")?.textContent?.includes("Browser mock story")), true, "saved drafts display actual generation data");
+  await captureViewport("story-series-populated-1440x1000.png");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".series-mode-switch button")].find((button) => button.textContent?.startsWith("Import JSON"))?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLTextAreaElement>(".series-json-field textarea"))), "Story Series import preview page");
   await page.evaluate((json) => {

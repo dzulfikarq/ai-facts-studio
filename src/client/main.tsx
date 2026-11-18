@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDown, ArrowUp, BookOpen, CircleAlert, Clock3, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, CircleAlert, Clock3, FileText, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -190,6 +190,7 @@ function App() {
   const routeRef = useRef(route);
   routeRef.current = route;
   const view = route.view;
+  const isSeriesRoute = view === "series-library" || view === "series-detail" || view === "series-generation";
   const activeStep: WorkspaceStep = route.view === "workspace" ? route.step : "materials";
   const [theme, setTheme] = useThemePreference();
   const [createMode, setCreateMode] = useState<"ai" | "manual">("ai");
@@ -2197,23 +2198,39 @@ function App() {
   const createOutroId = selectedCreateOutroId === undefined ? outroLibrary.defaultOutroId : selectedCreateOutroId;
   const createOutroAsset = createOutroId ? outroLibrary.outros.find((asset) => asset.id === createOutroId) ?? null : null;
 
-  return <div className={`app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""}`}>
-    <main className="main-area">
-      <header className="topbar">
-        <div className="topbar-left">
+  return <div className={`app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""} ${isSeriesRoute ? "series-app-shell" : ""}`}>
+    {isSeriesRoute && <aside className="series-sidebar">
+      <button className="brand series-sidebar-brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Beranda" disabled={busy || ttsBusy || ttsLoading}><span className="brand-mark"><Sparkles aria-hidden="true" size={19}/></span><span><strong>AI Facts Studio</strong></span></button>
+      <nav aria-label="Navigasi utama Story Series">
+        <span className="series-sidebar-label">Workspace</span>
+        <button type="button" className="series-sidebar-link" onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading}><House aria-hidden="true" size={18}/><span>Dashboard</span></button>
+        <button type="button" className="series-sidebar-link" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading}><Sparkles aria-hidden="true" size={18}/><span>Buat Video</span></button>
+        <button type="button" className="series-sidebar-link active" onClick={() => void openStorySeries({ view: "series-library", slug: null })} aria-current="page" disabled={busy || ttsBusy || ttsLoading}><BookOpen aria-hidden="true" size={18}/><span>Story Series</span></button>
+        {view === "series-library" && <>
+          <a className="series-sidebar-link series-sidebar-child" href="#saved-story-drafts"><FileText aria-hidden="true" size={17}/><span>Saved Story Drafts</span></a>
+          <a className="series-sidebar-link series-sidebar-child" href="#series-library"><Film aria-hidden="true" size={17}/><span>Series Library</span></a>
+        </>}
+        <span className="series-sidebar-divider"/>
+        <span className="series-sidebar-label">Account</span>
+        <button type="button" className="series-sidebar-link" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy}><SettingsIcon aria-hidden="true" size={18}/><span>Settings</span></button>
+      </nav>
+    </aside>}
+    <main className={`main-area ${isSeriesRoute ? "series-main-area" : ""}`}>
+      <header className={`topbar ${isSeriesRoute ? "series-topbar" : ""}`}>
+        {!isSeriesRoute && <div className="topbar-left">
           <button className="brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Beranda" disabled={busy || ttsBusy || ttsLoading}>
             <span className="brand-mark"><Sparkles aria-hidden="true" size={17} /></span><span><strong>AI Facts</strong><small>STUDIO</small></span>
           </button>
           <nav className="topbar-nav" aria-label="Navigasi utama">
             <button type="button" className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
-            <button type="button" className={`nav-home ${view === "series-library" || view === "series-detail" || view === "series-generation" ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "series-library" || view === "series-detail" || view === "series-generation" ? "page" : undefined} aria-label="Story Series"><BookOpen aria-hidden="true" size={17}/><span>Series</span></button>
+            <button type="button" className={`nav-home ${isSeriesRoute ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} disabled={busy || ttsBusy || ttsLoading} aria-current={isSeriesRoute ? "page" : undefined} aria-label="Story Series"><BookOpen aria-hidden="true" size={17}/><span>Series</span></button>
           </nav>
-        </div>
+        </div>}
         <div className="topbar-actions">
           {view === "workspace" && activeStep !== "video-editor" && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
-          <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "create" ? "page" : undefined} aria-label="Buat video" title="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>
+          {!isSeriesRoute && <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "create" ? "page" : undefined} aria-label="Buat video" title="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>}
           <ThemeSwitcher preference={theme} onChange={setTheme} />
-          <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>
+          {!isSeriesRoute && <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>}
         </div>
       </header>
 

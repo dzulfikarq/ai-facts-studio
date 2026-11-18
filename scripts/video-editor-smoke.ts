@@ -172,6 +172,17 @@ try {
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector("#saved-story-drafts .series-empty-state, #saved-story-drafts .series-draft-list") && document.querySelector("#series-library .series-library-empty, #series-library .series-library-summary-list"))), "Story Series drafts and library load");
   assert.equal(await page.evaluate(() => document.querySelector(".series-hero h1")?.textContent), "Story Series", "Story Series page shows reference hierarchy");
   assert.equal(await page.evaluate(() => Boolean(document.querySelector(".series-hero-banner .series-hero h1") && document.querySelector(".series-hero-banner .series-mode-switch") && document.querySelector(".series-hero-banner .series-clapperboard-body svg"))), true, "Story Series title, actions, and clapperboard share illustrated banner");
+  const heroCardAlignment = await page.evaluate(() => {
+    const hero = document.querySelector<HTMLElement>(".series-hero-copy")!.getBoundingClientRect();
+    const card = document.querySelector<HTMLElement>(".series-source-form")!.getBoundingClientRect();
+    return Math.round(hero.left - card.left);
+  });
+  assert.equal(heroCardAlignment, 0, "Story Series hero copy aligns with form card left edge");
+  const estimateMetricGap = await page.evaluate(() => {
+    const metrics = [...document.querySelectorAll<HTMLElement>(".series-estimate-metric")].map((item) => item.getBoundingClientRect());
+    return Math.round(metrics[1]!.left - metrics[0]!.right);
+  });
+  assert.ok(estimateMetricGap >= 8, `production estimate cards have visible spacing: ${estimateMetricGap}px`);
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).paddingTop), "38px", "Story Series top spacing matches shared desktop page spacing");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>('.series-mode-switch button[aria-pressed="true"]')?.textContent?.includes("Generate from Story")), true, "Generate from Story remains active default mode");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".series-dashboard-aside > .series-panel").length), 3, "drafts, library, and live estimate occupy right dashboard column");
@@ -223,9 +234,12 @@ try {
       const illustration = await page.evaluate(() => {
         const banner = document.querySelector<HTMLElement>(".series-hero-banner")!.getBoundingClientRect();
         const clapper = document.querySelector<HTMLElement>(".series-clapperboard")!.getBoundingClientRect();
-        return { visibleWidth: clapper.width, bounds: [clapper.left, clapper.right], banner: [banner.left, banner.right], withinBanner: clapper.left >= banner.left && clapper.right <= banner.right };
+        const hero = document.querySelector<HTMLElement>(".series-hero-copy")!.getBoundingClientRect();
+        const card = document.querySelector<HTMLElement>(".series-source-form")!.getBoundingClientRect();
+        return { visibleWidth: clapper.width, bounds: [clapper.left, clapper.right], banner: [banner.left, banner.right], withinBanner: clapper.left >= banner.left && clapper.right <= banner.right, heroCardOffset: Math.round(hero.left - card.left) };
       });
       assert.ok(illustration.visibleWidth >= 60 && illustration.withinBanner, `mobile clapperboard remains visible without crop: ${JSON.stringify(illustration)}`);
+      assert.equal(illustration.heroCardOffset, 0, "mobile Story Series hero aligns with form card left edge");
     }
     if (width === 1440) await captureViewport("story-series-1440x900.png");
     if (width === 1024) await captureViewport("story-series-1024x900.png");

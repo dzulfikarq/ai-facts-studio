@@ -904,7 +904,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .series-main-area { min-width: 0; background: linear-gradient(180deg, color-mix(in srgb,var(--primary-soft) 36%,var(--background)) 0, var(--background) 280px); }
 .series-app-shell .series-topbar { min-height: 48px; padding-block: 3px; border-bottom-color: color-mix(in srgb,var(--primary) 10%,var(--border)); background: color-mix(in srgb,var(--surface) 90%,transparent); box-shadow: none; }
 .series-index-page { gap: 13px; max-width: 1580px; margin-inline: clamp(18px,2.7vw,46px); padding-top: 38px; padding-bottom: 38px; }
-.series-hero-banner { position: relative; isolation: isolate; display: grid; justify-items: start; gap: 13px; min-height: 154px; overflow: hidden; box-sizing: border-box; padding: 15px clamp(18px,2vw,26px) 17px; border-radius: 16px; background: linear-gradient(112deg,color-mix(in srgb,var(--primary-soft) 44%,var(--surface)) 0%,color-mix(in srgb,var(--primary-soft) 58%,var(--surface)) 57%,color-mix(in srgb,var(--primary-soft) 77%,var(--surface)) 100%); }
+.series-hero-banner { position: relative; isolation: isolate; display: grid; justify-items: start; gap: 13px; min-height: 154px; overflow: hidden; box-sizing: border-box; padding: 15px 0 17px; border-radius: 16px; background: linear-gradient(112deg,color-mix(in srgb,var(--primary-soft) 44%,var(--surface)) 0%,color-mix(in srgb,var(--primary-soft) 58%,var(--surface)) 57%,color-mix(in srgb,var(--primary-soft) 77%,var(--surface)) 100%); }
 .series-hero-banner::before,.series-hero-banner::after { position: absolute; z-index: -1; border-radius: 50%; content: ""; pointer-events: none; }
 .series-hero-banner::before { top: -142px; right: 3%; width: 58%; height: 260px; background: color-mix(in srgb,var(--surface) 45%,transparent); transform: rotate(-17deg); }
 .series-hero-banner::after { right: -8%; bottom: -156px; width: 63%; height: 260px; background: color-mix(in srgb,var(--primary-soft) 67%,transparent); transform: rotate(-17deg); }
@@ -983,9 +983,8 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .series-library-empty { display: flex; align-items: center; gap: 10px; min-height: 72px; padding: 8px; color: var(--primary); }
 .series-library-empty p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .series-estimate-panel { gap: 11px; }
-.series-estimate-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0; min-width: 0; }
+.series-estimate-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; min-width: 0; }
 .series-estimate-metric { display: grid; align-content: start; justify-items: start; gap: 5px; min-width: 0; min-height: 91px; padding: 12px 10px; border: 1px solid color-mix(in srgb,var(--primary) 15%,var(--border)); border-radius: 12px; background: color-mix(in srgb,var(--primary-soft) 56%,var(--surface)); }
-.series-estimate-metric+.series-estimate-metric { margin-left: -1px; }
 .series-estimate-metric>svg { color: var(--primary); }
 .series-estimate-metric>span { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
 .series-estimate-metric>strong { color: var(--text-primary); font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
@@ -1022,7 +1021,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 }
 @media (max-width: 700px) {
   .series-index-page { gap: 13px; padding-top: 28px; padding-bottom: 30px; }
-  .series-hero-banner { min-height: 154px; gap: 12px; padding: 15px 17px; }
+  .series-hero-banner { min-height: 154px; gap: 12px; padding: 15px 0 17px; }
   .series-hero-copy { max-width: calc(100% - 78px); }
   .series-hero-art { top: 16px; right: 12px; width: 76px; height: 68px; opacity: .34; }
   .series-clapperboard { transform: scale(.58); }
@@ -1040,7 +1039,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   .sidebar-app-shell .topbar { min-height: 44px; }
   .series-app-shell .series-topbar .theme-switcher summary { min-height: 40px; }
   .series-index-page { gap: 12px; padding-top: 24px; }
-  .series-hero-banner { min-height: 164px; gap: 11px; padding: 14px; }
+  .series-hero-banner { min-height: 164px; gap: 11px; padding: 14px 0; }
   .series-hero h1 { font-size: 27px; }
   .series-hero p { max-width: 100%; font-size: 12px; }
   .series-hero-copy { max-width: calc(100% - 86px); }

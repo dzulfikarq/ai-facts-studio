@@ -99,6 +99,9 @@ assert.equal(animationStylePromptIsStale(adaptedStorySeries.visualStoryboard.sce
 assert.equal(animationStylePromptIsStale("legacy motion comic prompt", storySeriesFixture.series.visualStyle.presetId, storySeriesFixture.series.visualStyle.presetId), true, "same-ID prompts with obsolete instructions are stale");
 assert.equal(animationStylePromptIsStale(`${getAnimationStylePreset(storySeriesFixture.series.visualStyle.presetId).prompt.style} ${getAnimationStylePreset(storySeriesFixture.series.visualStyle.presetId).prompt.motion}`, storySeriesFixture.series.visualStyle.presetId, storySeriesFixture.series.visualStyle.presetId), true, "same-ID prompts with outdated motion or negative instructions are stale");
 assert.deepEqual(parseAppRoute("http://localhost/"), { view: "dashboard" }, "dashboard route survives direct navigation");
+assert.deepEqual(parseAppRoute("http://localhost/?section=queue"), { view: "dashboard", section: "queue" }, "video queue dashboard section survives direct navigation");
+assert.deepEqual(parseAppRoute("http://localhost/?section=completed"), { view: "dashboard", section: "completed" }, "completed dashboard section survives direct navigation");
+assert.deepEqual(parseAppRoute("http://localhost/?section=unknown"), { view: "dashboard" }, "invalid dashboard section falls back to all projects");
 assert.deepEqual(parseAppRoute("http://localhost/settings"), { view: "settings", section: "general" }, "settings route defaults to General on refresh");
 assert.deepEqual(parseAppRoute("http://localhost/settings?section=appearance"), { view: "settings", section: "appearance" }, "settings section survives direct navigation");
 assert.deepEqual(parseAppRoute("http://localhost/settings?section=outro-library"), { view: "settings", section: "outro-library" }, "Outro Library section survives refresh");
@@ -115,6 +118,8 @@ const invalidStepRoute = parseAppRoute("http://localhost/projects/demo?step=inva
 assert.equal(invalidStepRoute.view === "workspace" ? invalidStepRoute.step : "", "materials", "invalid workspace step falls back safely");
 assert.equal(appRouteHref({ view: "workspace", projectId: "demo", step: "video-editor", sceneId: "scene-3" }), "/projects/demo/editor?scene=scene-3", "Video Editor route serializes selected scene");
 assert.equal(appRouteHref({ view: "settings", section: "general" }), "/settings", "General settings route uses canonical URL");
+assert.equal(appRouteHref({ view: "dashboard", section: "queue" }), "/?section=queue", "video queue section serializes in URL");
+assert.equal(appRouteHref({ view: "dashboard", section: "completed" }), "/?section=completed", "completed section serializes in URL");
 assert.equal(appRouteHref({ view: "settings", section: "ai-generation" }), "/settings?section=ai-generation", "AI Generation settings section serializes in URL");
 assert.equal(appRouteHref({ view: "series-library", slug: "bilik-empat" }), "/series?slug=bilik-empat", "series continuation route serializes in URL");
 assert.equal(appRouteHref({ view: "series-detail", seriesId: "series-123" }), "/series/series-123", "Story Bible detail serializes in URL");

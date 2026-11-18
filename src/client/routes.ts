@@ -2,9 +2,11 @@ import { normalizeWorkspaceStep, type WorkspaceStep } from "./workflow";
 
 export const settingsSections = ["general", "appearance", "ai-generation", "outro-library", "preferences"] as const;
 export type SettingsSection = typeof settingsSections[number];
+export const dashboardSections = ["all", "queue", "completed"] as const;
+export type DashboardSection = typeof dashboardSections[number];
 
 export type AppRoute =
-  | { view: "dashboard" }
+  | { view: "dashboard"; section?: DashboardSection }
   | { view: "create" }
   | { view: "series-library"; slug: string | null }
   | { view: "series-detail"; seriesId: string }
@@ -14,6 +16,10 @@ export type AppRoute =
 
 export function parseAppRoute(input: string | URL): AppRoute {
   const url = input instanceof URL ? input : new URL(input, "http://localhost");
+  if (url.pathname === "/") {
+    const section = dashboardSections.find((value) => value === url.searchParams.get("section"));
+    return section && section !== "all" ? { view: "dashboard", section } : { view: "dashboard" };
+  }
   if (url.pathname === "/create") return { view: "create" };
   if (url.pathname === "/series" || url.pathname === "/series/") return { view: "series-library", slug: url.searchParams.get("slug") };
   const generationMatch = url.pathname.match(/^\/series\/generate\/([^/]+)\/?$/);
@@ -47,7 +53,7 @@ export function parseAppRoute(input: string | URL): AppRoute {
 }
 
 export function appRouteHref(route: AppRoute): string {
-  if (route.view === "dashboard") return "/";
+  if (route.view === "dashboard") return route.section && route.section !== "all" ? `/?section=${route.section}` : "/";
   if (route.view === "create") return "/create";
   if (route.view === "series-library") return route.slug ? `/series?slug=${encodeURIComponent(route.slug)}` : "/series";
   if (route.view === "series-detail") return `/series/${encodeURIComponent(route.seriesId)}`;

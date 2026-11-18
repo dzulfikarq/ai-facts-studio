@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDown, ArrowUp, BookOpen, CircleAlert, Clock3, FileText, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, CircleHelp, Clock3, FileText, Film, House, Info, Layers3, Play, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert, Zap } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
@@ -42,7 +42,7 @@ import { StorySeriesPage } from "./StorySeriesPage";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
-import { appRouteHref, parseAppRoute, settingsSections, type AppRoute, type SettingsSection } from "./routes";
+import { appRouteHref, parseAppRoute, settingsSections, type AppRoute, type DashboardSection, type SettingsSection } from "./routes";
 import "./styles.css";
 import "./tts.css";
 import "./workflow.css";
@@ -191,6 +191,10 @@ function App() {
   routeRef.current = route;
   const view = route.view;
   const isSeriesRoute = view === "series-library" || view === "series-detail" || view === "series-generation";
+  const dashboardSection = route.view === "dashboard" ? route.section ?? "all" : "all";
+  const isDashboardRoute = view === "workspace" || view === "dashboard" && dashboardSection === "all";
+  const isQueueRoute = view === "dashboard" && dashboardSection === "queue";
+  const isCompletedRoute = view === "dashboard" && dashboardSection === "completed";
   const activeStep: WorkspaceStep = route.view === "workspace" ? route.step : "materials";
   const [theme, setTheme] = useThemePreference();
   const [createMode, setCreateMode] = useState<"ai" | "manual">("ai");
@@ -650,13 +654,13 @@ function App() {
     return confirmed;
   }
 
-  async function goToDashboard() {
+  async function goToDashboard(section: DashboardSection = "all") {
     if (busy || ttsBusy || ttsLoading) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     setCreateDraftUnsaved(false);
     setMessage("");
-    commitRoute({ view: "dashboard" });
+    commitRoute(section === "all" ? { view: "dashboard" } : { view: "dashboard", section });
   }
 
   function askTtsTimingDecision(previousDurationSec: number, nextDurationSec: number, hadActiveAudio: boolean) {
@@ -697,13 +701,17 @@ function App() {
     setMessage("");
   }
 
-  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>) {
+  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>, sectionId?: "series-library" | "saved-story-drafts") {
     if (busy || ttsBusy || ttsLoading) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     setCreateDraftUnsaved(false);
     commitRoute(target);
     setMessage("");
+    if (sectionId) {
+      window.history.replaceState(window.history.state, "", `${appRouteHref(target)}#${sectionId}`);
+      window.requestAnimationFrame(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }));
+    }
   }
 
   async function openSettings(section: SettingsSection = "general") {
@@ -2198,45 +2206,40 @@ function App() {
   const createOutroId = selectedCreateOutroId === undefined ? outroLibrary.defaultOutroId : selectedCreateOutroId;
   const createOutroAsset = createOutroId ? outroLibrary.outros.find((asset) => asset.id === createOutroId) ?? null : null;
 
-  return <div className={`app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""} ${isSeriesRoute ? "series-app-shell" : ""}`}>
-    {isSeriesRoute && <aside className="series-sidebar">
-      <button className="brand series-sidebar-brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Beranda" disabled={busy || ttsBusy || ttsLoading}><span className="brand-mark"><Sparkles aria-hidden="true" size={19}/></span><span><strong>AI Facts Studio</strong></span></button>
-      <nav aria-label="Navigasi utama Story Series">
-        <span className="series-sidebar-label">Workspace</span>
-        <button type="button" className="series-sidebar-link" onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading}><House aria-hidden="true" size={18}/><span>Dashboard</span></button>
-        <button type="button" className="series-sidebar-link" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading}><Sparkles aria-hidden="true" size={18}/><span>Buat Video</span></button>
-        <button type="button" className="series-sidebar-link active" onClick={() => void openStorySeries({ view: "series-library", slug: null })} aria-current="page" disabled={busy || ttsBusy || ttsLoading}><BookOpen aria-hidden="true" size={18}/><span>Story Series</span></button>
-        {view === "series-library" && <>
-          <a className="series-sidebar-link series-sidebar-child" href="#saved-story-drafts"><FileText aria-hidden="true" size={17}/><span>Saved Story Drafts</span></a>
-          <a className="series-sidebar-link series-sidebar-child" href="#series-library"><Film aria-hidden="true" size={17}/><span>Series Library</span></a>
-        </>}
-        <span className="series-sidebar-divider"/>
-        <span className="series-sidebar-label">Account</span>
-        <button type="button" className="series-sidebar-link" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy}><SettingsIcon aria-hidden="true" size={18}/><span>Settings</span></button>
+  return <div className={`app-shell sidebar-app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""} ${isSeriesRoute ? "series-app-shell" : ""}`}>
+    <aside className="app-sidebar">
+      <button className="brand app-sidebar-brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Dashboard" disabled={busy || ttsBusy || ttsLoading}><span className="brand-mark"><Play aria-hidden="true" size={19} fill="currentColor"/></span><span><strong>AI Facts Studio</strong></span></button>
+      <nav aria-label="Navigasi utama">
+        <button type="button" className={`app-sidebar-link ${isDashboardRoute ? "active" : ""}`} onClick={() => void goToDashboard()} aria-current={view === "workspace" ? "location" : isDashboardRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><House aria-hidden="true" size={18}/><span>Dashboard</span></button>
+        <button type="button" className={`app-sidebar-link ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()} aria-current={view === "create" ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><Sparkles aria-hidden="true" size={18}/><span>AI Facts</span></button>
+        <button type="button" className={`app-sidebar-link ${isSeriesRoute ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} aria-current={isSeriesRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><Layers3 aria-hidden="true" size={18}/><span>Story Series</span></button>
+        <button type="button" className="app-sidebar-link" onClick={() => void openStorySeries({ view: "series-library", slug: null }, "series-library")} disabled={busy || ttsBusy || ttsLoading}><Film aria-hidden="true" size={18}/><span>Series Library</span></button>
+        <button type="button" className="app-sidebar-link" onClick={() => void openStorySeries({ view: "series-library", slug: null }, "saved-story-drafts")} disabled={busy || ttsBusy || ttsLoading}><FileText aria-hidden="true" size={18}/><span>Drafts</span></button>
+        <span className="app-sidebar-divider"/>
+        <span className="app-sidebar-label">Production</span>
+        <button type="button" className={`app-sidebar-link ${isQueueRoute ? "active" : ""}`} onClick={() => void goToDashboard("queue")} aria-current={isQueueRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><Play aria-hidden="true" size={18}/><span>Video Queue</span></button>
+        <button type="button" className={`app-sidebar-link ${isCompletedRoute ? "active" : ""}`} onClick={() => void goToDashboard("completed")} aria-current={isCompletedRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><CircleCheck aria-hidden="true" size={18}/><span>Completed</span></button>
+        <span className="app-sidebar-divider"/>
+        <span className="app-sidebar-label">Account</span>
+        <button type="button" className={`app-sidebar-link ${view === "settings" ? "active" : ""}`} onClick={() => void openSettings()} aria-current={view === "settings" ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy}><SettingsIcon aria-hidden="true" size={18}/><span>Settings</span></button>
+        <button type="button" className="app-sidebar-link app-sidebar-unavailable" disabled title="Help & Support page is not available yet"><CircleHelp aria-hidden="true" size={18}/><span>Help &amp; Support</span></button>
       </nav>
-    </aside>}
-    <main className={`main-area ${isSeriesRoute ? "series-main-area" : ""}`}>
+      <div className="app-sidebar-quota" aria-label="Daily render quota">
+        <span className="app-sidebar-quota-icon"><Zap aria-hidden="true" size={19} fill="currentColor"/></span>
+        <span className="app-sidebar-quota-copy"><small>Kuota render</small><strong>{status ? status.generationMode === "development" ? "∞" : Math.max(0, status.dailyLimit - status.jobsUsed) : "…"}</strong><small>{status ? status.generationMode === "development" ? "Render lokal · unlimited" : `dari ${status.dailyLimit} job harian` : "Memuat kuota…"}</small>{status?.generationMode === "production" && <span className="app-sidebar-quota-track" aria-hidden="true"><i style={{ width: `${Math.min(100, status.jobsUsed / Math.max(1, status.dailyLimit) * 100)}%` }}/></span>}</span>
+      </div>
+    </aside>
+    <main className={`main-area sidebar-main-area ${isSeriesRoute ? "series-main-area" : ""}`}>
       <header className={`topbar ${isSeriesRoute ? "series-topbar" : ""}`}>
-        {!isSeriesRoute && <div className="topbar-left">
-          <button className="brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Beranda" disabled={busy || ttsBusy || ttsLoading}>
-            <span className="brand-mark"><Sparkles aria-hidden="true" size={17} /></span><span><strong>AI Facts</strong><small>STUDIO</small></span>
-          </button>
-          <nav className="topbar-nav" aria-label="Navigasi utama">
-            <button type="button" className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
-            <button type="button" className={`nav-home ${isSeriesRoute ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} disabled={busy || ttsBusy || ttsLoading} aria-current={isSeriesRoute ? "page" : undefined} aria-label="Story Series"><BookOpen aria-hidden="true" size={17}/><span>Series</span></button>
-          </nav>
-        </div>}
         <div className="topbar-actions">
           {view === "workspace" && activeStep !== "video-editor" && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
-          {!isSeriesRoute && <button type="button" className="button button-primary topbar-create" onClick={() => void openCreate()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "create" ? "page" : undefined} aria-label="Buat video" title="Buat video"><Sparkles aria-hidden="true" size={16} /><span>Buat video</span></button>}
           <ThemeSwitcher preference={theme} onChange={setTheme} />
-          {!isSeriesRoute && <button className={`topbar-icon ${view === "settings" ? "active" : ""}`} type="button" onClick={() => void openSettings()} disabled={busy || ttsBusy || ttsLoading || aiSettingsBusy} aria-label="Pengaturan" title="Pengaturan"><SettingsIcon aria-hidden="true" size={18} /></button>}
         </div>
       </header>
 
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
-      {view === "dashboard" && <Dashboard projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
+      {view === "dashboard" && <Dashboard section={dashboardSection} projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {(view === "series-library" || view === "series-detail" || view === "series-generation") && <StorySeriesPage route={route} busy={busy || ttsBusy || ttsLoading} onNavigate={(target) => void openStorySeries(target)} onOpenProject={(id) => void openProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
         <div className="page-heading"><div><div className="eyebrow">BUAT VIDEO</div><h1>Create video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
@@ -2878,11 +2881,14 @@ function renderQuotaNote(status: Status | null, mode: AiGenerationMode | null) {
     : "Kuota 24 jam bergulir; job Development tetap dihitung.";
 }
 
-function Dashboard({ projects, loading, busy, onSample, onOpen, onDelete }: { projects: Project[]; loading: boolean; busy: boolean; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
+function Dashboard({ section, projects, loading, busy, onSample, onOpen, onDelete }: { section: DashboardSection; projects: Project[]; loading: boolean; busy: boolean; onSample: () => void; onOpen: (id: string) => void; onDelete: (id: string) => void }) {
   const [search, setSearch] = useState("");
-  const visibleProjects = projects.filter((item) => item.researchPackage.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const sectionProjects = projects.filter((item) => section === "queue" ? item.latestJob?.state === "preview-ready" || item.latestJob?.state === "rendering" : section === "completed" ? item.latestJob?.state === "rendered" : true);
+  const visibleProjects = sectionProjects.filter((item) => item.researchPackage.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const title = section === "queue" ? "Video Queue" : section === "completed" ? "Completed" : "Project Saya";
+  const description = section === "queue" ? "Render siap dimulai atau sedang berjalan." : section === "completed" ? "Video dengan render final yang sudah selesai." : "Buat video baru atau lanjutkan storyboard yang tersimpan.";
   return <section className="page layout-container dashboard-page">
-    <div className="dashboard-heading"><div><div className="eyebrow">AI FACTS STUDIO · CREATIVE WORKSPACE</div><h1>Project Saya</h1><p>Buat video baru atau lanjutkan storyboard yang tersimpan.</p></div><span className="project-total">{loading ? "Memuat project…" : `${projects.length} ${projects.length === 1 ? "project" : "projects"}`}</span></div>
+    <div className="dashboard-heading"><div><div className="eyebrow">AI FACTS STUDIO · CREATIVE WORKSPACE</div><h1>{title}</h1><p>{description}</p></div><span className="project-total">{loading ? "Memuat project…" : `${sectionProjects.length} ${sectionProjects.length === 1 ? "project" : "projects"}`}</span></div>
     <div className="project-toolbar">
       <label className="project-search"><Search aria-hidden="true" size={17} /><input type="search" aria-label="Cari project" placeholder="Cari project…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       {!loading && !projects.length && <button type="button" className="button button-light" onClick={onSample} disabled={busy}><Film aria-hidden="true" size={16} />Coba sample</button>}
@@ -2902,7 +2908,7 @@ function Dashboard({ projects, loading, busy, onSample, onOpen, onDelete }: { pr
         </button>
         <button type="button" className="project-card-delete" onClick={() => onDelete(item.id)} disabled={busy} aria-label={`Hapus ${item.researchPackage.title}`} title="Hapus project"><Trash2 size={16} aria-hidden="true" /></button>
       </article>)}
-    </div> : projects.length ? <div className="project-empty filtered-empty"><Search size={22} aria-hidden="true" /><strong>Tidak ada project yang cocok</strong><span>Coba kata kunci lain.</span></div>
+    </div> : section !== "all" ? <div className="project-empty filtered-empty"><Search size={22} aria-hidden="true" /><strong>{section === "queue" ? "Tidak ada video di antrean" : "Belum ada video selesai"}</strong><span>{section === "queue" ? "Render siap dimulai atau berjalan akan tampil di sini." : "Video yang berhasil dirender akan tampil di sini."}</span></div> : projects.length ? <div className="project-empty filtered-empty"><Search size={22} aria-hidden="true" /><strong>Tidak ada project yang cocok</strong><span>Coba kata kunci lain.</span></div>
       : <div className="project-empty"><span className="project-empty-icon"><Sparkles size={22} aria-hidden="true" /></span><strong>Belum ada project</strong><span>Project video akan muncul di sini setelah Anda membuatnya.</span><button type="button" className="button button-light" onClick={onSample} disabled={busy}><Film size={16} aria-hidden="true" />Buka sample video</button></div>}
   </section>;
 }

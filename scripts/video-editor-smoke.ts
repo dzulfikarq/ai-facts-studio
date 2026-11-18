@@ -147,15 +147,53 @@ try {
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "project dashboard");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Dashboard", "dashboard highlights its global sidebar item");
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].map((button) => button.textContent?.trim())), ["Dashboard", "AI Facts", "Story Series", "Series Library", "Drafts", "Video Queue", "Completed", "Settings", "Help & Support"], "sidebar matches reference navigation structure");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link:last-child")?.disabled), true, "unavailable Help & Support is not a fake live route");
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector(".app-sidebar-quota"))), true, "sidebar shows live render quota card");
+  await page.goto({ url: `${viteUrl}/?section=queue`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => document.querySelector(".dashboard-page h1")?.textContent === "Video Queue"), "Video Queue dashboard filter");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Video Queue", "Video Queue highlights its sidebar item");
+  await page.goto({ url: `${viteUrl}/?section=completed`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => document.querySelector(".dashboard-page h1")?.textContent === "Completed"), "Completed dashboard filter");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Completed", "Completed highlights its sidebar item");
+  await page.goto({ url: `${viteUrl}/create`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".create-page"))), "Create page uses global sidebar");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "AI Facts", "Create highlights its global sidebar item");
+  await page.goto({ url: `${viteUrl}/settings?section=appearance`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".settings-page"))), "Settings page uses global sidebar");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Settings", "Settings highlights its global sidebar item");
+  await page.goto({ url: viteUrl, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "return to dashboard for series checks");
   const storySeriesJson = await readFile("fixtures/story-series/bilik-empat-episode-01.json", "utf8");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: `${viteUrl}/series`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-generation-start form") && document.querySelector(".series-estimate-panel"))), "Generate from Story dashboard cards");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector("#saved-story-drafts .series-empty-state, #saved-story-drafts .series-draft-list") && document.querySelector("#series-library .series-library-empty, #series-library .series-library-summary-list"))), "Story Series drafts and library load");
   assert.equal(await page.evaluate(() => document.querySelector(".series-hero h1")?.textContent), "Story Series", "Story Series page shows reference hierarchy");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).paddingTop), "38px", "Story Series top spacing matches shared desktop page spacing");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>('.series-mode-switch button[aria-pressed="true"]')?.textContent?.includes("Generate from Story")), true, "Generate from Story remains active default mode");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".series-dashboard-aside > .series-panel").length), 3, "drafts, library, and live estimate occupy right dashboard column");
-  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".series-sidebar-link.active")?.textContent?.trim()), "Story Series", "series sidebar highlights current route");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Story Series", "Story Series highlights its global sidebar item");
+  const pairedControlHeights = await page.evaluate(() => {
+    const heights = [...document.querySelectorAll<HTMLElement>(".series-source-form .series-form-grid")].map((grid) => [...grid.querySelectorAll<HTMLElement>("input,select,textarea")].map((control) => Math.round(control.getBoundingClientRect().height)));
+    return [heights[0]!.slice(0, 2), heights[0]!.slice(2, 4), heights[1]!];
+  });
+  assert.deepEqual(pairedControlHeights, [[44, 44], [44, 44], [44, 44]], "paired source controls align to consistent heights");
+  const languageDurationBounds = await page.evaluate(() => {
+    const language = document.querySelector<HTMLInputElement>('.series-source-form input[pattern="[a-z]{2}-[A-Z]{2}"]')?.getBoundingClientRect();
+    const duration = document.querySelector<HTMLInputElement>('.series-source-form input[type="number"][min="30"][max="120"]')?.getBoundingClientRect();
+    return [
+      language ? [Math.round(language.top), Math.round(language.bottom)] : null,
+      duration ? [Math.round(duration.top), Math.round(duration.bottom)] : null,
+    ];
+  });
+  assert.ok(languageDurationBounds[0]?.[0] === languageDurationBounds[1]?.[0] && languageDurationBounds[0]?.[1] === languageDurationBounds[1]?.[1], `language and duration controls align vertically: ${JSON.stringify(languageDurationBounds)}`);
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "Series Library")?.click());
+  await waitFor(() => page.evaluate(() => location.hash === "#series-library"), "Series Library sidebar section target");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "Drafts")?.click());
+  await waitFor(() => page.evaluate(() => location.hash === "#saved-story-drafts"), "Drafts sidebar section target");
+  await page.evaluate(() => { history.replaceState(history.state, "", "/series"); window.scrollTo(0, 0); });
   assert.equal(await page.evaluate(() => document.querySelector<HTMLSelectElement>('.series-form-field select')?.value), "cinematic-2d-motion-comic", "new story source defaults to locked hand-painted 2D horror style");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLOptionElement>('.series-form-field select option')].some((option) => option.value === "stylized-3d-cartoon")), false, "Generate from Story does not offer 3D style fallback");
   await page.setViewport({ width: 1672, height: 941, deviceScaleFactor: 1 });
@@ -396,7 +434,7 @@ try {
   await captureViewport("dashboard-light-desktop.png");
   await assertResponsiveNoOverflow("dashboard");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "AI Facts")?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && document.querySelector(".ai-generate-panel") !== null), "Create Video route");
   await captureViewport("create-light-desktop.png");
   await assertResponsiveNoOverflow("Create Video");
@@ -485,6 +523,7 @@ try {
   assert.equal(generationAttemptCount(), aiAttemptsBeforeManualCreate, "manual project create makes no AI research-generation request");
   await page.goto({ url: `${viteUrl}/projects/${manualProject.id}`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".scene-editor") && document.querySelectorAll(".scene-row").length === 1)), "manual project reload restores Materials & Storyboard");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Dashboard", "project workspace keeps global sidebar and parent item active");
   const originalManualSceneId = manualProject.researchPackage.scenes[0].id as string;
   await clickButton(".storyboard-actions button", "add scene to manual project");
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".scene-row").length === 2), "manual scene appears");
@@ -516,7 +555,8 @@ try {
   await waitFor(() => page.evaluate(() => !document.querySelector(".topbar-save")), "manual workspace save completes before reload");
   await page.goto({ url: `${viteUrl}/projects/${manualProject.id}`, timeout: 90_000 });
   await waitFor(() => page.evaluate((sceneId) => document.querySelector<HTMLButtonElement>(".scene-row")?.dataset.sceneId === sceneId, addedManualSceneId), "manual project reload restores reordered scene");
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "AI Facts")?.disabled === false), "AI Facts navigation enabled after workspace reload");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "AI Facts")?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && Boolean(document.querySelector(".ai-generate-panel"))), "Create Video reopens after manual project");
   assert.equal(await page.evaluate(() => {
     const choice = document.querySelector<HTMLButtonElement>('.animation-style-card[data-animation-style-id="stylized-3d-cartoon"] .animation-style-choice');
@@ -545,12 +585,12 @@ try {
   projectIds.push(generatedSmokeProjects[0]!.id);
   assert.equal(generatedSmokeProjects[0]!.animationStyleId, "stylized-3d-cartoon", "AI Create persists selected style ID");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-icon[aria-label="Pengaturan"]')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "Settings")?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/settings" && document.querySelector(".settings-page") !== null), "Settings route");
   await captureViewport("settings-light-desktop.png");
   await assertResponsiveNoOverflow("Settings");
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>(".nav-home")?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "Dashboard")?.click());
   await waitFor(() => page.evaluate(() => location.pathname === "/" && document.querySelectorAll(".project-card-open").length >= 2), "return to dashboard");
 
   await clickProject(mountainProject.researchPackage.title);
@@ -1323,6 +1363,7 @@ try {
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".editor-inspector-tabs button")].find((button) => button.textContent?.trim() === "Gerak")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-motion-direction") !== null), "Motion Direction controls load for Flow clip");
   assert.equal(await setMotionCue("pan", true), true, "Motion Direction applies to imported Flow clip scene");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".editor-motion-parameters label")].find((label) => label.textContent?.trim().startsWith("Target"))?.querySelector("select")?.value === "all"), "Flow clip motion target defaults to whole media layer");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".editor-motion-parameters label")].find((label) => label.textContent?.trim().startsWith("Target"))?.querySelector("select")?.value), "all", "Flow clip motion targets whole media layer");
   await waitFor(() => page.evaluate((before) => {
     const video = document.querySelector<HTMLVideoElement>(".editor-canvas-shell video");
@@ -1427,7 +1468,7 @@ try {
 
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample shortcut");
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>('.topbar-create[aria-label="Buat video"]')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "AI Facts")?.click());
   await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api"))), "Create Video sample shortcut");
   const sampleOpened = await page.evaluate(() => {
     const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("Gunakan sample gunung api"));

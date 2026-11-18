@@ -903,7 +903,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .sidebar-app-shell .topbar .topbar-actions { gap: 8px; }
 .series-main-area { min-width: 0; background: linear-gradient(180deg, color-mix(in srgb,var(--primary-soft) 36%,var(--background)) 0, var(--background) 280px); }
 .series-app-shell .series-topbar { min-height: 48px; padding-block: 3px; border-bottom-color: color-mix(in srgb,var(--primary) 10%,var(--border)); background: color-mix(in srgb,var(--surface) 90%,transparent); box-shadow: none; }
-.series-index-page { gap: 13px; max-width: 1580px; margin-inline: clamp(18px,2.7vw,46px); padding-top: 38px; padding-bottom: 38px; }
+.series-index-page { gap: 13px; max-width: 1580px; padding-top: 38px; padding-bottom: 38px; }
 .series-hero-banner { position: relative; isolation: isolate; display: grid; justify-items: start; gap: 13px; min-height: 154px; overflow: hidden; box-sizing: border-box; padding: 15px 0 17px; border-radius: 16px; background: linear-gradient(112deg,color-mix(in srgb,var(--primary-soft) 44%,var(--surface)) 0%,color-mix(in srgb,var(--primary-soft) 58%,var(--surface)) 57%,color-mix(in srgb,var(--primary-soft) 77%,var(--surface)) 100%); }
 .series-hero-banner::before,.series-hero-banner::after { position: absolute; z-index: -1; border-radius: 50%; content: ""; pointer-events: none; }
 .series-hero-banner::before { top: -142px; right: 3%; width: 58%; height: 260px; background: color-mix(in srgb,var(--surface) 45%,transparent); transform: rotate(-17deg); }

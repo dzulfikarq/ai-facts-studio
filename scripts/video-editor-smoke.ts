@@ -227,9 +227,12 @@ try {
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
       columns: getComputedStyle(document.querySelector<HTMLElement>(".series-dashboard-grid")!).gridTemplateColumns.split(" ").length,
+      gutters: [parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).marginLeft), parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).marginRight)],
+      expectedGutter: Math.min(56, Math.max(18, window.innerWidth * 0.04)),
     }));
     assert.equal(layout.scrollWidth <= width, true, `Story Series dashboard has no horizontal overflow at ${width}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.columns, width <= 1024 ? 1 : 2, `Story Series dashboard uses expected columns at ${width}px`);
+    assert.ok(layout.gutters.every((gutter) => Math.abs(gutter - layout.expectedGutter) < 0.1), `Story Series uses shared page gutters at ${width}px: ${JSON.stringify(layout)}`);
     if (width === 375) {
       const illustration = await page.evaluate(() => {
         const banner = document.querySelector<HTMLElement>(".series-hero-banner")!.getBoundingClientRect();

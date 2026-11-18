@@ -1,22 +1,27 @@
 import React from "react";
 import { captionSegmentsForScene } from "../domain/captions";
+import type { StorySeriesProjectLink } from "../domain/story-series";
 import type { ResearchPackage, Scene } from "../domain/research";
+import type { VisualStoryboard } from "../domain/visual-storyboard";
 
 type ReviewProject = {
   audio: { name: string; durationSec: number; source: "upload" | "tts"; timingMode: "scaled" | "estimated"; tts?: { voiceName: string; locale: string; style: string; speakingRate: number } } | null;
   audioMatchesNarration: boolean;
   pendingTts: { voiceName: string; durationSec: number } | null;
   researchReviewStatus: "needs-review" | "verified-by-author";
+  storySeries?: StorySeriesProjectLink;
 };
 
-export function ReviewStep({ research, project, onEditScene, onEditReferences, onEditNarration, onReview }: {
+export function ReviewStep({ research, project, storyboard, onEditScene, onEditReferences, onEditNarration, onReview }: {
   research: ResearchPackage;
   project: ReviewProject;
+  storyboard: VisualStoryboard;
   onEditScene: (id: string) => void;
   onEditReferences: () => void;
   onEditNarration: () => void;
   onReview: (status: "needs-review" | "verified-by-author") => void;
 }) {
+  const fiction = research.category === "Fiksi";
   const scenesWithoutSources = research.scenes.filter((scene) => !scene.referenceIds.length);
   const totalDuration = research.scenes.at(-1)?.endSec ?? research.targetDurationSec;
   const voiceSummary = project.audio
@@ -34,8 +39,21 @@ export function ReviewStep({ research, project, onEditScene, onEditReferences, o
     {project.audio?.source === "tts" && !project.audioMatchesNarration && <div className="workflow-alert danger" role="alert"><span>Naskah berubah setelah audio disetujui. Preview ulang narasi diperlukan.</span><button type="button" onClick={() => onEditScene(research.scenes[0]!.id)}>Perbaiki teks di Video Editor →</button></div>}
     {project.pendingTts && <div className="workflow-alert attention"><span>Kandidat narasi {project.pendingTts.voiceName} menunggu persetujuan; audio aktif belum terganti.</span><button type="button" onClick={onEditNarration}>Buka langkah Narasi →</button></div>}
     {!project.audio && <div className="workflow-alert attention"><span>Audio belum tersedia. Render final akan meminta konfirmasi video tanpa narasi.</span></div>}
-    {!research.references.length && <div className="workflow-alert attention"><span>Belum ada referensi penelitian.</span><button type="button" onClick={onEditReferences}>Periksa materi & referensi →</button></div>}
-    {scenesWithoutSources.map((scene) => <div className="workflow-alert attention" key={scene.id}><span>Scene “{scene.onScreenText || scene.id}” belum terhubung ke referensi.</span><button type="button" onClick={() => onEditScene(scene.id)}>Periksa scene →</button></div>)}
+    {fiction && <div className="workflow-alert"><span>Fiksi — sitasi faktual tidak diminta. Tinjau naskah, continuity, timing, audio, dan keluaran produksi; approval manual tetap wajib.</span></div>}
+    {!fiction && !research.references.length && <div className="workflow-alert attention"><span>Belum ada referensi penelitian.</span><button type="button" onClick={onEditReferences}>Periksa materi & referensi →</button></div>}
+    {!fiction && scenesWithoutSources.map((scene) => <div className="workflow-alert attention" key={scene.id}><span>Scene “{scene.onScreenText || scene.id}” belum terhubung ke referensi.</span><button type="button" onClick={() => onEditScene(scene.id)}>Periksa scene →</button></div>)}
+
+    {project.storySeries && <section className="series-review-card"><div><span className="eyebrow">STORY SERIES · EPISODE {String(project.storySeries.episodeNumber).padStart(2, "0")}</span><h2>{project.storySeries.seriesTitle} · {project.storySeries.episodeTitle}</h2></div>
+      {project.storySeries.previousEpisodeSummary && <p><strong>Episode sebelumnya:</strong> {project.storySeries.previousEpisodeSummary}</p>}
+      <p><strong>Opening hook:</strong> {project.storySeries.openingHook}</p><p><strong>Cliffhanger:</strong> {project.storySeries.endingCliffhanger}</p>
+      <p><strong>Budget:</strong> {project.storySeries.productionBudget.estimatedCredits.toLocaleString("id-ID")} credits estimated · {project.storySeries.productionBudget.reserveCredits.toLocaleString("id-ID")} reserve · {project.storySeries.productionBudget.plannedClips} clips</p>
+      <div className="series-handoff"><strong>Next episode setup:</strong><span>{project.storySeries.continuityHandoff.nextEpisodeSetup}</span>
+        {!!project.storySeries.continuityHandoff.revealedFacts.length && <p><strong>Revealed facts:</strong> {project.storySeries.continuityHandoff.revealedFacts.join(" · ")}</p>}
+        {!!project.storySeries.continuityHandoff.unresolvedMysteries.length && <p><strong>Unresolved mysteries:</strong> {project.storySeries.continuityHandoff.unresolvedMysteries.join(" · ")}</p>}
+        {!!project.storySeries.continuityHandoff.characterStates.length && <ul>{project.storySeries.continuityHandoff.characterStates.map((item) => <li key={item.characterId}><strong>{item.characterId}:</strong> {item.state}</li>)}</ul>}
+      </div>
+      <div className="series-review-scenes">{storyboard.scenes.flatMap((scene) => scene.storySeries ? [{ scene, data: scene.storySeries }] : []).map(({ scene, data }) => <article key={scene.sceneId}><strong>{scene.sceneNumber}. {data.title}</strong><span>{data.dramaticPurpose}</span><small>{data.references.characters.length + data.references.locations.length + data.references.props.length} continuity refs · {data.continuityNotes.length} notes · {data.audio.soundEffects.length + data.audio.ambience.length} audio cues</small><button type="button" className="text-button" onClick={() => onEditScene(scene.sceneId)}>Review scene →</button></article>)}</div>
+    </section>}
 
     <section className="review-timeline-card">
       <div className="section-title"><div><h2>Timeline & subtitle</h2><p>{project.audio?.timingMode === "estimated" ? "Estimasi scene dikalibrasi ke durasi audio; timing frasa tetap perkiraan." : "Scene dan frasa subtitle mengikuti timing storyboard. Edit subtitle di Video Editor."}</p></div><span className="count-chip">{project.audio?.timingMode === "estimated" ? "ESTIMASI" : "PER SCENE"}</span></div>
@@ -45,8 +63,8 @@ export function ReviewStep({ research, project, onEditScene, onEditReferences, o
     </section>
 
     <section className={`review-author-card ${project.researchReviewStatus === "verified-by-author" ? "verified" : ""}`}>
-      <div><strong>Verifikasi materi oleh Anda</strong><small>Periksa referensi dan klaim; aplikasi tidak memverifikasi fakta otomatis.</small></div>
-      <button type="button" className="button button-light" onClick={() => onReview(project.researchReviewStatus === "verified-by-author" ? "needs-review" : "verified-by-author")} aria-pressed={project.researchReviewStatus === "verified-by-author"}>{project.researchReviewStatus === "verified-by-author" ? "✓ Materi ditinjau" : "Tandai sudah ditinjau"}</button>
+      <div><strong>{fiction ? "Tinjau cerita dan continuity oleh Anda" : "Verifikasi materi oleh Anda"}</strong><small>{fiction ? "Fiksi tidak dinilai sebagai klaim faktual. Manual review tetap diperlukan." : "Periksa referensi dan klaim; aplikasi tidak memverifikasi fakta otomatis."}</small></div>
+      <button type="button" className="button button-light" onClick={() => onReview(project.researchReviewStatus === "verified-by-author" ? "needs-review" : "verified-by-author")} aria-pressed={project.researchReviewStatus === "verified-by-author"}>{project.researchReviewStatus === "verified-by-author" ? "✓ Materi ditinjau" : fiction ? "Tandai cerita ditinjau" : "Tandai sudah ditinjau"}</button>
     </section>
   </div>;
 }

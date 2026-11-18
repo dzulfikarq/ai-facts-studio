@@ -27,6 +27,33 @@ export function buildIllustrationPrompt({ research, storyboard, scene, styleLock
   const focus = scene.visualFocus ? visualObjectLibrary[scene.visualFocus].label : scene.illustrationIntent;
   const palette = Object.entries(storyboard.palette).map(([name, color]) => `${name} ${color}`).join(", ");
   const semantic = scene.semanticPlan;
+  if (scene.storySeries) {
+    const story = scene.storySeries;
+    const referenceDetails = [
+      ...story.references.characters.map((item) => `Character ${item.name} (${item.role ?? "unspecified role"}): ${item.physicalDescription ?? item.description}. Outfit: ${item.outfit ?? "as described"}. Features: ${item.distinguishingFeatures?.join("; ") ?? "none specified"}. Personality: ${item.personality ?? "unspecified"}. ${item.continuityRules.join(" ")}`),
+      ...story.references.locations.map((item) => `Location ${item.name}: ${item.description}. Fixed layout: ${item.fixedLayout ?? "as described"}. ${item.continuityRules.join(" ")}`),
+      ...story.references.props.map((item) => `Prop ${item.name}: ${item.visualDescription ?? item.description}. ${item.continuityRules.join(" ")}`),
+    ].join("\n").slice(0, 3000);
+    return [
+      animated
+        ? "Create one continuous animated clip for this fictional narrative scene; preserve character, location, prop, and episode continuity."
+        : "Create one finished illustration for this fictional narrative scene; no collage or multi-panel storyboard.",
+      `Series scene: ${story.title}. Dramatic purpose: ${story.dramaticPurpose}`,
+      `Scene narration (context only; never render words as text): ${scene.narrationText}`,
+      `Visual description: ${story.visualDescription}`,
+      `Primary action: ${story.primaryAction}. Shot: ${story.shotType}. Camera: ${story.cameraMovement}.`,
+      `Lighting: ${story.lighting}. Environment motion: ${story.environmentMotion}.`,
+      referenceDetails ? `Continuity references:\n${referenceDetails}` : "No named continuity references for this scene.",
+      story.googleFlow.referenceInstructions,
+      story.continuityNotes.length ? `Scene continuity rules:\n${story.continuityNotes.map((item) => `- ${item}`).join("\n")}` : "",
+      `Series palette: ${lock.colorPalette || palette}. Series visual style: ${lock.illustrationStyle}. ${lock.lighting}. ${lock.consistencyInstructions}`,
+      animated ? `Animation preset (${animationPreset.id} · ${animationPreset.name}): ${animationPreset.prompt.style} ${animationPreset.prompt.motion}` : `Illustration style: ${lock.outlineShapeStyle}; ${lock.visualComplexity}`,
+      `Portrait 9:16. Compose one clear action. Keep lower third calm for separately rendered subtitles. No generated text, captions, logos, or watermark.`,
+      `Audio cues are post-production guidance only; do not render text or invent sound sources. Ambience: ${story.audio.ambience.join("; ")}. SFX: ${story.audio.soundEffects.join("; ")}. Music mood: ${story.audio.musicMood}.`,
+      `NEGATIVE INSTRUCTIONS: ${story.googleFlow.negativePrompt}`,
+      previousReference ? `Optional previous-scene style reference: scene ${previousReference.sceneNumber}, “${previousReference.name}”, style ${previousReference.style}; use only for visual consistency, not subject copying.` : "",
+    ].filter(Boolean).join("\n\n").slice(0, 12000);
+  }
   return [
     mode === "animated-video"
       ? "Create one continuous animated video clip for one educational short-video scene. Keep subject, environment, palette, and character design consistent throughout."

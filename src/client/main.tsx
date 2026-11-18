@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowDown, ArrowUp, CircleAlert, Clock3, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, CircleAlert, Clock3, Film, House, Info, Plus, Save as SaveIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, Sun, Trash2, TriangleAlert } from "lucide-react";
 import { Player } from "@remotion/player";
 import type { PlayerRef } from "@remotion/player";
 import type { AnyZodObject } from "remotion";
 import { categories, researchReferenceSchema, researchWarnings, visualPresets, type ResearchPackage, type ResearchReference, type Scene } from "../domain/research";
 import type { AiGenerationDraft, AiGenerationInput } from "../domain/ai-generation";
 import type { ManualProjectBrief } from "../domain/manual-project";
+import type { StorySeriesProjectLink } from "../domain/story-series";
 import { applyVisualStoryboard, buildVisualStoryboard, buildVisualWorld, compositionForVisualScene, illustrationSourceForScene, retimeVisualStoryboard, visualApprovalFingerprint, visualObjectIds, visualObjectLibrary, visualStoryboardQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import { composeVisualScene } from "../domain/visual-composer";
 import { visualCompositionSchema, visualImageNodes } from "../domain/visual-composition";
@@ -37,6 +38,7 @@ import { ManualProjectPanel } from "./ManualProjectPanel";
 import { AnimationStyleGallery } from "./AnimationStyleGallery";
 import { VideoEditorV2 } from "./VideoEditorV2";
 import { OutroLibraryPanel } from "./OutroLibraryPanel";
+import { StorySeriesPage } from "./StorySeriesPage";
 import type { FlowBatchItem, FlowBatchProgress } from "./GoogleFlowPanel";
 import { AppearanceSettings, ThemeSwitcher, useThemePreference, type ThemePreference } from "./theme-system";
 import { canAdvanceWorkspaceStep, previewReviewFingerprint, reachableWorkspaceStep, storedPreviewReviewed, storedWorkspaceStep, workflowStatuses, workspaceSteps, type WorkspaceStep } from "./workflow";
@@ -66,6 +68,7 @@ type Project = {
   creationMode: "manual" | "ai-generated" | "imported" | "sample" | "legacy";
   creationBrief?: ManualProjectBrief;
   animationStyleId?: AnimationStyleId;
+  storySeries?: StorySeriesProjectLink;
   researchPackage: ResearchPackage;
   visualStoryboard: VisualStoryboard;
   visualStoryboardError?: string;
@@ -690,6 +693,15 @@ function App() {
     setSelectedCreateOutroId(undefined);
     setCreateDraftUnsaved(false);
     commitRoute({ view: "create" });
+    setMessage("");
+  }
+
+  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" }>) {
+    if (busy || ttsBusy || ttsLoading) return;
+    if (!await confirmLeaveCreate()) return;
+    if (!await saveBeforeLeavingWorkspace()) return;
+    setCreateDraftUnsaved(false);
+    commitRoute(target);
     setMessage("");
   }
 
@@ -2185,6 +2197,7 @@ function App() {
           </button>
           <nav className="topbar-nav" aria-label="Navigasi utama">
             <button type="button" className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
+            <button type="button" className={`nav-home ${view === "series-library" || view === "series-detail" ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "series-library" || view === "series-detail" ? "page" : undefined} aria-label="Story Series"><BookOpen aria-hidden="true" size={17}/><span>Series</span></button>
           </nav>
         </div>
         <div className="topbar-actions">
@@ -2198,6 +2211,7 @@ function App() {
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
       {view === "dashboard" && <Dashboard projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
+      {(view === "series-library" || view === "series-detail") && <StorySeriesPage route={route} busy={busy || ttsBusy || ttsLoading} onNavigate={(target) => void openStorySeries(target)} onOpenProject={(id) => void openProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
         <div className="page-heading"><div><div className="eyebrow">BUAT VIDEO</div><h1>Create video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung api</button>
@@ -2317,10 +2331,10 @@ function App() {
                 </div>
               </div>
               {project.creationMode === "manual" && <div className="manual-project-brief"><span>ASAL PROJECT · MANUAL</span><strong>Gaya {project.creationBrief?.deliveryStyle ?? "edukatif"}</strong>{project.creationBrief?.additionalInstructions && <p>{project.creationBrief.additionalInstructions}</p>}</div>}
-              <ReferencesEditor references={research.references} onChange={updateResearchReferences} />
-              <div className="references-card">
-                <p className="source-warning">Status fakta: <b>{project.researchReviewStatus === "verified-by-author" ? "Ditinjau pengguna" : "Belum ditinjau"}</b>. Sumber dan klaim tidak diverifikasi otomatis.</p>
-              </div>
+              {research.category === "Fiksi" ? <div className="references-card"><p className="source-warning">Fiksi tidak memakai review klaim atau sitasi faktual. Tinjau naskah, continuity, audio, dan visual secara manual sebelum render.</p></div> : <>
+                <ReferencesEditor references={research.references} onChange={updateResearchReferences} />
+                <div className="references-card"><p className="source-warning">Status fakta: <b>{project.researchReviewStatus === "verified-by-author" ? "Ditinjau pengguna" : "Belum ditinjau"}</b>. Sumber dan klaim tidak diverifikasi otomatis.</p></div>
+              </>}
               {!!researchWarnings(research).length && <div className="workflow-alert attention"><span>{researchWarnings(research).join(" ")}</span></div>}
             </aside>
           </div>}
@@ -2463,6 +2477,7 @@ function App() {
           {activeStep === "review" && <ReviewStep
             research={visualResearch!}
             project={project}
+            storyboard={project.visualStoryboard}
             onEditScene={(id) => { selectScene(id); void goToStep("video-editor"); }}
             onEditReferences={() => void goToStep("materials")}
             onEditNarration={() => void goToStep("narration")}

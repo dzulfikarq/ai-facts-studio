@@ -28,6 +28,15 @@ export const animationStyleRegistry = {
       negative: "Avoid 3D, photorealistic rendering, frantic cuts, excessive camera shake, muddy silhouettes, and style changes between frames.",
     },
   },
+  "cinematic-2d-motion-comic": {
+    name: "Cinematic 2D Motion Comic",
+    description: "Horor sinematik 2D semi-realistis, painterly, terkontrol; bukan 3D atau kartun anak.",
+    prompt: {
+      style: "Cinematic semi-realistic 2D motion comic with painterly textures, subtle film grain, cinematic chiaroscuro lighting, serious horror atmosphere, and consistent character/environment design. Never use 3D.",
+      motion: "Animate one stated action with controlled, deliberate movement and at most one dominant camera move. Preserve silhouettes, identity, layout, and continuity; avoid lip-sync unless explicitly requested.",
+      negative: "Avoid 3D, CGI, photorealistic live action, childish cartoon style, bright cheerful colors, identity drift, extra limbs, text, subtitles, watermark, rapid cuts, excessive camera shake, gore, and style changes between frames.",
+    },
+  },
   "2d-hand-drawn": {
     name: "Hand-Drawn 2D",
     description: "Tekstur pensil, tinta, atau cat air dengan gerakan organik.",

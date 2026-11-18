@@ -246,8 +246,8 @@ try {
   await captureViewport("create-gallery-mobile.png");
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-  assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-card").length), 6, "Create Video renders six animation styles");
-  assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-card .animation-style-choice").length), 6, "each style has one selection control");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-card").length), 7, "Create Video renders all seven animation styles");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-card .animation-style-choice").length), 7, "each style has one selection control");
   assert.equal(await page.evaluate(() => document.querySelector('.animation-style-card.selected')?.getAttribute("data-animation-style-id")), "expressive-2d-cartoon", "expressive 2D is selected by default");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".animation-style-card img, .animation-style-card video, .animation-style-dialog, .animation-style-preview-button").length), 0, "style gallery has no poster or preview controls");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>('.animation-style-card[data-animation-style-id="stylized-3d-cartoon"] .animation-style-choice')?.click());
@@ -327,6 +327,7 @@ try {
   const originalManualSceneId = manualProject.researchPackage.scenes[0].id as string;
   await clickButton(".storyboard-actions button", "add scene to manual project");
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".scene-row").length === 2), "manual scene appears");
+  await waitFor(() => page.evaluate((sceneId) => document.querySelector<HTMLButtonElement>(".scene-row.chosen")?.dataset.sceneId !== sceneId, originalManualSceneId), "new manual scene becomes selected");
   const addedManualSceneId = await page.evaluate(() => document.querySelector<HTMLButtonElement>(".scene-row.chosen")?.dataset.sceneId ?? "");
   assert.ok(addedManualSceneId && addedManualSceneId !== originalManualSceneId, "manual scene receives a stable ID");
   assert.equal(await setFormValue(".basic-content-section label:nth-of-type(1) input", "Scene manual kedua"), true, "manual scene on-screen text is editable");
@@ -398,7 +399,7 @@ try {
   assert.equal(editorRoute.scene, mountainProject.visualStoryboard.scenes[0].sceneId, "selected scene is URL-backed");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Pengaturan Video"))?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".editor-animation-style-controls select"))), "project-level animation style setting");
-  assert.equal(await page.evaluate(() => document.querySelectorAll<HTMLSelectElement>(".editor-animation-style-controls select option").length), 6, "Video Editor project setting exposes all six styles");
+  assert.equal(await page.evaluate(() => document.querySelectorAll<HTMLSelectElement>(".editor-animation-style-controls select option").length), 7, "Video Editor project setting exposes all seven styles");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLSelectElement>(".editor-animation-style-controls select")?.value), "expressive-2d-cartoon", "legacy project uses default style without prompt migration");
   assert.equal(await setMotionControl(".editor-animation-style-controls select", "stylized-3d-cartoon"), true, "project-level style can be changed");
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "style update marks project unsaved");

@@ -1,0 +1,761 @@
+{
+  "schemaVersion": "story-series.v1",
+  "packageType": "series-with-episode",
+  "series": {
+    "slug": "bilik-empat",
+    "title": "Bilik Empat",
+    "genre": [
+      "horror",
+      "mystery",
+      "psychological-thriller"
+    ],
+    "language": "id-ID",
+    "logline": "Laras mewarisi wartel terbengkalai milik pamannya yang menghilang sebelas tahun lalu. Di sana ada satu bilik yang berdering tepat pukul 02.13 dan menagih waktu hidup dari siapa pun yang menjawabnya.",
+    "synopsis": "Desa Wirasari nyaris kosong sejak bendungan jebol pada 1999. Wartel Sari Rejeki ditutup sejak Pak Darto, pemiliknya, lenyap di bilik nomor empat pada 2015. Laras datang hanya untuk menjual bangunan itu. Pada malam pertama, telepon bilik empat berdering tepat pukul 02.13. Suara pamannya memberi satu peringatan, lalu jarum penagih mulai bergerak dan seseorang yang persis seperti Laras muncul di balik kaca. Di balik semua itu ada utang lama: pada malam bendungan jebol, Darto yang seharusnya memperingatkan 31 orang lewat telepon memilih menyelamatkan satu bayi. Panggilan yang tak pernah tersambung itu kini menagih.",
+    "plannedEpisodeCount": 3,
+    "visualStyle": {
+      "presetId": "cinematic-2d-motion-comic",
+      "description": "Cinematic 2D Motion Comic: animasi 2D semi-realistis bertekstur lukisan tangan, grain film halus, kontras chiaroscuro dramatis, komposisi sinematik vertikal, gerakan lembut dan terkontrol seperti panel komik yang hidup. Atmosfer horor serius dan dingin dengan motif air di segala hal yang terhubung ke sambungan telepon. Subjek utama ditempatkan di dua pertiga atas frame; sepertiga bawah dibiarkan tenang untuk subtitle yang ditambahkan di AI Facts Studio.",
+      "aspectRatio": "9:16",
+      "colorPalette": [
+        "Hitam-teal pekat `#0B1A1F` (bayangan utama)",
+        "Hijau keruh `#2F4A44` (dinding dan air)",
+        "Hijau neon sakit `#9FD6B8` (cahaya bilik empat dan sambungan)",
+        "Amber natrium `#D98A2B` (lampu jalan dan senter)",
+        "Merah karat `#8E2A1C` (zona merah meteran dan benang kunci)",
+        "Putih tulang `#CFC8B4` (kulit pucat dan aksen)"
+      ],
+      "consistencyRules": [
+        "Tidak ada teks, angka terbaca, logo, watermark, atau subtitle di dalam video Flow; papan nama, buku catatan, jam, dan meteran hanya memakai simbol dan tanda garis.",
+        "Semua klip memakai gaya dan palet yang sama; warna cerah dan gaya kartun anak-anak dilarang.",
+        "Air adalah motif tetap: apa pun yang berasal dari sambungan meneteskan air.",
+        "Satu aksi utama dan maksimal satu gerakan kamera dominan per klip; tidak ada lip-sync.",
+        "Cahaya hijau neon hanya datang dari bilik empat atau dari sesuatu yang terhubung ke sambungan; sumber hangat hanya lampu jalan dan senter Laras.",
+        "Sepertiga bawah frame dijaga tenang untuk subtitle."
+      ]
+    },
+    "storyBible": {
+      "setting": "Desa Wirasari, desa kecil di kaki bendungan yang jebol pada 1999 dan kini hampir kosong; hanya satu penduduk lama yang masih tinggal. Wartel Sari Rejeki berdiri di bekas pos telepon desa. Cerita berlangsung di malam hujan pada November 2026.",
+      "centralMystery": "Mengapa bilik empat berdering tiap pukul 02.13 dan menagih waktu dari orang yang menjawabnya, ke mana semua yang hilang pergi, dan apa yang terjadi pada Pak Darto.",
+      "hiddenTruth": "Rahasia produksi, jangan dibocorkan di narasi Episode 1. Pada 14 Februari 1999 pukul 02.13, bendungan Waduk Wirasari jebol. Darto, juru telepon desa, memegang daftar 31 nama yang harus ia peringatkan lewat telepon dalam tujuh menit. Bayi Laras (2 tahun) sedang dititipkan di rumah Darto malam itu, dan orang tuanya termasuk dalam daftar 31 nama. Darto memilih berlari membawa Laras dan tidak menelepon siapa pun, sehingga 31 orang tewas tanpa peringatan. Panggilan yang tak pernah tersambung itu menjadi antrean yang menyatu sebagai Sang Operator. Pada 2015 Darto mencoba mengirim peringatan itu terlambat, membayar dengan waktunya sampai habis, dan terjebak sebagai suara di saluran. Peringatannya ‘jangan sebut namanya’ adalah sisa terakhir kesadarannya: ia tahu nama yang diucapkan di sambungan akan ditagih. Twist Episode 3: yang berjalan meninggalkan desa di pagi hari adalah Duplikat, sedangkan Laras asli tetap di bilik empat sebagai suara operator yang baru.",
+      "worldRules": [
+        "Bilik empat hanya hidup pukul 02.13, jam bendungan jebol. Di luar jam itu teleponnya mati, meski jam dinding wartel yang mati sejak 2015 ikut hidup kembali tepat pada menit itu.",
+        "Siapa pun yang menjawab tersambung ke saluran Sang Operator. Setiap detik sambungan dicatat oleh jarum meteran penagih di atas bilik empat; jika jarum memasuki zona merah, penelepon terputus dan lenyap ke dalam saluran.",
+        "Nama yang diucapkan di sambungan mencatat pemilik nama sebagai penanggung tagihan. Siapa pun boleh mengucapkannya, tetapi pemilik nama sendiri tidak boleh menyebut atau menjawab atas namanya; itu yang diperingatkan Darto.",
+        "Segala sesuatu yang berasal dari sambungan meninggalkan jejak air: tetesan, jejak kaki basah, dan tubuh yang basah kuyup.",
+        "Kaca berembun bilik adalah ambang ke sisi lain; sosok dari sisi lain tampak di baliknya sebelum menjadi nyata.",
+        "Sang Operator tidak bisa meninggalkan wartel dan waduk; hanya Duplikat yang bisa berjalan di luar.",
+        "Jarum penagih tidak turun sendiri; setiap malam sambungan terbuka lagi pukul 02.13 dan menagih lebih banyak."
+      ],
+      "timeline": [
+        {
+          "date": "14 Februari 1999, 02.13",
+          "event": "Bendungan Waduk Wirasari jebol. Darto memilih menyelamatkan bayi Laras dan tidak menelepon daftar 31 nama; seluruh 31 orang itu tewas, termasuk orang tua Laras."
+        },
+        {
+          "date": "1999–2000",
+          "event": "Desa ditinggalkan bertahap. Laras dibawa ke kota dan dibesarkan kerabat jauh yang mengatakan orang tuanya meninggal dalam kecelakaan. Darto membuka wartel Sari Rejeki di bekas pos telepon."
+        },
+        {
+          "date": "2000–2015",
+          "event": "Wartel beroperasi. Bilik empat dikunci tiap malam dan Darto mencatat setiap sambungan di buku catatan."
+        },
+        {
+          "date": "Februari 2015, 02.13",
+          "event": "Darto lenyap di bilik empat. Wartel ditutup dan jam dindingnya mati."
+        },
+        {
+          "date": "November 2026",
+          "event": "Laras (29 tahun) menerima surat warisan dan tiba di desa tengah malam. Episode 1 terjadi pada malam pertamanya."
+        }
+      ],
+      "continuityRules": [
+        "Wartel Sari Rejeki sudah tutup sebelas tahun pada Episode 1.",
+        "Dering pertama bilik empat di Episode 1 terjadi pukul 02.13 malam yang sama dengan kedatangan Laras; Scene 1 adalah cold open dari dering itu.",
+        "Laras asli basah karena hujan tetapi tidak basah kuyup; hanya Duplikat yang basah kuyup dengan air mengalir terus.",
+        "Detail Laras asli: tahi lalat di bawah mata kiri, gelang perak di pergelangan kiri, kunci berbenang merah di pergelangan kanan. Detail Duplikat terbalik: tahi lalat di bawah mata kanan, gelang di pergelangan kanan, kunci berbenang merah di pergelangan kiri.",
+        "Darto hanya muncul sebagai suara di Episode 1 dan tidak boleh ditampilkan secara visual.",
+        "Sang Operator tidak ditampilkan secara visual di Episode 1.",
+        "Tata ruang wartel tidak boleh berubah antar episode."
+      ],
+      "episodeOutlines": [
+        {
+          "episodeNumber": 1,
+          "title": "Bilik Empat",
+          "summary": "Laras tiba di wartel warisan, menemukan buku catatan Darto, dan menjawab telepon bilik empat pukul 02.13. Suara pamannya memperingatkannya, jarum penagih bergerak, dan jejak kaki basah mendekat.",
+          "endingHook": "Seseorang meminta disambungkan kepada Laras dengan suara Laras sendiri, dan sosok kembarannya yang basah kuyup berdiri di balik kaca bilik."
+        },
+        {
+          "episodeNumber": 2,
+          "title": "Jarum Penagih",
+          "summary": "Laras tidak bisa meninggalkan desa karena jalan keluar tertutup kabut dan jarum penagih menyisakan tiga malam. Bu Sumi menceritakan malam bendungan jebol. Laras menemukan halaman tersembunyi di buku catatan berisi 31 nama, dan Duplikat mulai muncul di tempat-tempat yang pernah ia datangi.",
+          "endingHook": "Nama orang tua Laras ada di daftar itu, dan di kolom ke-32 ada tulisan tangan Darto yang belum selesai: Untuk yang kuselamatkan. Jarum menyentuh zona merah dan Duplikat masuk ke bilik empat."
+        },
+        {
+          "episodeNumber": 3,
+          "title": "Sambungan Terakhir",
+          "summary": "Laras pergi ke Waduk Wirasari pukul 02.13 untuk menyampaikan panggilan peringatan yang tak pernah dikirim, sementara Duplikat berusaha menghentikannya. Identitas Sang Operator terungkap dan Laras membacakan 31 nama hingga air surut dan jarum kembali ke nol. Produksi saja: di pagi hari yang meninggalkan desa adalah Duplikat, sedangkan Laras asli tetap di bilik empat sebagai suara operator yang baru.",
+          "endingHook": "Detail terbalik pada perempuan yang pergi, yakni gelang di kanan dan tahi lalat di kanan, menunjukkan bahwa yang keluar dari desa adalah yang basah, sementara telepon bilik empat berdering lagi."
+        }
+      ]
+    },
+    "characters": [
+      {
+        "id": "laras",
+        "name": "Laras Wirasti",
+        "role": "protagonist",
+        "physicalDescription": "Perempuan Indonesia berusia 29 tahun, kulit sawo matang, wajah oval yang tampak lelah dengan lingkar hitam tipis di bawah mata, rambut hitam bergelombang sebahu diikat rendah dengan helai longgar di sisi wajah, tubuh ramping.",
+        "outfit": "Jaket hujan berkerudung warna kuning mustard yang pudar, celana jeans hitam, sneakers putih berlumpur, tas selempang kulit cokelat.",
+        "distinguishingFeatures": [
+          "Tahi lalat kecil di bawah mata kiri",
+          "Gelang perak tipis di pergelangan kiri",
+          "Kunci kuningan berbenang merah di pergelangan kanan",
+          "Jaket mustard pudar yang selalu lembap karena hujan di Episode 1"
+        ],
+        "personality": "Rasional dan keras kepala, menyembunyikan rasa takut dengan sikap dingin; dibesarkan di kota dan tidak mengetahui bahwa ia lahir di Wirasari.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic character reference sheet, semi-realistic hand-painted style with film grain, vertical 9:16, plain dark teal-grey neutral background, soft cold side lighting. Full-body front view and close-up face of LARAS, a 29-year-old Indonesian woman with tan skin, a tired oval face with faint dark circles, a small mole under her LEFT eye, shoulder-length wavy black hair tied in a loose low ponytail with loose strands framing her face, wearing a faded mustard-yellow hooded rain jacket slightly damp, black jeans, muddy white sneakers, a brown leather crossbody bag, a thin silver bangle on her LEFT wrist and a brass key tied with a faded red thread on her RIGHT wrist. Neutral serious expression, muted teal-green and amber palette with rust-red accents. No text, no logo, no watermark.",
+        "continuityRules": [
+          "Tahi lalat selalu di bawah mata kiri.",
+          "Gelang perak selalu di pergelangan kiri dan kunci berbenang merah selalu di pergelangan kanan.",
+          "Jaket mustard tidak pernah berganti warna atau model.",
+          "Rambut selalu diikat rendah dengan helai longgar."
+        ]
+      },
+      {
+        "id": "pak-darto",
+        "name": "Pak Darto",
+        "role": "missing-uncle-voice",
+        "physicalDescription": "Pria berusia sekitar 60 tahun saat menghilang, kurus, rambut putih cepak, wajah penuh kerutan dengan tatapan lelah.",
+        "outfit": "Kemeja safari beige lengan pendek yang kusut dan kacamata berbingkai hitam tebal.",
+        "distinguishingFeatures": [
+          "Kacamata berbingkai hitam tebal",
+          "Rambut putih cepak",
+          "Kerutan dalam di dahi"
+        ],
+        "personality": "Pendiam, penuh rasa bersalah, memikul rahasia malam bendungan jebol.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic character reference, semi-realistic hand-painted style with film grain, vertical 9:16, plain dark teal-grey background, soft cold lighting. Bust and full-body view of PAK DARTO, an elderly thin Indonesian man in his early sixties with short cropped white hair, deep wrinkles, tired sorrowful eyes behind thick black-framed glasses, wearing a rumpled beige short-sleeved safari shirt and dark trousers. Muted teal-green palette with faint amber accents. No text, no logo, no watermark.",
+        "continuityRules": [
+          "Pada Episode 1 hanya hadir sebagai suara dan tidak ditampilkan secara visual.",
+          "Selalu berkacamata hitam tebal dan berambut putih cepak."
+        ]
+      },
+      {
+        "id": "sang-operator",
+        "name": "Sang Operator",
+        "role": "antagonist-entity",
+        "physicalDescription": "Sosok tinggi seperti perempuan dengan kulit abu-abu pucat kebiruan, rambut hitam sangat panjang yang basah dan menutupi seluruh wajah, air menetes terus dari tubuhnya.",
+        "outfit": "Seragam telepon lama warna biru dongker yang pudar dengan headset berkabel panjang yang menjuntai ke lantai.",
+        "distinguishingFeatures": [
+          "Wajah tidak pernah terlihat",
+          "Headset berkabel panjang",
+          "Air menetes tanpa henti"
+        ],
+        "personality": "Suara kolektif 31 orang yang menunggu peringatan; dingin, sabar, dan menagih.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic character reference, semi-realistic hand-painted horror style with film grain, vertical 9:16, dark teal-black background, pale sickly green rim light. A tall slender woman-like figure standing still, wearing a faded navy-blue old telecom operator uniform, a headset with a long cable trailing on the wet floor, very long wet black hair completely covering her face, pale gray-blue skin, water dripping continuously from her hair and sleeves. Face never visible. Subtle, unsettling, no gore. No text, no logo, no watermark.",
+        "continuityRules": [
+          "Tidak ditampilkan di Episode 1.",
+          "Wajahnya tidak pernah terlihat jelas.",
+          "Terikat pada wartel dan waduk dan tidak bisa berjalan di luar."
+        ]
+      },
+      {
+        "id": "duplikat-laras",
+        "name": "Duplikat Laras",
+        "role": "mirror-double",
+        "physicalDescription": "Terlihat persis seperti Laras, tetapi basah kuyup dengan rambut menempel di wajah, kulit sedikit abu-abu pucat kebiruan, dan air mengalir terus dari tubuhnya.",
+        "outfit": "Jaket hujan kuning mustard, celana jeans hitam, dan sneakers putih seperti Laras, semuanya basah kuyup.",
+        "distinguishingFeatures": [
+          "Tahi lalat di bawah mata KANAN",
+          "Gelang perak di pergelangan KANAN",
+          "Kunci berbenang merah di pergelangan KIRI",
+          "Senyum samar di balik rambut basah"
+        ],
+        "personality": "Tenang, sabar, dan tidak bersuara kecuali lewat saluran telepon; tampak seperti Laras tetapi dingin.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic character reference sheet, semi-realistic hand-painted horror style with film grain, vertical 9:16, plain dark teal-black background, pale sickly green rim light. Full-body front view and close-up of the exact mirror double of an Indonesian woman, soaked to the skin, wet black wavy hair plastered over half her face, pale gray-blue skin, water streaming from her body, wearing a drenched faded mustard-yellow hooded rain jacket, black jeans, muddy white sneakers. Mirror-reversed details: a small mole under her RIGHT eye, a thin silver bangle on her RIGHT wrist, a brass key on a faded red thread on her LEFT wrist. A faint unsettling smile barely visible behind the hair. No gore. No text, no logo, no watermark.",
+        "continuityRules": [
+          "Detail selalu terbalik dari Laras: tahi lalat kanan, gelang kanan, kunci benang merah kiri.",
+          "Selalu basah kuyup dengan air mengalir terus, berbeda dengan Laras yang hanya lembap.",
+          "Tidak berbicara langsung; suaranya hanya terdengar lewat saluran telepon."
+        ]
+      },
+      {
+        "id": "bu-sumi",
+        "name": "Bu Sumi",
+        "role": "last-villager",
+        "physicalDescription": "Perempuan berusia 70-an, bertubuh kecil bungkuk, rambut putih disanggul, mata kiri berkabut.",
+        "outfit": "Kebaya cokelat tua dan kain batik pudar, memakai tongkat kayu.",
+        "distinguishingFeatures": [
+          "Mata kiri berkabut",
+          "Sanggul putih",
+          "Tongkat kayu"
+        ],
+        "personality": "Waspada, pendiam, menyimpan banyak yang ia tahu; satu-satunya penduduk yang bertahan di desa.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic character reference, semi-realistic hand-painted style with film grain, vertical 9:16, plain dark teal-grey background, warm amber side light. Full-body and bust view of BU SUMI, an elderly small hunched Indonesian woman in her seventies with white hair in a bun, deeply lined face, a cloudy milky left eye, wearing a dark brown kebaya and a faded batik sarong, holding a wooden cane. Wary expression, muted teal-green and amber palette. No text, no logo, no watermark.",
+        "continuityRules": [
+          "Di Episode 1 hanya terlihat sebagai siluet di jendela rumah seberang jalan.",
+          "Mata kiri selalu berkabut dan membawa tongkat kayu."
+        ]
+      }
+    ],
+    "locations": [
+      {
+        "id": "wartel-sari-rejeki",
+        "name": "Wartel Sari Rejeki",
+        "description": "Bangunan satu lantai berdinding hijau mint yang mengelupas dengan papan nama pudar bergambar gagang telepon tanpa huruf. Di dalamnya ada enam bilik triplek berpintu kaca berembun, meja kasir kayu berdebu, jam dinding bulat kuning pudar, dan kipas langit-langit tua. Lantai selalu basah di sekitar bilik empat.",
+        "fixedLayout": "Pintu masuk berada di dinding depan, dekat kamera. Dinding KIRI: enam bilik berjajar bernomor 1 sampai 6 dari dekat pintu menuju bagian belakang. Bilik empat berada di tengah-belakang, diapit bilik 3 dan bilik 5, dan bilik 5 serta 6 berada di belakangnya (jadi bilik empat BUKAN bilik terakhir). Meteran penagih terpasang di dinding tepat di atas bilik empat. Dinding KANAN: meja kasir kayu dekat pintu dengan telepon kasir dan jam dinding bulat di atasnya. Di antara bilik dan meja kasir terdapat lorong tengah yang sempit. Dinding belakang memiliki pintu kecil yang terkunci.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic environment reference, semi-realistic hand-painted style with film grain, vertical 9:16, dramatic chiaroscuro. Interior of an abandoned Indonesian wartel at night viewed from the entrance: peeling mint-green walls, on the LEFT wall a row of six plywood phone booths with fogged glass doors numbered by simple painted marks, the fourth booth from the entrance faintly glowing sickly green, a brass-and-iron billing meter on the wall above booth four, on the RIGHT wall a dusty wooden cashier counter near the entrance with a black desk phone and a round yellowed wall clock above it, a narrow aisle between booths and counter with shallow puddles reflecting green light, a stopped ceiling fan, cobwebs and floating dust. Palette: deep teal-black shadows, murky green walls, sickly green glow, rust-red accents. No people, no text, no readable signs, no logo, no watermark.",
+        "continuityRules": [
+          "Enam bilik selalu di dinding kiri dan nomor 1 sampai 6 dari pintu ke belakang.",
+          "Bilik empat selalu di tengah-belakang dengan bilik 5 dan 6 di belakangnya.",
+          "Meja kasir dan jam dinding selalu di dinding kanan dekat pintu.",
+          "Meteran selalu tepat di atas bilik empat.",
+          "Lantai selalu basah di sekitar bilik empat."
+        ]
+      },
+      {
+        "id": "jalan-desa-wirasari",
+        "name": "Jalan Desa Wirasari",
+        "description": "Jalan desa yang sepi, berlubang, dan licin oleh hujan. Rumah-rumah kosong berderet di kedua sisi, ada satu lampu jalan oranye yang berkedip, dan hanya satu rumah dengan jendela menyala di seberang wartel, yaitu rumah Bu Sumi.",
+        "fixedLayout": "Wartel berada di sisi jalan yang sama dengan kamera menghadap fasadnya. Rumah Bu Sumi berada di seberang jalan, sedikit ke kanan dari wartel. Lampu jalan berdiri di depan wartel, di sisi kiri. Jalan menurun perlahan ke arah waduk di kejauhan.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic environment reference, semi-realistic hand-painted style with film grain, vertical 9:16, dramatic chiaroscuro. A deserted rural Indonesian village street at night in heavy rain, wet potholed road reflecting a single flickering amber streetlamp, empty dark houses on both sides, a single warmly lit window in one house across the road, in the distance the dark slope toward a reservoir, drifting mist. Palette: deep teal-black, murky green, amber and rust-red accents. No people, no text, no signs, no logo, no watermark.",
+        "continuityRules": [
+          "Hanya satu jendela menyala di seluruh jalan.",
+          "Hujan deras selalu turun pada malam Episode 1.",
+          "Lampu jalan oranye berkedip."
+        ]
+      },
+      {
+        "id": "waduk-wirasari",
+        "name": "Waduk Wirasari",
+        "description": "Waduk dengan air hitam tenang, pohon-pohon mati yang menjulang dari air, dan satu tiang telepon yang setengah tenggelam dengan kabel menjuntai ke dalam air. Muncul dari Episode 2.",
+        "fixedLayout": "Tepi waduk berlumpur dengan pohon mati di kiri, tiang telepon tenggelam di tengah-kanan, bekas tanggul bendungan yang pecah di latar belakang.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic environment reference, semi-realistic hand-painted style with film grain, vertical 9:16, dramatic chiaroscuro. A still black reservoir at night with dead leafless trees rising from the water, a half-submerged old telephone pole with a cable trailing into the water, the broken concrete remains of a dam in the distance, pale mist over the surface, faint sickly green glow under the water. Palette: deep teal-black, murky green, sickly green accents. No people, no text, no logo, no watermark.",
+        "continuityRules": [
+          "Tidak ditampilkan di Episode 1.",
+          "Permukaan air selalu tenang dan hitam tanpa ombak.",
+          "Tiang telepon selalu setengah tenggelam."
+        ]
+      }
+    ],
+    "props": [
+      {
+        "id": "telepon-bilik-empat",
+        "name": "Telepon Bilik Empat",
+        "visualDescription": "Telepon umum hitam tua bertombol dengan gagang berat dan kabel spiral, terpasang di dinding bilik triplek dengan rak besi kecil. Selalu lembap dan meneteskan air dari kabel.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic prop reference, semi-realistic hand-painted style with film grain, vertical 9:16, dark teal background, cold green side light. An old black push-button public telephone with a heavy handset and a coiled cord mounted inside a cramped plywood phone booth with a small metal shelf, the plastic yellowed and scuffed, cold water droplets sliding down the cord, faint condensation on the surrounding fogged glass. No text, no logo, no watermark."
+      },
+      {
+        "id": "meteran-penagih",
+        "name": "Meteran Penagih",
+        "visualDescription": "Meteran bundar dari kuningan dan besi seukuran piring makan, berpenutup kaca retak, dengan satu jarum hitam tipis dan busur zona merah karat. Tanpa angka, hanya tanda garis. Terpasang di dinding tepat di atas bilik empat dengan kabel menjuntai.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic prop reference, semi-realistic hand-painted style with film grain, vertical 9:16, dark teal background, cold green light. A round antique brass-and-iron mechanical billing meter the size of a dinner plate with a cracked glass cover, a single thin black needle, simple tick marks only (no numbers or letters), a dull rust-red arc zone at the end of the dial, mounted on a dark wooden plaque with loose cables hanging below. No text, no logo, no watermark."
+      },
+      {
+        "id": "kunci-wartel",
+        "name": "Kunci Wartel",
+        "visualDescription": "Kunci kuningan kecil yang aus, terikat pada benang merah katun yang pudar dan dipakai Laras seperti gelang di pergelangan kanan.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic prop reference, semi-realistic hand-painted style with film grain, vertical 9:16, dark teal background, soft amber light. A small worn brass key tied with a faded red cotton thread, lying in the palm of a tan hand, tiny scratches on the metal, damp from rain. No text, no logo, no watermark."
+      },
+      {
+        "id": "buku-catatan-darto",
+        "name": "Buku Catatan Darto",
+        "visualDescription": "Buku besar tebal bersampul kain hijau tua yang retak, halaman menguning penuh baris coretan hitungan dan lingkaran kecil dengan tulisan tangan yang tidak terbaca. Halaman terakhir berakhir dengan lingkaran arang samar.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic prop reference, semi-realistic hand-painted style with film grain, vertical 9:16, dark teal background, warm amber flashlight light. A thick old ledger with a cracked dark-green cloth cover covered in dust, open to yellowed pages filled with rows of tally marks, small hand-drawn circles and illegible handwritten scribbles (no readable text), the last page ending in a faint charcoal circle. No text, no logo, no watermark."
+      },
+      {
+        "id": "jam-dinding-wartel",
+        "name": "Jam Dinding Wartel",
+        "visualDescription": "Jam dinding plastik bulat yang menguning dengan jarum hitam dan tanda garis sederhana tanpa angka, ada retakan halus di kaca. Mati sejak 2015 dan hidup kembali tepat pukul 02.13.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic prop reference, semi-realistic hand-painted style with film grain, vertical 9:16, dark teal background, dim cold light. A round yellowed plastic wall clock with black hands and simple tick marks only (no numerals), a hairline crack across the glass, dust on the frame, the hands frozen just past two o’clock. No text, no logo, no watermark."
+      },
+      {
+        "id": "telepon-kasir",
+        "name": "Telepon Kasir",
+        "visualDescription": "Telepon meja hitam bertombol di atas meja kasir dengan kabel spiral yang sangat panjang dan berdebu.",
+        "referenceImagePrompt": "Cinematic 2D Motion Comic prop reference, semi-realistic hand-painted style with film grain, vertical 9:16, dark teal background, cold light. An old black push-button desk telephone sitting on a dusty wooden cashier counter, a very long coiled cord trailing off the counter edge, scuffed plastic, a thin layer of dust. No text, no logo, no watermark."
+      }
+    ]
+  },
+  "episode": {
+    "episodeNumber": 1,
+    "title": "Bilik Empat",
+    "synopsis": "Laras tiba larut malam di wartel warisan pamannya yang sudah tutup sebelas tahun. Ia menemukan buku catatan yang mencatat sambungan bilik empat sebagai waktu yang harus dibayar. Tepat pukul 02.13 telepon bilik empat berdering, dan ia menjawabnya. Suara Pak Darto memperingatkannya agar tidak menyebut namanya, jarum penagih mulai bergerak, dan jejak kaki basah mendekat. Di akhir episode, seseorang di ujung saluran meminta disambungkan kepada Laras dengan suara Laras sendiri, dan sosok kembarnya yang basah kuyup berdiri di balik kaca bilik.",
+    "targetDurationSeconds": 63,
+    "previousEpisodeSummary": null,
+    "openingHook": "Telepon bilik empat berdering di wartel yang sudah tutup sebelas tahun, tepat dalam 3 detik pertama.",
+    "endingCliffhanger": "Laras menyadari bahwa ada yang meminta disambungkan kepadanya dengan suaranya sendiri, sementara sosok kembarnya yang basah kuyup berdiri di balik kaca dan mengangkat kepala.",
+    "scenes": [
+      {
+        "sceneId": "ep01-sc01",
+        "order": 1,
+        "title": "Telepon Berdering",
+        "durationSeconds": 7,
+        "dramaticPurpose": "Hook dalam 3 detik: penonton langsung tahu ada telepon yang seharusnya sudah mati sedang berdering di tempat kosong.",
+        "narration": "Wartel ini sudah tutup sebelas tahun. Tapi malam ini, bilik nomor empat... berdering.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Close-up ekstrem gagang telepon hitam tua di dalam bilik berkaca berembun yang bergetar karena dering, dengan tetesan air meluncur di kabel spiral. Kamera mundur perlahan dan memperlihatkan wartel gelap yang terbengkalai.",
+          "primaryAction": "Gagang telepon bergetar karena dering sambil meneteskan air.",
+          "shotType": "Extreme close-up lalu medium wide",
+          "cameraMovement": "Slow pull-back tanpa cut",
+          "lighting": "Neon hijau kesakitan berkedip dari atas dengan bayangan hitam-teal pekat.",
+          "environmentMotion": "Air menetes dari kabel ke lantai berdebu, debu melayang di berkas cahaya, hujan terdengar dari luar."
+        },
+        "references": {
+          "characterIds": [],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "telepon-bilik-empat",
+            "jam-dinding-wartel"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, subtle film grain, dramatic chiaroscuro lighting, deep teal-black shadows with sickly green light and rust-red accents. Extreme close-up of an old black push-button public telephone handset on its cradle inside a fogged plywood phone booth, vibrating hard as it rings, cold water droplets sliding down the coiled cord and dripping onto a dusty wet floor. Flickering sickly green fluorescent light from above, dust drifting in the beam. One smooth continuous slow pull-back reveals the fogged glass door of the booth and, beyond it, a dark abandoned Indonesian wartel with peeling mint-green walls, a row of plywood booths along the left wall, a dusty wooden cashier counter on the right and a stopped round yellowed wall clock above it. Heavy rain atmosphere, eerie silence between rings. No people. Keep the lower third of the frame calm and uncluttered.",
+          "negativePrompt": "text, letters, numbers, subtitles, captions, watermark, logo, readable signs, people, faces, ghost figure, monster, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright cheerful colors, gore, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Setelah gambar referensi dibuat dari referenceImagePrompt, gunakan gambar Telepon Bilik Empat dan interior Wartel Sari Rejeki sebagai image reference. Klip ini adalah cold open dari dering pukul 02.13 malam yang sama dengan kedatangan Laras. Jangan menampilkan karakter."
+        },
+        "audio": {
+          "ambience": [
+            "Hujan lebat di luar",
+            "Dengung neon",
+            "Keheningan bangunan kosong"
+          ],
+          "soundEffects": [
+            "Dering telepon lama yang tajam",
+            "Tetesan air ke lantai",
+            "Getaran gagang telepon"
+          ],
+          "musicMood": "Drone rendah dan dingin dengan ketegangan ambient yang naik pelan"
+        },
+        "continuityNotes": [
+          "Scene 1 adalah cold open dari dering pukul 02.13 malam yang sama dengan kedatangan Laras.",
+          "Jam dinding terlihat mati; ia hidup kembali di Scene 4.",
+          "Bilik empat berada di tengah-belakang di dinding kiri, bukan di ujung."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc02",
+        "order": 2,
+        "title": "Warisan di Tengah Hujan",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Memperkenalkan Laras, tujuannya, dan larangan terhadap bilik empat, serta kesan bahwa desa mengawasinya.",
+        "narration": "Laras datang untuk menjual wartel peninggalan pamannya. Warga hanya berpesan satu hal: jangan dekati bilik empat.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Jalan desa sepi di bawah hujan. Laras berdiri di depan wartel menatap papan nama pudar, lalu melangkah ke pintu sambil memegang kunci berbenang merah. Di seberang jalan, siluet perempuan tua di jendela menyala menutup tirai.",
+          "primaryAction": "Laras berjalan ke pintu wartel sambil memegang kunci berbenang merah.",
+          "shotType": "Wide establishing lalu medium dari belakang",
+          "cameraMovement": "Slow push-in dari belakang Laras",
+          "lighting": "Amber lampu jalan yang berkedip melawan bayangan hitam-teal dan jalan basah yang memantulkan cahaya.",
+          "environmentMotion": "Hujan deras, lampu belakang motor menghilang di kejauhan, tirai di jendela seberang menutup pelan."
+        },
+        "references": {
+          "characterIds": [
+            "laras",
+            "bu-sumi"
+          ],
+          "locationIds": [
+            "jalan-desa-wirasari",
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "kunci-wartel"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, deep teal-black shadows with amber streetlight and rust-red accents. Wide establishing shot of a deserted rural Indonesian village street at night in heavy rain; a motorcycle taillight fades into the distance. LARAS, a 29-year-old Indonesian woman with tan skin, a small mole under her LEFT eye, a tired oval face, shoulder-length wavy black hair in a loose low ponytail, a faded mustard-yellow hooded rain jacket damp from the rain, black jeans, muddy white sneakers, a brown crossbody bag, a thin silver bangle on her LEFT wrist and a brass key on a red thread on her RIGHT wrist, walks toward the door of a closed single-story wartel with peeling mint-green walls and a faded painted sign showing only a telephone handset icon. In the far background, a single warmly lit window across the street shows the silhouette of an elderly woman who slowly closes the curtain. One slow camera push-in from behind Laras. Flickering amber streetlamp, rain streaks, wet reflective road. Ominous and quiet. Keep the lower third calm.",
+          "negativePrompt": "text, letters, subtitles, captions, watermark, logo, readable signs, different face, changed hairstyle, changed jacket color, different clothing, extra fingers, deformed hands, extra limbs, bad anatomy, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright cheerful colors, monster, gore, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Gunakan gambar referensi Laras (jaket mustard, tahi lalat kiri, gelang kiri, kunci benang merah kanan), Jalan Desa Wirasari, dan fasad Wartel Sari Rejeki. Bu Sumi cukup berupa siluet kecil di jendela, jadi referensinya hanya untuk sosok bungkuk berambut sanggul. Jika gambar belum ada, buat dari referenceImagePrompt di bagian series."
+        },
+        "audio": {
+          "ambience": [
+            "Hujan deras",
+            "Gemuruh jauh dari arah waduk",
+            "Dengung lampu jalan"
+          ],
+          "soundEffects": [
+            "Motor menjauh",
+            "Kunci berdenting di benang",
+            "Gesekan tirai",
+            "Langkah di jalan basah"
+          ],
+          "musicMood": "Ambient dingin yang sunyi dengan satu nada rendah yang menggantung"
+        },
+        "continuityNotes": [
+          "Laras tiba larut malam menjelang pukul 02.13; jaketnya lembap tetapi tidak basah kuyup.",
+          "Hanya satu jendela menyala di jalan: rumah Bu Sumi.",
+          "Kunci selalu di pergelangan kanan dan gelang perak di pergelangan kiri."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc03",
+        "order": 3,
+        "title": "Buku Catatan Paman",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Memperkenalkan buku catatan dan aturan bilik empat serta menarik Laras ke dalam misteri.",
+        "narration": "Di meja kasir, ada buku catatan paman. Tiap panggilan bilik empat dicatat dengan satu angka: waktu yang harus dibayar.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Laras sudah berada di dalam wartel gelap dan berdiri di meja kasir dengan senter kecil. Ia mengusap debu tebal dari sebuah buku besar lalu membukanya, sementara enam bilik berkaca berembun terlihat samar di belakangnya di dinding kiri.",
+          "primaryAction": "Laras mengusap debu dari buku besar dan membuka sampulnya.",
+          "shotType": "Medium shot dari samping meja kasir",
+          "cameraMovement": "Slow push-in ke arah buku",
+          "lighting": "Satu berkas senter kuning hangat di buku, hijau samar dari bilik empat di latar belakang.",
+          "environmentMotion": "Debu melayang di berkas senter, tetesan air jatuh pelan di kejauhan."
+        },
+        "references": {
+          "characterIds": [
+            "laras"
+          ],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "buku-catatan-darto",
+            "kunci-wartel"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, deep teal-black shadows with warm amber flashlight beam and rust-red accents. Interior of an abandoned Indonesian wartel: peeling mint-green walls, on the left wall a row of six plywood phone booths with fogged glass doors, on the right wall a dusty wooden cashier counter, thick cobwebs. LARAS (29-year-old Indonesian woman, tan skin, small mole under her LEFT eye, shoulder-length wavy black hair in a loose low ponytail, faded mustard-yellow hooded rain jacket slightly damp, silver bangle on her LEFT wrist, brass key on red thread on her RIGHT wrist) stands at the counter with a small flashlight, wipes thick dust off a large old ledger with her hand and slowly opens the cover. Dust particles drift in the flashlight beam. One slow camera push-in toward the ledger. A faint sickly green glow from one booth in the background. Quiet and tense. Keep the lower third calm.",
+          "negativePrompt": "text, readable writing, letters, numbers, subtitles, captions, watermark, logo, different face, changed hairstyle, different clothing, extra fingers, deformed hands, extra limbs, bad anatomy, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright lighting, ghost figure, monster, gore, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Gunakan gambar referensi Laras, interior Wartel Sari Rejeki (enam bilik di dinding kiri, meja kasir di dinding kanan), dan Buku Catatan Darto sebagai image reference. Pastikan tidak ada tulisan terbaca di halaman buku."
+        },
+        "audio": {
+          "ambience": [
+            "Hujan teredam dari luar",
+            "Bangunan kosong yang berderit",
+            "Tetesan air"
+          ],
+          "soundEffects": [
+            "Engsel pintu berderit",
+            "Usapan debu",
+            "Sampul buku tua terbuka",
+            "Klik senter"
+          ],
+          "musicMood": "Ketegangan rendah dengan senar tipis yang menggantung"
+        },
+        "continuityNotes": [
+          "Buku catatan berada di meja kasir di dinding kanan.",
+          "Tidak ada tulisan terbaca di buku; semua berupa coretan dan tanda hitungan.",
+          "Laras sudah di dalam wartel sejak awal scene."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc04",
+        "order": 4,
+        "title": "Pukul Dua Lewat Tiga Belas",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Menegaskan batas waktu 02.13 dan membuat jam mati hidup kembali tepat pada menit itu.",
+        "narration": "Halaman terakhir berhenti pukul dua lewat tiga belas. Dan jam dinding itu... baru saja menunjuk angka yang sama.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Close-up tangan Laras membalik halaman tua penuh coretan hitungan hingga halaman terakhir yang berakhir dengan lingkaran arang samar. Kamera naik ke jam dinding bulat kuning pudar di atas meja kasir yang telah mati sebelas tahun; jarumnya tersentak hidup dan menit bergeser ke pukul 02.13.",
+          "primaryAction": "Tangan Laras membalik ke halaman terakhir buku catatan.",
+          "shotType": "Extreme close-up lalu medium close-up ke jam",
+          "cameraMovement": "Slow tilt up dari buku ke jam dinding",
+          "lighting": "Cahaya senter hangat di buku yang perlahan kalah oleh rona hijau dingin yang merambat di dinding.",
+          "environmentMotion": "Jarum jam tersentak hidup, satu lampu berkedip sekali, debu melayang."
+        },
+        "references": {
+          "characterIds": [
+            "laras"
+          ],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "buku-catatan-darto",
+            "jam-dinding-wartel"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, warm amber flashlight against cold teal-green shadows, rust-red accents. Extreme close-up of a tan woman’s hand with a thin silver bangle on the LEFT wrist slowly turning yellowed ledger pages filled with rows of tally marks, small hand-drawn circles and illegible scribbles (no readable text), stopping on the last page that ends in a faint charcoal circle. The camera performs one slow tilt up to a round yellowed plastic wall clock with simple tick marks and no numerals, hairline crack in the glass, which had been dead; its hands jerk to life and the minute hand clicks forward to about thirteen minutes past two, the hour hand just past two. One overhead bulb flickers once and a cold green tint creeps across the wall. Dust floats in the light. Tense, slow, ominous. Keep the lower third calm.",
+          "negativePrompt": "text, readable writing, readable numbers, numerals on the clock, letters, subtitles, captions, watermark, logo, digital clock, different hand, extra fingers, deformed hands, bad anatomy, 3D render, photorealistic live action, cute childish cartoon style, bright cheerful colors, ghost figure, gore, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Gunakan gambar referensi Buku Catatan Darto dan Jam Dinding Wartel sebagai image reference; tangan Laras cukup mengikuti referensi Laras (gelang perak di kiri). Jam harus tanpa angka, hanya tanda garis."
+        },
+        "audio": {
+          "ambience": [
+            "Dengung rendah yang menaik",
+            "Hujan teredam",
+            "Bangunan berderit"
+          ],
+          "soundEffects": [
+            "Kertas rapuh dibalik",
+            "Jam dinding yang tersentak hidup",
+            "Detak jam yang makin jelas",
+            "Klik lampu berkedip"
+          ],
+          "musicMood": "Ketegangan menanjak dengan denyut perlahan dan nada senar tipis"
+        },
+        "continuityNotes": [
+          "Jam dinding mati sejak 2015 dan hidup kembali tepat pada pukul 02.13, sesuai aturan bilik.",
+          "Jam berada di dinding kanan di atas meja kasir.",
+          "Jam tanpa angka, hanya tanda garis."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc05",
+        "order": 5,
+        "title": "Dering Tidak Berhenti",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Menaikkan ketegangan; Laras terpancing mendekat meski takut.",
+        "narration": "Dering itu tak mau berhenti. Kabelnya bergoyang, padahal tak ada angin. Seolah ia tahu Laras sudah di sini.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Lorong tengah dilihat dari belakang Laras. Ia berjalan melewati bilik 1 sampai 3 yang gelap menuju bilik empat yang memancarkan cahaya hijau samar; bilik 5 dan 6 gelap di belakangnya. Gagang telepon di bilik empat bergetar dan kabelnya bergoyang tanpa angin.",
+          "primaryAction": "Laras berjalan perlahan menyusuri lorong menuju bilik empat.",
+          "shotType": "Medium wide dari belakang bahu",
+          "cameraMovement": "Slow dolly-forward di belakang bahu Laras",
+          "lighting": "Cahaya hijau dari bilik empat memantul di lantai basah; bayangan panjang di sekitarnya.",
+          "environmentMotion": "Kipas langit-langit berhenti berputar, lampu berkedip, genangan di lantai bergetar mengikuti dering."
+        },
+        "references": {
+          "characterIds": [
+            "laras"
+          ],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "telepon-bilik-empat"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, deep teal-black shadows with sickly green glow and rust-red accents. View from behind LARAS (29-year-old Indonesian woman, shoulder-length wavy black hair in a loose low ponytail, faded mustard-yellow hooded rain jacket slightly damp, black jeans, muddy white sneakers) walking slowly down the narrow central aisle of an abandoned wartel; along the left wall stand six plywood phone booths with fogged glass doors, the first three dark and she passes them. The fourth booth glows faintly sickly green; inside, the handset vibrates as it rings and the coiled cord sways although the air is still. Booths five and six beyond it remain dark. The ceiling fan grinds to a stop, bulbs flicker, shallow puddles ripple and reflect the green light. One slow dolly-forward behind her shoulder, slightly low angle, long shadows. Dread builds, quiet and tense. Keep the lower third calm.",
+          "negativePrompt": "text, letters, numbers, subtitles, captions, watermark, logo, readable signs, changed hairstyle, different clothing, extra limbs, deformed hands, bad anatomy, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright cheerful colors, visible ghost, monster, gore, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Gunakan gambar referensi interior Wartel Sari Rejeki sebagai acuan tata ruang (bilik 1 sampai 6 di dinding kiri dengan bilik empat di tengah-belakang) dan referensi Laras untuk sosok dari belakang. Tambahkan referensi Telepon Bilik Empat bila memungkinkan."
+        },
+        "audio": {
+          "ambience": [
+            "Hujan teredam",
+            "Dengung neon yang tidak stabil",
+            "Bangunan berderit"
+          ],
+          "soundEffects": [
+            "Dering telepon yang makin keras",
+            "Langkah basah di lantai",
+            "Kipas yang berhenti",
+            "Kabel bergoyang"
+          ],
+          "musicMood": "Ketegangan yang menanjak dengan drone rendah dan denyut tipis"
+        },
+        "continuityNotes": [
+          "Laras melewati bilik 1, 2, 3 untuk mencapai bilik empat; bilik 5 dan 6 ada di belakangnya.",
+          "Bilik empat adalah satu-satunya bilik yang bercahaya.",
+          "Kipas langit-langit berhenti di scene ini dan tetap berhenti setelahnya."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc06",
+        "order": 6,
+        "title": "Suara dari Seberang",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Titik tanpa kembali: Laras menjawab dan suara Pak Darto terdengar memberi peringatan.",
+        "narration": "Laras mengangkatnya. Dari seberang, terdengar suara yang hilang sebelas tahun lalu: ‘Laras... jangan sebut namanya.’",
+        "onScreenText": "",
+        "visual": {
+          "description": "Laras berdiri di dalam bilik empat dengan pintu kaca terbuka setengah di belakangnya dan mengangkat gagang ke telinga. Close-up profil wajahnya dalam cahaya hijau: matanya melebar, napasnya berembun, air menetes dari gagang ke kerah jaketnya.",
+          "primaryAction": "Laras mengangkat gagang telepon ke telinganya.",
+          "shotType": "Medium close-up lalu close-up profil",
+          "cameraMovement": "Slow push-in ke wajah Laras",
+          "lighting": "Cahaya hijau dari bawah dan samping menerangi wajah dengan bayangan keras dan embun di kaca.",
+          "environmentMotion": "Tetesan air dari gagang ke kerah jaket, embun di kaca bergetar halus."
+        },
+        "references": {
+          "characterIds": [
+            "laras"
+          ],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "telepon-bilik-empat"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, harsh sickly green light from below and the side, deep teal-black shadows, rust-red accents. LARAS (29-year-old Indonesian woman, tan skin, small mole under her LEFT eye, tired oval face, shoulder-length wavy black hair in a loose low ponytail with loose strands, faded mustard-yellow hooded rain jacket, thin silver bangle on her LEFT wrist) stands inside a cramped plywood phone booth with its fogged glass door half open behind her and slowly lifts the old black handset to her ear. One slow push-in to a close-up of her face in profile lit by green light; her eyes widen, her breath fogs in the cold air, cold water droplets drip from the handset onto her jacket collar. Her lips stay closed, no talking. Condensation on the glass, flickering light. Intimate, tense, quiet. Keep the lower third calm.",
+          "negativePrompt": "text, letters, subtitles, captions, watermark, logo, lip-sync, talking mouth, different face, missing mole, mole on the right eye, changed hairstyle, different clothing, extra fingers, deformed hands, extra limbs, bad anatomy, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright cheerful colors, ghost figure, monster, gore, jump scare, fast cuts, excessive camera shake",
+          "referenceInstructions": "Gunakan gambar referensi wajah Laras (tahi lalat di bawah mata kiri) dan Telepon Bilik Empat sebagai image reference. Pastikan tahi lalat tetap di mata kiri sepanjang klip."
+        },
+        "audio": {
+          "ambience": [
+            "Hujan teredam",
+            "Dengung statis tipis dari saluran",
+            "Gema air jauh"
+          ],
+          "soundEffects": [
+            "Engsel kaca",
+            "Klik gagang diangkat",
+            "Statis lembut yang menjadi suara samar",
+            "Napas tertahan",
+            "Tetesan air"
+          ],
+          "musicMood": "Hening yang menekan dengan nada tunggal rendah yang menggantung"
+        },
+        "continuityNotes": [
+          "Pak Darto hanya terdengar sebagai suara dan tidak ditampilkan.",
+          "Peringatan ‘jangan sebut namanya’ ditujukan agar Laras tidak menyebut atau menjawab atas namanya sendiri di sambungan.",
+          "Laras tidak mengucapkan apa pun di scene ini."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc07",
+        "order": 7,
+        "title": "Jarum Penagih",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Membuktikan bahwa sambungan ini nyata dan berbahaya serta menetapkan aturan penagihan waktu.",
+        "narration": "Jarum penagih mulai bergerak. Setiap detik panggilan ini diambil dari hidupnya. Dan pintu bilik lain... terbuka satu per satu.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Close-up meteran kuningan dan besi di dinding tepat di atas bilik empat; jarum tipisnya bergetar lalu menyapu pelan ke arah zona merah. Kamera turun memperlihatkan Laras membeku di dalam bilik dengan gagang di telinga. Di balik kaca, pintu bilik 1, 2, 3, 5, dan 6 terbuka satu per satu dan jejak kaki basah muncul di lantai dari pintu masuk menuju bilik empat.",
+          "primaryAction": "Jarum meteran menyapu perlahan ke zona merah.",
+          "shotType": "Extreme close-up lalu medium wide",
+          "cameraMovement": "Slow tilt down dari meteran ke Laras",
+          "lighting": "Zona merah meteran menyala redup melawan hijau dingin dari bilik, bayangan memanjang.",
+          "environmentMotion": "Pintu-pintu bilik lain berayun terbuka berurutan dan jejak kaki basah muncul satu per satu di lantai berdebu."
+        },
+        "references": {
+          "characterIds": [
+            "laras"
+          ],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "meteran-penagih",
+            "telepon-bilik-empat"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, sickly green light, deep teal-black shadows, rust-red accents. Extreme close-up of an old brass-and-iron mechanical billing meter mounted on the wall directly above a plywood phone booth, with a cracked glass cover, a single thin black needle trembling then sweeping slowly toward a dull rust-red zone; no numbers or letters on the dial, only simple tick marks. One slow tilt down reveals LARAS (29-year-old Indonesian woman, mole under her LEFT eye, loose low ponytail, mustard-yellow hooded rain jacket) frozen inside booth number four with the handset at her ear. Beyond the glass, the doors of the other booths along the same wall swing open slowly one after another, and wet bare footprints appear one by one on the dusty floor, leading from the entrance toward her booth. No visible figure. Tense, slow, no fast motion. Keep the lower third calm.",
+          "negativePrompt": "text, letters, numbers, readable dial markings, subtitles, captions, watermark, logo, visible ghost, visible monster, different face, different clothing, extra limbs, deformed hands, bad anatomy, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright cheerful colors, gore, blood, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Gunakan gambar referensi Meteran Penagih (jarum tunggal, zona merah, tanpa angka), interior Wartel Sari Rejeki, dan Laras sebagai image reference. Pastikan meteran tepat di atas bilik empat dan tidak ada angka terbaca pada dial."
+        },
+        "audio": {
+          "ambience": [
+            "Dengung rendah yang makin menekan",
+            "Hujan teredam",
+            "Bangunan berderit"
+          ],
+          "soundEffects": [
+            "Detak mekanis meteran yang makin cepat",
+            "Derit pintu bilik bergantian",
+            "Tetesan air",
+            "Langkah basah tanpa wujud"
+          ],
+          "musicMood": "Ketegangan menanjak dengan denyut mekanis dan drone yang menekan"
+        },
+        "continuityNotes": [
+          "Jarum meteran mulai bergerak sejak Laras menjawab dan tidak kembali ke nol.",
+          "Pintu bilik 1, 2, 3, 5, 6 terbuka; bilik empat tetap tertutup setengah karena Laras di dalamnya.",
+          "Jejak kaki basah dari pintu masuk menuju bilik empat adalah petunjuk datangnya Duplikat."
+        ]
+      },
+      {
+        "sceneId": "ep01-sc08",
+        "order": 8,
+        "title": "Yang Meminta Disambungkan",
+        "durationSeconds": 8,
+        "dramaticPurpose": "Cliffhanger psikologis: ancaman berasal dari dirinya sendiri dan namanya telah disebut di sambungan.",
+        "narration": "Lalu Laras sadar. Di ujung sambungan, ada yang meminta disambungkan padanya. Dengan suara... milik Laras sendiri.",
+        "onScreenText": "",
+        "visual": {
+          "description": "Dari balik bahu Laras di dalam bilik empat, terlihat melalui kaca berembun. Di lorong tengah tepat di luar pintu berdiri sosok yang persis seperti dirinya, basah kuyup dengan rambut menempel di wajah, menggenggam gagang telepon kasir dengan kabel yang terentang menyeberangi ruangan dari meja kasir. Kepalanya perlahan terangkat dan hanya senyum samar terlihat di balik rambut basah.",
+          "primaryAction": "Duplikat Laras perlahan mengangkat kepala di balik kaca.",
+          "shotType": "Over-the-shoulder medium shot",
+          "cameraMovement": "Very slow push-in ke arah kaca",
+          "lighting": "Hijau pucat dari dalam bilik dengan siluet basah dan pantulan di lantai, nuansa dingin yang mencekam.",
+          "environmentMotion": "Air mengalir terus dari tubuh Duplikat, kabel telepon bergetar tegang, tetesan besar jatuh ke genangan."
+        },
+        "references": {
+          "characterIds": [
+            "laras",
+            "duplikat-laras"
+          ],
+          "locationIds": [
+            "wartel-sari-rejeki"
+          ],
+          "propIds": [
+            "telepon-kasir",
+            "telepon-bilik-empat"
+          ]
+        },
+        "googleFlow": {
+          "prompt": "Cinematic 2D Motion Comic, hand-painted semi-realistic horror style, vertical 9:16, painterly textures, film grain, dramatic chiaroscuro, pale sickly green light, deep teal-black shadows, rust-red accents. Over-the-shoulder shot from behind LARAS (29-year-old Indonesian woman, shoulder-length wavy black hair in a loose low ponytail, faded mustard-yellow hooded rain jacket only damp, thin silver bangle on her LEFT wrist) standing frozen inside a cramped fogged-glass phone booth with the handset at her ear. Through the fogged glass door, in the dark central aisle just outside, stands her exact double: same face and same mustard-yellow rain jacket, completely soaked, wet black hair plastered across her face, water streaming steadily from her body, skin slightly gray-blue pale. The double holds a black cashier desk-phone handset to her ear, its long coiled cord stretched taut across the room back to the counter. Mirror-reversed details on the double: a mole under the RIGHT eye, silver bangle on the RIGHT wrist, brass key on a red thread on the LEFT wrist. One very slow push-in toward the glass as the double slowly lifts her head, a faint smile barely visible behind wet hair. Dead silence, no sudden movement. Keep the lower third calm.",
+          "negativePrompt": "text, letters, subtitles, captions, watermark, logo, lip-sync, talking mouth, identical details on both women, same mole side on both women, different faces, changed clothing on the original, extra fingers, deformed hands, extra limbs, third woman, demon face, monster, gore, blood, 3D render, photorealistic live action, cute childish cartoon style, anime chibi, bright cheerful colors, jump scare, fast cuts, excessive camera shake, motion blur",
+          "referenceInstructions": "Gunakan gambar referensi Laras untuk sosok di dalam bilik (membelakangi kamera) dan referensi Duplikat Laras untuk sosok di balik kaca; pastikan detail terbalik pada Duplikat (tahi lalat kanan, gelang kanan, kunci benang merah kiri) tetap terlihat. Tambahkan referensi Telepon Kasir dan interior Wartel Sari Rejeki. Jika gambar belum ada, buat dari referenceImagePrompt di bagian series."
+        },
+        "audio": {
+          "ambience": [
+            "Keheningan yang menekan",
+            "Hujan sangat teredam",
+            "Dengung rendah yang menaik"
+          ],
+          "soundEffects": [
+            "Tetesan air besar ke genangan",
+            "Napas tertahan",
+            "Kabel telepon menegang",
+            "Satu nada telepon panjang yang memudar"
+          ],
+          "musicMood": "Drone rendah yang menaik perlahan lalu terputus tiba-tiba menjadi hening mencekam"
+        },
+        "continuityNotes": [
+          "Cliffhanger: Duplikat menyebut nama Laras di saluran sehingga tagihan jatuh pada Laras, padahal Laras sendiri belum menyebut namanya.",
+          "Detail Duplikat terbalik dari Laras; ini petunjuk visual untuk twist Episode 3 dan tidak dijelaskan di Episode 1.",
+          "Duplikat berdiri di lorong tengah di luar bilik empat, memegang telepon kasir yang kabelnya terentang ke meja kasir."
+        ]
+      }
+    ],
+    "continuityHandoff": {
+      "revealedFacts": [
+        "Wartel Sari Rejeki sudah tutup selama sebelas tahun dan Laras mewarisinya dari pamannya.",
+        "Bilik nomor empat berdering tepat pukul 02.13 dan jam dinding wartel yang mati ikut hidup pada menit itu.",
+        "Buku catatan Pak Darto mencatat tiap sambungan bilik empat sebagai waktu yang harus dibayar.",
+        "Meteran penagih di atas bilik empat mulai bergerak ketika Laras menjawab.",
+        "Suara Pak Darto terdengar di saluran dan memperingatkan Laras agar tidak menyebut namanya.",
+        "Jejak kaki basah muncul dari pintu masuk menuju bilik empat dan pintu bilik lain terbuka sendiri.",
+        "Seseorang yang persis seperti Laras, basah kuyup, berdiri di luar bilik dan meminta disambungkan kepada Laras lewat suara Laras sendiri."
+      ],
+      "unresolvedMysteries": [
+        "Apa yang terjadi pada Pak Darto dan mengapa suaranya ada di saluran.",
+        "Siapa atau apa yang berada di ujung saluran dan mengapa pukul 02.13.",
+        "Apa arti tagihan waktu dan apa yang terjadi bila jarum mencapai zona merah.",
+        "Siapa sosok kembaran Laras dan apa yang diinginkannya.",
+        "Apa yang dimaksud Darto dengan jangan sebut namanya.",
+        "Apa yang sebenarnya terjadi di desa ini dan mengapa warganya pergi."
+      ],
+      "characterStates": [
+        {
+          "characterId": "laras",
+          "state": "Masih berdiri di dalam bilik empat dengan gagang di telinga; jaketnya lembap, jarum penagih sudah bergerak dan belum kembali, namanya telah disebut di saluran oleh sosok lain tetapi ia sendiri belum menyebutnya."
+        },
+        {
+          "characterId": "duplikat-laras",
+          "state": "Berdiri basah kuyup di lorong tengah di luar bilik empat sambil memegang telepon kasir, dengan detail yang terbalik dari Laras; kepalanya baru mulai terangkat."
+        },
+        {
+          "characterId": "pak-darto",
+          "state": "Hanya suaranya yang terdengar di saluran; keberadaannya yang sebenarnya belum diketahui."
+        },
+        {
+          "characterId": "bu-sumi",
+          "state": "Terlihat sebagai siluet yang menutup tirai di rumah seberang jalan; belum berinteraksi dengan Laras."
+        },
+        {
+          "characterId": "sang-operator",
+          "state": "Belum terlihat; kehadirannya hanya tersirat lewat saluran dan jarum penagih."
+        }
+      ],
+      "nextEpisodeSetup": "Episode 2 dimulai tepat setelah cliffhanger: Laras harus keluar dari bilik empat dan mengetahui bahwa jalan keluar desa tertutup kabut. Jarum penagih menyisakan tiga malam, Bu Sumi mulai bercerita tentang malam bendungan jebol, dan Laras menemukan halaman tersembunyi di buku catatan. Aturan bahwa nama yang disebut menanggung tagihan harus dipertahankan konsisten, dan detail Duplikat yang terbalik tidak boleh berubah."
+    }
+  },
+  "productionBudget": {
+    "creditsPerClip": 10,
+    "dailyCreditsAvailable": 100,
+    "plannedClips": 8,
+    "estimatedCredits": 80,
+    "reserveCredits": 20
+  }
+}

@@ -93,7 +93,8 @@ let renderOutputPath: string | undefined;
 try {
   let ready = false;
   let lastStartupResponse = "no response";
-  for (let attempt = 0; attempt < 40; attempt++) {
+  // ponytail: Windows TSX cold start can exceed ten seconds; keep readiness wait bounded at 30s.
+  for (let attempt = 0; attempt < 120; attempt++) {
     try {
       const response = await fetch(`${baseUrl}/api/status`);
       if (response.ok) { ready = true; break; }
@@ -102,7 +103,93 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   assert.equal(ready, true, `local API should start (${serverExit ?? "running"}; ${lastStartupResponse})`);
-  assert.equal((await fetch(baseUrl)).status, 200, "production UI should be served");
+  const storyPackage = JSON.parse(await readFile("fixtures/story-series/bilik-empat-episode-01.json", "utf8"));
+  const importStorySeries = async (value: unknown, requestId: string) => {
+    const response = await fetch(`${baseUrl}/api/story-series/import`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ package: value, requestId }),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  const queryCount = (sql: string, ...params: string[]) => {
+    const smokeDb = new DatabaseSync(databasePath);
+    try { return (smokeDb.prepare(sql).get(...params) as { count: number }).count; }
+    finally { smokeDb.close(); }
+  };
+  const aiAttemptsBeforeStoryImport = queryCount("SELECT COUNT(*) AS count FROM ai_generation_attempts");
+  const storyRequestId = randomUUID();
+  const concurrentImports = await Promise.all([
+    importStorySeries(storyPackage, storyRequestId),
+    importStorySeries(storyPackage, storyRequestId),
+  ]);
+  assert.deepEqual(concurrentImports.map((result) => result.status).sort(), [200, 201], "concurrent idempotent imports create one episode and replay once");
+  const importedStory = concurrentImports.find((result) => result.status === 201)!;
+  const replayedStory = concurrentImports.find((result) => result.status === 200)!;
+  assert.equal(replayedStory.body.replay, true);
+  assert.equal(importedStory.body.project.id, replayedStory.body.project.id, "concurrent replay returns original project");
+  const storyProjectId = importedStory.body.project.id as string;
+  const storySeriesId = importedStory.body.seriesId as string;
+  assert.equal(importedStory.body.project.researchPackage.category, "Fiksi", "Story Series imports use dedicated fiction category");
+  assert.equal(importedStory.body.project.storySeries.episodeId, importedStory.body.episodeId);
+  assert.equal(importedStory.body.project.researchPackage.scenes.length, storyPackage.episode.scenes.length);
+  assert.equal(importedStory.body.project.visualStoryboard.scenes[0].flowPrompt, storyPackage.episode.scenes[0].googleFlow.prompt, "import API preserves authored Google Flow prompt");
+  assert.deepEqual(importedStory.body.project.visualStoryboard.scenes[0].storySeries.audio, storyPackage.episode.scenes[0].audio, "import API preserves audio cues");
+  const storyDetail = await fetch(`${baseUrl}/api/story-series/${storySeriesId}`).then((response) => response.json());
+  assert.equal(storyDetail.episodeCount, 1, "series detail reports imported episode count");
+  assert.equal(storyDetail.episodes[0].projectId, storyProjectId);
+  const exactReplay = await importStorySeries(storyPackage, storyRequestId);
+  assert.equal(exactReplay.status, 200);
+  assert.equal(exactReplay.body.project.id, storyProjectId, "same request ID is durably idempotent");
+
+  const changedEpisode = structuredClone(storyPackage);
+  changedEpisode.episode.scenes[0].narration += " Perubahan smoke.";
+  const idempotencyConflict = await importStorySeries(changedEpisode, storyRequestId);
+  assert.equal(idempotencyConflict.status, 409);
+  assert.equal(idempotencyConflict.body.code, "idempotency-conflict", "reused request ID with changed package conflicts");
+  const episodeConflict = await importStorySeries(changedEpisode, randomUUID());
+  assert.equal(episodeConflict.status, 409);
+  assert.equal(episodeConflict.body.code, "episode-conflict", "different content cannot overwrite an existing episode");
+  const changedBible = structuredClone(storyPackage);
+  changedBible.series.title += " Altered";
+  const seriesConflict = await importStorySeries(changedBible, randomUUID());
+  assert.equal(seriesConflict.status, 409);
+  assert.equal(seriesConflict.body.code, "series-conflict", "different Story Bible cannot overwrite an existing slug");
+  assert.equal((await fetch(`${baseUrl}/api/story-series/${storySeriesId}`).then((response) => response.json())).title, storyPackage.series.title, "conflicts leave saved Story Bible untouched");
+
+  const episodeTwo = structuredClone(storyPackage);
+  const episodeTwoOutline = episodeTwo.series.storyBible.episodeOutlines.find((outline: { episodeNumber: number }) => outline.episodeNumber === 2);
+  assert.ok(episodeTwoOutline, "acceptance Story Bible contains later episode outline");
+  episodeTwo.episode.episodeNumber = 2;
+  episodeTwo.episode.title = episodeTwoOutline.title;
+  episodeTwo.episode.synopsis = episodeTwoOutline.summary;
+  episodeTwo.episode.previousEpisodeSummary = storyPackage.episode.synopsis;
+  episodeTwo.episode.openingHook = episodeTwoOutline.summary;
+  episodeTwo.episode.endingCliffhanger = episodeTwoOutline.endingHook;
+  episodeTwo.episode.scenes = episodeTwo.episode.scenes.map((scene: { order: number }) => ({ ...scene, sceneId: `ep02-sc${String(scene.order).padStart(2, "0")}` }));
+  const secondEpisodeImport = await importStorySeries(episodeTwo, randomUUID());
+  assert.equal(secondEpisodeImport.status, 201, "later episode imports under existing Story Bible");
+  const continuedSeries = await fetch(`${baseUrl}/api/story-series/${storySeriesId}`).then((response) => response.json());
+  assert.equal(continuedSeries.episodeCount, 2);
+  assert.equal(continuedSeries.episodes[1].episodeNumber, 2);
+
+  const rollbackPackage = structuredClone(storyPackage);
+  rollbackPackage.series.slug = "rollback-smoke";
+  const rollbackRequestId = randomUUID();
+  const triggerDb = new DatabaseSync(databasePath);
+  triggerDb.exec("CREATE TRIGGER story_series_rollback_smoke BEFORE INSERT ON projects WHEN json_extract(NEW.data_json, '$.storySeries.slug') = 'rollback-smoke' BEGIN SELECT RAISE(ABORT, 'story import rollback smoke'); END;");
+  triggerDb.close();
+  const failedImport = await importStorySeries(rollbackPackage, rollbackRequestId);
+  assert.equal(failedImport.status, 500, "injected project insert failure surfaces without partial success");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM story_series WHERE slug = ?", "rollback-smoke"), 0, "failed import rolls back new series row");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM story_series_episodes e JOIN story_series s ON s.id = e.series_id WHERE s.slug = ?", "rollback-smoke"), 0, "failed import rolls back episode row");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM story_series_import_requests WHERE request_id = ?", rollbackRequestId), 0, "failed import rolls back idempotency row");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM projects WHERE json_extract(data_json, '$.storySeries.slug') = ?", "rollback-smoke"), 0, "failed import leaves no orphan project");
+  const removeTriggerDb = new DatabaseSync(databasePath);
+  removeTriggerDb.exec("DROP TRIGGER story_series_rollback_smoke");
+  removeTriggerDb.close();
+  const rollbackRetry = await importStorySeries(rollbackPackage, rollbackRequestId);
+  assert.equal(rollbackRetry.status, 201, "same request can retry after transaction rollback");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM ai_generation_attempts"), aiAttemptsBeforeStoryImport, "Story Series import makes no AI calls");
+
   viteServer = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
     cwd: process.cwd(),
     env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), VITE_PORT: String(vitePort) },

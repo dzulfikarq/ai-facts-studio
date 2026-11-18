@@ -6,7 +6,7 @@ import { motionActionsSchema } from "./motion-director";
 import { sceneMediaSchema } from "./scene-media";
 
 export const categories = [
-  "Fakta Unik", "Sains & Antariksa", "Sejarah & Misteri", "Tubuh Manusia", "Hewan & Alam", "Teknologi", "Geografi",
+  "Fakta Unik", "Sains & Antariksa", "Sejarah & Misteri", "Tubuh Manusia", "Hewan & Alam", "Teknologi", "Geografi", "Fiksi",
 ] as const;
 export const visualPresets = ["flat-2d-storytelling", "animated-infographic", "cinematic-parallax"] as const;
 export const templateIds = ["mountain-reveal", "plate-collision", "folding-uplift", "himalaya", "volcano", "infographic", "space-orbit", "animal-habitat"] as const;
@@ -167,6 +167,7 @@ export function parseResearchPackage(value: unknown): ParseResult {
 }
 
 export function researchWarnings(research: ResearchPackage) {
+  if (research.category === "Fiksi") return [];
   const warnings: string[] = [];
   if (research.references.length === 0) warnings.push("Belum ada sumber; verifikasi klaim sebelum publikasi.");
   if (research.scenes.some((scene) => scene.referenceIds.length === 0)) warnings.push("Ada scene tanpa referensi klaim.");

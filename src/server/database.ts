@@ -30,6 +30,34 @@ db.exec(`
     research_sha256 TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS story_series (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    source_series_sha256 TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS story_series_episodes (
+    id TEXT PRIMARY KEY,
+    series_id TEXT NOT NULL REFERENCES story_series(id) ON DELETE CASCADE,
+    episode_number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    source_sha256 TEXT NOT NULL,
+    package_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(series_id, episode_number)
+  );
+  CREATE INDEX IF NOT EXISTS story_series_episodes_project_idx ON story_series_episodes(project_id);
+  CREATE TABLE IF NOT EXISTS story_series_import_requests (
+    request_id TEXT PRIMARY KEY,
+    source_sha256 TEXT NOT NULL,
+    episode_id TEXT NOT NULL REFERENCES story_series_episodes(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
@@ -261,6 +289,7 @@ export type StoredProject = {
   creationMode?: ProjectCreationMode;
   creationBrief?: ManualProjectBrief;
   animationStyleId?: AnimationStyleId;
+  storySeries?: import("../domain/story-series").StorySeriesProjectLink;
   researchPackage: import("../domain/research").ResearchPackage;
   visualStoryboard: VisualStoryboard;
   visualAssets: VisualAsset[];

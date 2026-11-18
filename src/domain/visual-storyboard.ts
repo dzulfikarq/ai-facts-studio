@@ -70,6 +70,33 @@ const storyboardObjectSchema = z.object({
 }).strict().refine((object) => object.objectId === object.assetId, "Asset harus berasal dari library visual internal.");
 const visualRelationshipSchema = z.object({ from: objectIdSchema, relation: z.enum(visualRelationshipKinds), to: objectIdSchema }).strict();
 
+const storySeriesReferenceSchema = z.object({
+  id: z.string().trim().min(1).max(100), name: z.string().trim().min(1).max(120),
+  description: z.string().max(6000), role: z.string().max(120).optional(),
+  physicalDescription: z.string().max(2000).optional(), outfit: z.string().max(1200).optional(),
+  distinguishingFeatures: z.array(z.string().max(500)).max(20).optional(), personality: z.string().max(1200).optional(),
+  fixedLayout: z.string().max(2000).optional(), visualDescription: z.string().max(2000).optional(),
+  referenceImagePrompt: z.string().max(12000),
+  continuityRules: z.array(z.string().max(1200)).max(30),
+  referenceImageUrl: z.string().regex(/^\/visual-assets\/[a-f0-9]{64}\.(png|jpg|webp)$/).optional(),
+}).strict();
+export const storySeriesSceneMetadataSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  originalOnScreenText: z.string().max(120),
+  dramaticPurpose: z.string().max(2000),
+  visualDescription: z.string().max(3000),
+  primaryAction: z.string().max(2000), shotType: z.string().max(300), cameraMovement: z.string().max(500),
+  lighting: z.string().max(1200), environmentMotion: z.string().max(1200),
+  googleFlow: z.object({ negativePrompt: z.string().max(12000), referenceInstructions: z.string().max(12000) }).strict(),
+  audio: z.object({ ambience: z.array(z.string().max(500)).max(20), soundEffects: z.array(z.string().max(500)).max(30), musicMood: z.string().max(1200) }).strict(),
+  references: z.object({
+    characters: z.array(storySeriesReferenceSchema).max(20),
+    locations: z.array(storySeriesReferenceSchema).max(20),
+    props: z.array(storySeriesReferenceSchema).max(30),
+  }).strict(),
+  continuityNotes: z.array(z.string().max(1200)).max(30),
+}).strict();
+
 export const visualStoryboardSceneSchema = z.object({
   sceneId: z.string().trim().min(1).max(100),
   sceneNumber: z.number().int().positive().max(30),
@@ -98,6 +125,9 @@ export const visualStoryboardSceneSchema = z.object({
   sceneToken: z.string().trim().min(1).max(100).optional(),
   recommendedFilename: z.string().trim().min(1).max(180).optional(),
   flowPrompt: z.string().max(12000).optional(),
+  flowNegativePrompt: z.string().max(12000).optional(),
+  flowReferenceInstructions: z.string().max(12000).optional(),
+  storySeries: storySeriesSceneMetadataSchema.optional(),
   flowPromptAnimationStyleId: animationStyleIdSchema.optional(),
   flowVisualMode: z.enum(["still-image", "animated-video"]).default("still-image"),
   flowPromptMode: z.enum(["still-image", "animated-video"]).default("still-image"),
@@ -339,7 +369,10 @@ export function buildVisualStoryboard(research: ResearchPackage, previous?: Visu
       approvedFingerprint: null,
       sceneToken: prior?.sceneToken ?? stableGoogleFlowSceneToken(scene.id),
        recommendedFilename: recommendedGoogleFlowFilename({ sceneId: scene.id, sceneNumber: index + 1, headline: scene.onScreenText || `Scene ${index + 1}`, sceneToken: prior?.sceneToken }),
-       ...(prior?.flowPrompt ? { flowPrompt: prior.flowPrompt } : {}),
+        ...(prior?.flowPrompt ? { flowPrompt: prior.flowPrompt } : {}),
+        ...(prior?.flowNegativePrompt ? { flowNegativePrompt: prior.flowNegativePrompt } : {}),
+        ...(prior?.flowReferenceInstructions ? { flowReferenceInstructions: prior.flowReferenceInstructions } : {}),
+        ...(prior?.storySeries ? { storySeries: prior.storySeries } : {}),
        ...(prior?.flowPromptAnimationStyleId ? { flowPromptAnimationStyleId: prior.flowPromptAnimationStyleId } : {}),
        flowStatus: sameCopy ? prior?.flowStatus ?? (hasRaster || prior?.sceneMedia ? "illustration-imported" as const : prior?.flowPrompt ? "prompt-ready" as const : "awaiting-illustration" as const)
          : hasRaster || prior?.sceneMedia ? prior?.authoringConfirmed ? "ready-for-review" as const : "illustration-imported" as const
@@ -526,7 +559,7 @@ export function applyVisualStoryboard(research: ResearchPackage, storyboard: Vis
       const cues: ResearchPackage["scenes"][number]["motionCues"] = motionPlan.map((plan) => plan.cue);
       return {
         ...scene,
-        onScreenText: visual.headline,
+        onScreenText: visual.storySeries ? scene.onScreenText : visual.headline,
         narrationText: visual.narrationText,
         visualDescription: visual.visualSummary,
         visualComposition: composition,

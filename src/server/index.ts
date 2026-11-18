@@ -14,6 +14,7 @@ import { aiGenerationInputSchema } from "../domain/ai-generation";
 import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
 import { animationStyleIdSchema, DEFAULT_ANIMATION_STYLE_ID } from "../domain/animation-styles";
+import { adaptStorySeriesEpisode, storySeriesPackageSchema, type StorySeries, type StorySeriesPackage, type StorySeriesProjectLink } from "../domain/story-series";
 import { applyVisualStoryboard, buildVisualStoryboard, compositionForVisualScene, retimeVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
 import type { VisualPreparationJob, VisualPreparationScene } from "../domain/visual-preparation";
 import type { MotionPreparationJob, MotionPreparationScene } from "../domain/motion-preparation";
@@ -298,6 +299,77 @@ function withTransaction<T>(action: () => T): T {
     try { db.exec("ROLLBACK"); } catch { /* BEGIN/COMMIT may already have failed */ }
     throw error;
   }
+}
+
+type StorySeriesRow = { id: string; slug: string; title: string; source_series_sha256: string; data_json: string; created_at: string; updated_at: string };
+type StorySeriesEpisodeRow = { id: string; series_id: string; episode_number: number; title: string; project_id: string | null; source_sha256: string; package_json: string; created_at: string; updated_at: string };
+
+function storySeriesRow(id: string) {
+  return db.prepare("SELECT * FROM story_series WHERE id = ?").get(id) as StorySeriesRow | undefined;
+}
+
+function seriesIdentity(series: StorySeries): StorySeries {
+  const value = structuredClone(series);
+  for (const entity of [...value.characters, ...value.locations, ...value.props]) delete entity.referenceAssetId;
+  return value;
+}
+
+function storyPackageIdentity(value: StorySeriesPackage) {
+  return { ...value, series: seriesIdentity(value.series) };
+}
+
+function storySeriesWithImageUrls(series: StorySeries) {
+  const value = structuredClone(series) as StorySeries & { characters: Array<StorySeries["characters"][number] & { referenceImageUrl?: string }>; locations: Array<StorySeries["locations"][number] & { referenceImageUrl?: string }>; props: Array<StorySeries["props"][number] & { referenceImageUrl?: string }> };
+  for (const entity of [...value.characters, ...value.locations, ...value.props]) {
+    if (!entity.referenceAssetId) continue;
+    const assetFile = entity.referenceAssetId.replace(/^upload-/, "");
+    if (existsSync(path.join(visualAssetDir, assetFile))) entity.referenceImageUrl = `/visual-assets/${assetFile}`;
+  }
+  return value;
+}
+
+function storySeriesDetail(id: string) {
+  const row = storySeriesRow(id);
+  if (!row) return null;
+  const episodes = db.prepare("SELECT * FROM story_series_episodes WHERE series_id = ? ORDER BY episode_number").all(id) as StorySeriesEpisodeRow[];
+  return {
+    id: row.id,
+    ...storySeriesWithImageUrls(JSON.parse(row.data_json) as StorySeries),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    episodeCount: episodes.length,
+    episodes: episodes.map((entry) => {
+      const source = JSON.parse(entry.package_json) as StorySeriesPackage;
+      return {
+        id: entry.id,
+        episodeNumber: entry.episode_number,
+        title: entry.title,
+        projectId: entry.project_id,
+        createdAt: entry.created_at,
+        updatedAt: entry.updated_at,
+        synopsis: source.episode.synopsis,
+        previousEpisodeSummary: source.episode.previousEpisodeSummary,
+        openingHook: source.episode.openingHook,
+        endingCliffhanger: source.episode.endingCliffhanger,
+        continuityHandoff: source.episode.continuityHandoff,
+        productionBudget: source.productionBudget,
+      };
+    }),
+  };
+}
+
+async function storySeriesAssets(series: StorySeries) {
+  const ids = [...new Set([...series.characters, ...series.locations, ...series.props].flatMap((item) => item.referenceAssetId ? [item.referenceAssetId] : []))];
+  const assets: VisualAsset[] = [];
+  for (const id of ids) {
+    const row = db.prepare("SELECT metadata_json FROM visual_asset_catalog WHERE asset_id = ?").get(id) as { metadata_json: string } | undefined;
+    const asset = row ? visualAssetSchema.safeParse(JSON.parse(row.metadata_json)) : null;
+    if (!asset?.success || !existsSync(path.join(visualAssetDir, asset.data.file)) || await sha256File(path.join(visualAssetDir, asset.data.file)) !== asset.data.sha256) {
+      throw new Error(`Reference image '${id}' hilang atau tidak valid.`);
+    }
+    assets.push(asset.data);
+  }
+  return assets;
 }
 
 function apiError(response: express.Response, status: number, message: string, extra: object = {}) {
@@ -708,6 +780,17 @@ function projectReferencesVisualAsset(file: string, excludingProjectId?: string)
   });
 }
 
+function storySeriesReferencesVisualAsset(file: string) {
+  const assetId = `upload-${file}`;
+  const rows = db.prepare("SELECT data_json FROM story_series").all() as Array<{ data_json: string }>;
+  return rows.some((row) => {
+    try {
+      const series = JSON.parse(row.data_json) as StorySeries;
+      return [...series.characters, ...series.locations, ...series.props].some((item) => item.referenceAssetId === assetId);
+    } catch { return false; }
+  });
+}
+
 function projectReferencesSceneMedia(file: string, excludingProjectId?: string) {
   const rows = db.prepare(excludingProjectId ? "SELECT id, data_json FROM projects WHERE id <> ?" : "SELECT id, data_json FROM projects")
     .all(...(excludingProjectId ? [excludingProjectId] : [])) as Array<{ id: string; data_json: string }>;
@@ -953,7 +1036,7 @@ async function persistVisualAsset(projectId: string, asset: VisualAsset, bytes: 
     return { project: getProject(projectId), asset };
   } catch (error) {
     if (createdFile) {
-      const referenced = projectReferencesVisualAsset(asset.file) || snapshotReferencesVisualAsset(asset.file) || reusableSceneReferencesVisualAsset(asset.file);
+      const referenced = projectReferencesVisualAsset(asset.file) || snapshotReferencesVisualAsset(asset.file) || reusableSceneReferencesVisualAsset(asset.file) || storySeriesReferencesVisualAsset(asset.file);
       if (!referenced) await rm(destination, { force: true });
     }
     throw error;
@@ -1076,6 +1159,11 @@ async function runFileCleanupQueue() {
     try {
       if (item.root === "visual-assets" && projectReferencesVisualAsset(path.basename(target))) {
         db.prepare("DELETE FROM file_cleanup_queue WHERE root = ? AND relative_path = ?").run(item.root, item.relative_path);
+        continue;
+      }
+      if (item.root === "visual-assets" && storySeriesReferencesVisualAsset(path.basename(target))) {
+        db.prepare("UPDATE file_cleanup_queue SET attempt_count = attempt_count + 1, last_error = ? WHERE root = ? AND relative_path = ?")
+          .run("Asset masih dirujuk Story Series.", item.root, item.relative_path);
         continue;
       }
       if (item.root === "visual-assets" && snapshotReferencesVisualAsset(path.basename(target))) {
@@ -1475,6 +1563,168 @@ app.get("/api/docs/github-actions", async (_request, response) => {
 
 app.get("/api/docs/tts", async (_request, response) => {
   response.type("text/markdown").send(await readFile(path.resolve(root, "docs/TTS_SETUP.md"), "utf8"));
+});
+
+app.get("/api/story-series", (_request, response) => {
+  const rows = db.prepare("SELECT id FROM story_series ORDER BY updated_at DESC, title COLLATE NOCASE").all() as Array<{ id: string }>;
+  response.json(rows.flatMap(({ id }) => {
+    const series = storySeriesDetail(id);
+    return series ? [series] : [];
+  }));
+});
+
+app.get("/api/story-series/:id", (request, response) => {
+  const series = storySeriesDetail(String(request.params.id));
+  if (!series) return apiError(response, 404, "Story Series tidak ditemukan.");
+  response.json(series);
+});
+
+app.post("/api/story-series/import", async (request, response) => {
+  const parsed = storySeriesPackageSchema.safeParse(request.body?.package);
+  if (!parsed.success) return apiError(response, 400, "Story Series v1 tidak valid.", { code: "invalid-story-series", issues: parsed.error.issues });
+  const requestId = z.string().uuid().safeParse(request.body?.requestId);
+  if (!requestId.success) return apiError(response, 400, "Request ID idempotency tidak valid.", { code: "invalid-request-id" });
+
+  const input = parsed.data;
+  const seriesHash = createHash("sha256").update(JSON.stringify(seriesIdentity(input.series))).digest("hex");
+  const sourceHash = createHash("sha256").update(JSON.stringify(storyPackageIdentity(input))).digest("hex");
+  const savedSeries = db.prepare("SELECT * FROM story_series WHERE slug = ?").get(input.series.slug) as StorySeriesRow | undefined;
+  if (savedSeries && savedSeries.source_series_sha256 !== seriesHash) {
+    return apiError(response, 409, "Slug Story Series sudah digunakan dengan Story Bible berbeda; data lama tidak ditimpa.", { code: "series-conflict" });
+  }
+  let seriesData = input.series;
+  if (savedSeries) {
+    try { seriesData = JSON.parse(savedSeries.data_json) as StorySeries; }
+    catch { return apiError(response, 409, "Story Series tersimpan tidak dapat dibaca; data tidak ditimpa.", { code: "invalid-stored-series" }); }
+  }
+
+  let adapted: ReturnType<typeof adaptStorySeriesEpisode>;
+  let visualAssets: VisualAsset[];
+  try {
+    adapted = adaptStorySeriesEpisode({ ...input, series: seriesData });
+    visualAssets = await storySeriesAssets(seriesData);
+  } catch (error) {
+    return apiError(response, 409, error instanceof Error ? error.message : "Reference continuity tidak tersedia.", { code: "story-series-reference-unavailable" });
+  }
+  const seriesId = savedSeries?.id ?? randomUUID();
+  const now = new Date().toISOString();
+  const defaultOutro = db.prepare("SELECT * FROM outro_assets WHERE is_default = 1 AND archived = 0").get() as OutroRow | undefined;
+  const link: StorySeriesProjectLink = {
+    seriesId,
+    episodeId: "pending",
+    slug: input.series.slug,
+    seriesTitle: input.series.title,
+    episodeNumber: input.episode.episodeNumber,
+    episodeTitle: input.episode.title,
+    synopsis: input.episode.synopsis,
+    productionBudget: input.productionBudget,
+    previousEpisodeSummary: input.episode.previousEpisodeSummary,
+    openingHook: input.episode.openingHook,
+    endingCliffhanger: input.episode.endingCliffhanger,
+    continuityHandoff: input.episode.continuityHandoff,
+  };
+  const stored: StoredProject = {
+    creationMode: "imported",
+    animationStyleId: input.series.visualStyle.presetId,
+    storySeries: link,
+    researchPackage: adapted.researchPackage,
+    visualStoryboard: adapted.visualStoryboard,
+    visualAssets,
+    audio: null,
+    pendingTts: null,
+    narrationMode: "unset",
+    researchReviewStatus: "needs-review",
+    outro: defaultOutro ? { assetId: defaultOutro.id, enabled: true, trimInSec: 0, trimOutSec: defaultOutro.duration_sec, audioEnabled: false } : null,
+  };
+
+  const result = withTransaction(() => {
+    const priorRequest = db.prepare("SELECT source_sha256, episode_id FROM story_series_import_requests WHERE request_id = ?").get(requestId.data) as { source_sha256: string; episode_id: string } | undefined;
+    if (priorRequest && priorRequest.source_sha256 !== sourceHash) return { error: "idempotency-conflict" as const };
+    const currentSeries = db.prepare("SELECT * FROM story_series WHERE slug = ?").get(input.series.slug) as StorySeriesRow | undefined;
+    if (currentSeries && currentSeries.source_series_sha256 !== seriesHash) return { error: "series-conflict" as const };
+    const seriesRecordId = currentSeries?.id ?? seriesId;
+    let episode = priorRequest
+      ? db.prepare("SELECT * FROM story_series_episodes WHERE id = ?").get(priorRequest.episode_id) as StorySeriesEpisodeRow | undefined
+      : db.prepare("SELECT * FROM story_series_episodes WHERE series_id = ? AND episode_number = ?").get(seriesRecordId, input.episode.episodeNumber) as StorySeriesEpisodeRow | undefined;
+    if (priorRequest && (!episode || episode.series_id !== seriesRecordId || episode.episode_number !== input.episode.episodeNumber)) return { error: "idempotency-conflict" as const };
+    if (episode && episode.source_sha256 !== sourceHash) return { error: "episode-conflict" as const };
+    if (!currentSeries) db.prepare("INSERT INTO story_series (id, slug, title, source_series_sha256, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(seriesId, input.series.slug, input.series.title, seriesHash, JSON.stringify(seriesData), now, now);
+    const seriesRecord = currentSeries ?? (db.prepare("SELECT * FROM story_series WHERE id = ?").get(seriesId) as StorySeriesRow);
+    if (episode?.project_id) {
+      if (!priorRequest) db.prepare("INSERT INTO story_series_import_requests (request_id, source_sha256, episode_id, created_at) VALUES (?, ?, ?, ?)").run(requestId.data, sourceHash, episode.id, now);
+      return { seriesId: seriesRecord.id, episodeId: episode.id, projectId: episode.project_id, replay: true };
+    }
+    const projectId = randomUUID();
+    const episodeId = episode?.id ?? randomUUID();
+    stored.storySeries = { ...link, seriesId: seriesRecord.id, episodeId };
+    db.prepare("INSERT INTO projects (id, title, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(projectId, adapted.researchPackage.title, JSON.stringify(stored), now, now);
+    for (const asset of visualAssets) upsertVisualAssetCatalog(db, asset);
+    if (episode) {
+      db.prepare("UPDATE story_series_episodes SET project_id = ?, updated_at = ? WHERE id = ?").run(projectId, now, episode.id);
+      episode = { ...episode, project_id: projectId };
+    } else {
+      db.prepare("INSERT INTO story_series_episodes (id, series_id, episode_number, title, project_id, source_sha256, package_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(episodeId, seriesRecord.id, input.episode.episodeNumber, input.episode.title, projectId, sourceHash, JSON.stringify(input), now, now);
+    }
+    if (!priorRequest) db.prepare("INSERT INTO story_series_import_requests (request_id, source_sha256, episode_id, created_at) VALUES (?, ?, ?, ?)")
+      .run(requestId.data, sourceHash, episodeId, now);
+    return { seriesId: seriesRecord.id, episodeId, projectId, replay: false };
+  });
+  if ("error" in result) {
+    const message = result.error === "series-conflict" ? "Slug Story Series sudah digunakan dengan Story Bible berbeda; data lama tidak ditimpa."
+      : result.error === "episode-conflict" ? "Episode tersebut sudah ada dengan isi berbeda; episode lama tidak ditimpa."
+        : "Request ID sudah dipakai untuk paket Story Series berbeda.";
+    return apiError(response, 409, message, { code: result.error });
+  }
+  response.status(result.replay ? 200 : 201).json({ ...result, project: getProject(result.projectId) });
+});
+
+app.post("/api/story-series/:id/references/:kind/:entityId", illustrationUploadMiddleware, async (request, response) => {
+  const id = String(request.params.id);
+  const kindResult = z.enum(["characters", "locations", "props"]).safeParse(request.params.kind);
+  if (!kindResult.success) return apiError(response, 400, "Jenis reference kontinuitas tidak valid.", { code: "invalid-reference-kind" });
+  const row = storySeriesRow(id);
+  if (!row) return apiError(response, 404, "Story Series tidak ditemukan.");
+  if (!request.file) return apiError(response, 400, "File reference image tidak ditemukan.", { code: "missing-illustration" });
+  let series: StorySeries;
+  try { series = JSON.parse(row.data_json) as StorySeries; }
+  catch { return apiError(response, 409, "Story Bible tersimpan tidak valid.", { code: "invalid-stored-series" }); }
+  const entity = series[kindResult.data].find((item) => item.id === String(request.params.entityId));
+  if (!entity) return apiError(response, 404, "Entitas continuity tidak ditemukan.");
+  let prepared: Awaited<ReturnType<typeof prepareVisualAssetUpload>>;
+  try {
+    prepared = await prepareVisualAssetUpload(request.file, {
+      name: entity.name,
+      semanticTags: [entity.id, entity.name, "story-series-continuity"],
+      supportedConcepts: [entity.name],
+      license: "User-provided series continuity reference; provenance not independently verified",
+      style: series.visualStyle.presetId,
+    });
+  } catch (error) { return apiError(response, 422, error instanceof Error ? error.message : "Reference image tidak valid.", { code: "invalid-reference-image" }); }
+  let createdFile = false;
+  try {
+    createdFile = await writeVisualAssetFile(prepared.asset, prepared.buffer);
+    const now = new Date().toISOString();
+    withTransaction(() => {
+      const current = storySeriesRow(id);
+      if (!current) throw new Error("Story Series tidak ditemukan.");
+      const updated = JSON.parse(current.data_json) as StorySeries;
+      const target = updated[kindResult.data].find((item) => item.id === String(request.params.entityId));
+      if (!target) throw new Error("Entitas continuity tidak ditemukan.");
+      target.referenceAssetId = prepared.asset.id;
+      db.prepare("UPDATE story_series SET data_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(updated), now, id);
+      upsertVisualAssetCatalog(db, prepared.asset);
+    });
+    invalidateBundleCache();
+    response.json({ series: storySeriesDetail(id), asset: prepared.asset, optimized: prepared.optimized, originalBytes: prepared.originalBytes });
+  } catch (error) {
+    if (createdFile && !storySeriesReferencesVisualAsset(prepared.asset.file) && !projectReferencesVisualAsset(prepared.asset.file) && !snapshotReferencesVisualAsset(prepared.asset.file) && !reusableSceneReferencesVisualAsset(prepared.asset.file)) {
+      await rm(path.join(visualAssetDir, prepared.asset.file), { force: true });
+    }
+    apiError(response, 409, error instanceof Error ? error.message : "Reference image gagal disimpan.", { code: "reference-save-failed" });
+  }
 });
 
 app.get("/api/projects", (_request, response) => {
@@ -2181,7 +2431,7 @@ app.post("/api/projects/:id/visual-assets/batch", illustrationBatchUploadMiddlew
       } catch (error) {
         for (const entry of prepared) failures.push({ index: entry.index, fileName: entry.fileName, message: error instanceof Error ? error.message : "Batch ilustrasi gagal disimpan." });
         for (const file of new Set(prepared.flatMap((entry) => entry.createdFile ? [entry.upload.asset.file] : []))) {
-          const referenced = projectReferencesVisualAsset(file) || snapshotReferencesVisualAsset(file) || reusableSceneReferencesVisualAsset(file);
+          const referenced = projectReferencesVisualAsset(file) || snapshotReferencesVisualAsset(file) || reusableSceneReferencesVisualAsset(file) || storySeriesReferencesVisualAsset(file);
           if (!referenced) await rm(path.join(visualAssetDir, file), { force: true });
         }
       }
@@ -2268,7 +2518,7 @@ app.delete("/api/projects/:id/visual-assets/:assetId", async (request, response)
   try {
     withTransaction(() => {
       saveProject(id, project);
-      if (!projectReferencesVisualAsset(asset.file, id)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
+      if (!projectReferencesVisualAsset(asset.file, id) && !storySeriesReferencesVisualAsset(asset.file)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
     });
     invalidateBundleCache();
     const cleanupPending = await tryProcessFileCleanupQueue();
@@ -2400,7 +2650,7 @@ app.delete("/api/projects/:id", async (request, response) => {
   const safeUploadPath = uploadPath && path.dirname(uploadPath) === audioDir ? uploadPath : null;
   withTransaction(() => {
     if (safeUploadPath) queueFileCleanup("audio", safeUploadPath);
-    for (const asset of project.visualAssets) if (!projectReferencesVisualAsset(asset.file, id)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
+    for (const asset of project.visualAssets) if (!projectReferencesVisualAsset(asset.file, id) && !storySeriesReferencesVisualAsset(asset.file)) queueFileCleanup("visual-assets", path.join(visualAssetDir, asset.file));
     for (const file of sceneMediaFiles) queueFileCleanup("scene-media", path.join(sceneMediaDir, file));
     for (const job of jobs) {
       queueFileCleanup("jobs", path.join(jobDir, job.id));

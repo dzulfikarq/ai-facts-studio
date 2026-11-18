@@ -245,6 +245,14 @@ Known V2 limits: Video Editor has no scene reorder/duplicate controls; scene ord
 - Motion Beat clips use the existing timeline track and theme tokens, stay horizontally scrollable on narrow screens, expose accessible names/focus, and open the matching inspector. Canvas path points support pointer and keyboard editing; reduced-motion CSS only suppresses nonessential editor UI transitions, not authored video playback/render output.
 - All-scene motion preparation shows durable progress, preserved scenes, partial failures, cancel, and selective retry. Opening a project, previewing, and rendering make no AI request.
 
+### Story Series library and fiction review
+
+- Story Series Library (`/series`) provides local JSON validation and import preview before commit; importing uses the deterministic Research Package → Visual Storyboard → project adapter and makes no AI call.
+- Series detail (`/series/:id`) presents Story Bible, timeline, episode outline/project links, production budgets, and uploadable character/location/prop reference images. `?slug=` deep-links the next-episode import flow.
+- Fiction remains separate from factual citations and source warnings. Review still requires manual story/continuity approval and preserves existing scene-quality, visual-approval, preview, and render gates.
+- Video Editor → Visual exposes imported Flow prompts, scene direction, continuity references, audio cues, and local reference-image guidance. Review shows episode budget and continuity handoff.
+- Story Series surfaces use shared Purple, surface, typography, focus, button, and theme tokens. Import controls remain keyboard operable; detail grids collapse at tablet/mobile breakpoints.
+
 ## 9. Responsive guidelines
 
 - Base layout supports 320px minimum; target mobile range includes 360–430px. Outro Library cards auto-fit available width; Create Video outro controls stack below 620px.

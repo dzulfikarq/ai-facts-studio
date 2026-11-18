@@ -58,6 +58,28 @@ db.exec(`
     episode_id TEXT NOT NULL REFERENCES story_series_episodes(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS story_generation_drafts (
+    id TEXT PRIMARY KEY,
+    source_json TEXT NOT NULL,
+    analysis_json TEXT,
+    plan_json TEXT,
+    approved_plan_json TEXT,
+    bible_draft_json TEXT,
+    approved_bible_json TEXT,
+    episodes_json TEXT NOT NULL DEFAULT '{}',
+    series_id TEXT REFERENCES story_series(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS story_generation_drafts_updated_idx ON story_generation_drafts(updated_at DESC);
+  CREATE TABLE IF NOT EXISTS story_generation_requests (
+    request_id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL REFERENCES story_generation_drafts(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),

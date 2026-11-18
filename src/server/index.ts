@@ -15,6 +15,7 @@ import { canStartNewJob } from "../domain/timeline";
 import { parseResearchPackage, researchWarnings } from "../domain/research";
 import { animationStyleIdSchema, DEFAULT_ANIMATION_STYLE_ID } from "../domain/animation-styles";
 import { adaptStorySeriesEpisode, storySeriesPackageSchema, type StorySeries, type StorySeriesPackage, type StorySeriesProjectLink } from "../domain/story-series";
+import { buildStoryBibleDraft, storyAnalysisSchema, storyBibleDraftSchema, storyEpisodePlanApprovalSchema, storyEpisodePlanListSchema, storyFlowBudget, storySourceSchema, type StoryAnalysis, type StoryBibleDraft, type StoryEpisodePlan, type StorySource } from "../domain/story-generation";
 import { applyVisualStoryboard, buildVisualStoryboard, compositionForVisualScene, retimeVisualStoryboard, visualStoryboardQualityGate, visualStoryboardSchema, type VisualStoryboard } from "../domain/visual-storyboard";
 import type { VisualPreparationJob, VisualPreparationScene } from "../domain/visual-preparation";
 import type { MotionPreparationJob, MotionPreparationScene } from "../domain/motion-preparation";
@@ -33,6 +34,8 @@ import { generateAiVectorIllustration } from "./ai-generation/vector-illustrator
 import { GeminiTextGenerationError, GeminiTextGenerationProvider } from "./ai-generation/gemini-text-provider";
 import { getOpenCodeProviderStatus, OpenCodeGenerationError, OpenCodeTextGenerationProvider } from "./ai-generation/opencode-provider";
 import { AiGenerationRequestError } from "./ai-generation/quota";
+import { generateStoryAnalysis, generateStoryBibleContent, generateStoryEpisodeContent, StoryGenerationOutputError } from "./ai-generation/story-generation";
+import { StoryGenerationMockProvider } from "./ai-generation/story-mock-provider";
 import { getAiGenerationSettings, isLoopbackAddress, readAiGenerationMode, writeAiGenerationMode } from "./ai-generation/provider";
 import { DEFAULT_HF_IMAGE_MODEL, HF_IMAGE_RESOLUTIONS, HuggingFaceImageError, HuggingFaceInferenceImageProvider, discoverHuggingFaceImageModels, huggingFaceImageConfiguration } from "./ai-generation/huggingface-image";
 import { validateAndOptimizeRasterImage } from "./visual-asset-processing";
@@ -303,6 +306,10 @@ function withTransaction<T>(action: () => T): T {
 
 type StorySeriesRow = { id: string; slug: string; title: string; source_series_sha256: string; data_json: string; created_at: string; updated_at: string };
 type StorySeriesEpisodeRow = { id: string; series_id: string; episode_number: number; title: string; project_id: string | null; source_sha256: string; package_json: string; created_at: string; updated_at: string };
+type StoryGenerationDraftRow = {
+  id: string; source_json: string; analysis_json: string | null; plan_json: string | null; approved_plan_json: string | null;
+  bible_draft_json: string | null; approved_bible_json: string | null; episodes_json: string; series_id: string | null; created_at: string; updated_at: string;
+};
 
 function storySeriesRow(id: string) {
   return db.prepare("SELECT * FROM story_series WHERE id = ?").get(id) as StorySeriesRow | undefined;
@@ -328,15 +335,17 @@ function storySeriesWithImageUrls(series: StorySeries) {
   return value;
 }
 
-function storySeriesDetail(id: string) {
+function storySeriesDetail(id: string, includeSource = false) {
   const row = storySeriesRow(id);
   if (!row) return null;
   const episodes = db.prepare("SELECT * FROM story_series_episodes WHERE series_id = ? ORDER BY episode_number").all(id) as StorySeriesEpisodeRow[];
+  const generation = db.prepare("SELECT id, source_json FROM story_generation_drafts WHERE series_id = ? ORDER BY updated_at DESC LIMIT 1").get(id) as { id: string; source_json: string } | undefined;
   return {
     id: row.id,
     ...storySeriesWithImageUrls(JSON.parse(row.data_json) as StorySeries),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(generation ? { generationDraftId: generation.id, ...(includeSource ? { sourceStory: JSON.parse(generation.source_json) as StorySource } : {}) } : {}),
     episodeCount: episodes.length,
     episodes: episodes.map((entry) => {
       const source = JSON.parse(entry.package_json) as StorySeriesPackage;
@@ -356,6 +365,51 @@ function storySeriesDetail(id: string) {
       };
     }),
   };
+}
+
+function storyGenerationDraftRow(id: string) {
+  return db.prepare("SELECT * FROM story_generation_drafts WHERE id = ?").get(id) as StoryGenerationDraftRow | undefined;
+}
+
+function storyGenerationStage(row: StoryGenerationDraftRow) {
+  return row.approved_bible_json ? "episode-production" : row.bible_draft_json ? "bible-review" : row.approved_plan_json ? "bible-generation" : row.analysis_json ? "plan-review" : "source";
+}
+
+function storyGenerationDraftDetail(row: StoryGenerationDraftRow) {
+  return {
+    id: row.id,
+    source: JSON.parse(row.source_json) as StorySource,
+    analysis: row.analysis_json ? JSON.parse(row.analysis_json) as StoryAnalysis : null,
+    plan: row.plan_json ? JSON.parse(row.plan_json) as StoryEpisodePlan[] : null,
+    approvedPlan: row.approved_plan_json ? JSON.parse(row.approved_plan_json) as StoryEpisodePlan[] : null,
+    bibleDraft: row.bible_draft_json ? JSON.parse(row.bible_draft_json) as StoryBibleDraft : null,
+    approvedBible: row.approved_bible_json ? JSON.parse(row.approved_bible_json) as StoryBibleDraft : null,
+    episodeDrafts: JSON.parse(row.episodes_json) as Record<string, { package: StorySeriesPackage; adaptationNotes: string[]; model: string; createdAt: string }>,
+    seriesId: row.series_id,
+    stage: storyGenerationStage(row),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function storyGenerationHash(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function storyGenerationRequest(requestId: string, draftId: string, stage: string, inputHash: string) {
+  const row = db.prepare("SELECT draft_id, stage, input_sha256, result_json FROM story_generation_requests WHERE request_id = ?").get(requestId) as { draft_id: string; stage: string; input_sha256: string; result_json: string } | undefined;
+  if (!row) return { state: "new" as const };
+  if (row.draft_id !== draftId || row.stage !== stage || row.input_sha256 !== inputHash) return { state: "conflict" as const };
+  return { state: "replay" as const, result: JSON.parse(row.result_json) as Record<string, unknown> };
+}
+
+function saveStoryGenerationRequest(requestId: string, draftId: string, stage: string, inputHash: string, result: unknown, update: () => void) {
+  const now = new Date().toISOString();
+  withTransaction(() => {
+    update();
+    db.prepare("INSERT INTO story_generation_requests (request_id, draft_id, stage, input_sha256, result_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(requestId, draftId, stage, inputHash, JSON.stringify(result), now);
+  });
 }
 
 async function storySeriesAssets(series: StorySeries) {
@@ -1342,7 +1396,21 @@ const sameOriginRequest = (request: express.Request, response: express.Response)
 
 app.get("/api/settings/ai-generation", async (request, response) => {
   if (!localSettingsOnly(request, response)) return;
-  response.json(getAiGenerationSettings(db, process.env, Date.now(), await getOpenCodeProviderStatus()));
+  const settings = getAiGenerationSettings(db, process.env, Date.now(), await getOpenCodeProviderStatus());
+  if (process.env.NODE_ENV === "test" && process.env.STORY_GENERATION_TEST_MOCK_SETTINGS === "true" && settings.mode === "development") {
+    settings.providers.development = {
+      ...settings.providers.development,
+      displayName: "Test Story Mock · no external provider",
+      configured: true,
+      connected: true,
+      state: "connected",
+      apiVersion: "v1",
+      version: "test-mock",
+      models: [{ id: "mock/story-model", providerID: "mock", modelID: "story-model", name: "Mock Story AI · no API calls" }],
+      disabledReason: null,
+    };
+  }
+  response.json(settings);
 });
 
 app.put("/api/settings/ai-generation", async (request, response) => {
@@ -1565,6 +1633,376 @@ app.get("/api/docs/tts", async (_request, response) => {
   response.type("text/markdown").send(await readFile(path.resolve(root, "docs/TTS_SETUP.md"), "utf8"));
 });
 
+const storyDraftRequestSchema = z.object({ requestId: z.string().uuid(), source: storySourceSchema }).strict();
+const storyAiRequestSchema = z.object({ requestId: z.string().uuid(), model: z.string().trim().min(1).max(300).optional() }).strict();
+const storyAnalysisRequestSchema = storyAiRequestSchema.extend({ replan: z.boolean().optional() }).strict();
+const storyBibleRequestSchema = storyAiRequestSchema.extend({ replaceExisting: z.boolean().optional() }).strict();
+const storyEpisodeRequestSchema = storyAiRequestSchema.extend({ replaceExisting: z.boolean().optional() }).strict();
+const storyProductionSettingsSchema = z.object({ targetDurationSeconds: z.number().int().min(30).max(120), dailyCreditsAvailable: z.number().int().positive().max(1_000_000), resetAnalysis: z.boolean().optional() }).strict();
+const storyBibleEditSchema = z.object({ draft: storyBibleDraftSchema }).strict();
+
+class StoryAiSelectionError extends Error {
+  constructor(message: string, public readonly httpStatus: number, public readonly code: string) { super(message); }
+}
+
+async function selectStoryAiProvider(model?: string) {
+  const mode = readAiGenerationMode(db);
+  if (process.env.NODE_ENV === "test" && process.env.STORY_GENERATION_TEST_MOCK_AI === "true" && mode === "development") {
+    return { mode, production: null, provider: new StoryGenerationMockProvider() };
+  }
+  if (mode === "development") {
+    const provider = new OpenCodeTextGenerationProvider(model ?? "");
+    const status = await provider.status();
+    if (!status.configured) throw new StoryAiSelectionError(status.disabledReason ?? "OpenCode lokal belum tersedia.", 503, "opencode-unavailable");
+    if (!model || !status.models.some((item) => item.id === model)) throw new StoryAiSelectionError("Pilih model yang terhubung di OpenCode.", 400, "opencode-model-required");
+    return { mode, production: null, provider };
+  }
+  const production = getAiGenerationSettings(db).providers.production;
+  if (!production.configured || !production.model) throw new StoryAiSelectionError(production.disabledReason ?? "Gemini Text belum dikonfigurasi.", 503, "not-configured");
+  return { mode, production, provider: new GeminiTextGenerationProvider(production.model, process.env.GEMINI_API_KEY?.trim() ?? "") };
+}
+
+function reportStoryAiError(response: express.Response, error: unknown, signal: AbortSignal) {
+  if (error instanceof StoryAiSelectionError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+  if (error instanceof StoryGenerationOutputError) return apiError(response, 422, error.message, { code: "story-output-invalid", issues: error.issues });
+  if (error instanceof AiGenerationRequestError) return apiError(response, error.httpStatus, error.message, { code: error.code, nextAllowedAt: error.nextAllowedAt, quotaType: error.quotaType });
+  if (error instanceof GeminiTextGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code, quotaType: error.quotaType, retryAt: error.retryAt });
+  if (error instanceof OpenCodeGenerationError) return apiError(response, error.httpStatus, error.message, { code: error.code });
+  if (signal.aborted) return apiError(response, 499, "Story generation dibatalkan.", { code: "cancelled" });
+  console.error("Story generation failed:", error instanceof Error ? error.message : "Unknown provider error");
+  return apiError(response, 502, "Story generation gagal. Periksa konfigurasi atau coba lagi.", { code: "story-generation-failed" });
+}
+
+async function withStoryAi<T>(request: express.Request, response: express.Response, model: string | undefined, action: (context: Awaited<ReturnType<typeof selectStoryAiProvider>>, signal: AbortSignal) => Promise<T>): Promise<T | undefined> {
+  if (activeAiGeneration) { apiError(response, 409, "AI generation sedang berjalan. Tunggu sampai selesai.", { code: "generation-in-progress" }); return undefined; }
+  activeAiGeneration = true;
+  activeAiGenerationPhase = "connecting";
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.once("aborted", abort);
+  response.once("close", () => { if (!response.writableEnded) abort(); });
+  try {
+    const context = await selectStoryAiProvider(model);
+    return await action(context, controller.signal);
+  } catch (error) {
+    reportStoryAiError(response, error, controller.signal);
+    return undefined;
+  } finally {
+    request.off("aborted", abort);
+    activeAiGeneration = false;
+    activeAiGenerationPhase = "idle";
+  }
+}
+
+function validateBibleForSource(value: unknown, source: StorySource, episodes: StoryEpisodePlan[]) {
+  const parsed = storyBibleDraftSchema.safeParse(value);
+  if (!parsed.success) return { success: false as const, issues: parsed.error.issues };
+  const { series } = parsed.data;
+  const expectedOutlines = episodes.map((episode) => ({ episodeNumber: episode.episodeNumber, title: episode.title, summary: episode.synopsis, endingHook: episode.endingCliffhanger }));
+  if (series.title !== source.title || series.language !== source.language || series.plannedEpisodeCount !== episodes.length || series.visualStyle.presetId !== source.animationStyleId || JSON.stringify(series.storyBible.episodeOutlines) !== JSON.stringify(expectedOutlines)) {
+    return { success: false as const, issues: [{ path: ["series"], message: "Judul, bahasa, style, jumlah episode, dan outline harus cocok dengan cerita serta rencana yang disetujui." }] };
+  }
+  const entityIds = [...series.characters, ...series.locations, ...series.props].map((entity) => entity.id);
+  if (new Set(entityIds).size !== entityIds.length) return { success: false as const, issues: [{ path: ["series"], message: "ID karakter, lokasi, dan properti harus unik." }] };
+  return { success: true as const, data: parsed.data };
+}
+
+app.get("/api/story-generation/drafts", (request, response) => {
+  if (!localSettingsOnly(request, response)) return;
+  const rows = db.prepare("SELECT * FROM story_generation_drafts ORDER BY updated_at DESC").all() as StoryGenerationDraftRow[];
+  response.json(rows.map((row) => ({ id: row.id, title: (JSON.parse(row.source_json) as StorySource).title, stage: storyGenerationStage(row), seriesId: row.series_id, updatedAt: row.updated_at })));
+});
+
+app.post("/api/story-generation/drafts", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const parsed = storyDraftRequestSchema.safeParse(request.body);
+  if (!parsed.success) return apiError(response, 400, "Input cerita tidak valid.", { code: "invalid-story-source", issues: parsed.error.issues });
+  const inputHash = storyGenerationHash(parsed.data.source);
+  const prior = db.prepare("SELECT draft_id, stage, input_sha256, result_json FROM story_generation_requests WHERE request_id = ?").get(parsed.data.requestId) as { draft_id: string; stage: string; input_sha256: string; result_json: string } | undefined;
+  if (prior) {
+    if (prior.stage !== "source" || prior.input_sha256 !== inputHash) return apiError(response, 409, "Request ID sudah dipakai untuk cerita berbeda.", { code: "idempotency-conflict" });
+    const row = storyGenerationDraftRow(prior.draft_id);
+    if (!row) return apiError(response, 409, "Draft cerita tersimpan tidak ditemukan.", { code: "draft-missing" });
+    return response.json({ ...storyGenerationDraftDetail(row), replay: true });
+  }
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  withTransaction(() => {
+    db.prepare("INSERT INTO story_generation_drafts (id, source_json, episodes_json, created_at, updated_at) VALUES (?, ?, '{}', ?, ?)")
+      .run(id, JSON.stringify(parsed.data.source), now, now);
+    db.prepare("INSERT INTO story_generation_requests (request_id, draft_id, stage, input_sha256, result_json, created_at) VALUES (?, ?, 'source', ?, ?, ?)")
+      .run(parsed.data.requestId, id, inputHash, JSON.stringify({ draftId: id }), now);
+  });
+  const row = storyGenerationDraftRow(id)!;
+  response.status(201).json({ ...storyGenerationDraftDetail(row), replay: false });
+});
+
+app.get("/api/story-generation/drafts/:id", (request, response) => {
+  if (!localSettingsOnly(request, response)) return;
+  const row = storyGenerationDraftRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  response.json(storyGenerationDraftDetail(row));
+});
+
+app.put("/api/story-generation/drafts/:id/production-settings", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const body = storyProductionSettingsSchema.safeParse(request.body);
+  if (!body.success) return apiError(response, 400, "Production settings tidak valid.", { code: "invalid-story-production-settings", issues: body.error.issues });
+  const row = storyGenerationDraftRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (row.approved_plan_json || row.approved_bible_json || Object.keys(JSON.parse(row.episodes_json) as object).length) return apiError(response, 409, "Production settings terkunci setelah plan disetujui atau episode dibuat.", { code: "production-settings-locked" });
+  const hasAnalysis = Boolean(row.analysis_json || row.plan_json);
+  if (hasAnalysis && !body.data.resetAnalysis) return apiError(response, 409, "Perubahan production settings menghapus analisis/plan yang belum disetujui. Konfirmasi reset secara eksplisit.", { code: "analysis-reset-required" });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const updated = storySourceSchema.parse({ ...source, targetDurationSeconds: body.data.targetDurationSeconds, dailyCreditsAvailable: body.data.dailyCreditsAvailable });
+  const now = new Date().toISOString();
+  db.prepare("UPDATE story_generation_drafts SET source_json = ?, analysis_json = ?, plan_json = ?, approved_plan_json = NULL, bible_draft_json = NULL, approved_bible_json = NULL, episodes_json = '{}', series_id = NULL, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify(updated), hasAnalysis ? null : row.analysis_json, hasAnalysis ? null : row.plan_json, now, row.id);
+  response.json({ source: updated, analysisReset: hasAnalysis });
+});
+
+app.post("/api/story-generation/drafts/:id/analyze", async (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const body = storyAnalysisRequestSchema.safeParse(request.body);
+  if (!body.success) return apiError(response, 400, "Request analisis cerita tidak valid.", { code: "invalid-story-analysis-request", issues: body.error.issues });
+  const id = String(request.params.id);
+  const row = storyGenerationDraftRow(id);
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (row.approved_plan_json) return apiError(response, 409, "Rencana sudah disetujui; buat draft baru untuk menganalisis ulang.", { code: "approved-plan-locked" });
+  if (row.analysis_json && !body.data.replan) return response.json({ analysis: JSON.parse(row.analysis_json) as StoryAnalysis, plan: JSON.parse(row.plan_json ?? "[]") as StoryEpisodePlan[], existing: true, replay: true });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const inputHash = storyGenerationHash({ source, model: body.data.model ?? null, replan: Boolean(body.data.replan) });
+  const cached = storyGenerationRequest(body.data.requestId, id, "analysis", inputHash);
+  if (cached.state === "conflict") return apiError(response, 409, "Request ID sudah dipakai untuk input analisis berbeda.", { code: "idempotency-conflict" });
+  if (cached.state === "replay") return response.json({ ...cached.result, replay: true });
+  const result = await withStoryAi(request, response, body.data.model, async (context, signal) => {
+    const generated = await generateStoryAnalysis(db, context.mode, context.production, context.provider, source, { signal, onPhase: (phase) => { activeAiGenerationPhase = phase; } });
+    const analysis = storyAnalysisSchema.parse(generated.value);
+    const resultData = { analysis, plan: analysis.episodes, model: generated.model };
+    saveStoryGenerationRequest(body.data.requestId, id, "analysis", inputHash, resultData, () => {
+      db.prepare("UPDATE story_generation_drafts SET analysis_json = ?, plan_json = ?, approved_plan_json = NULL, bible_draft_json = NULL, approved_bible_json = NULL, episodes_json = '{}', series_id = NULL, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(analysis), JSON.stringify(analysis.episodes), new Date().toISOString(), id);
+    });
+    return resultData;
+  });
+  if (result) response.json({ ...result, replay: false });
+});
+
+app.put("/api/story-generation/drafts/:id/plan", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const row = storyGenerationDraftRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (row.approved_plan_json) return apiError(response, 409, "Rencana yang disetujui tidak dapat ditimpa.", { code: "approved-plan-locked" });
+  if (!row.analysis_json) return apiError(response, 409, "Analisis cerita harus selesai sebelum episode plan diubah.", { code: "analysis-required" });
+  const parsed = storyEpisodePlanListSchema.safeParse(request.body?.episodes);
+  if (!parsed.success) return apiError(response, 400, "Episode plan tidak valid.", { code: "invalid-story-plan", issues: parsed.error.issues });
+  db.prepare("UPDATE story_generation_drafts SET plan_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(parsed.data), new Date().toISOString(), row.id);
+  response.json({ plan: parsed.data });
+});
+
+app.post("/api/story-generation/drafts/:id/approve-plan", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const row = storyGenerationDraftRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (row.approved_plan_json) return response.json({ approved: true, replay: true, plan: JSON.parse(row.approved_plan_json) as StoryEpisodePlan[] });
+  if (!row.analysis_json || !row.plan_json) return apiError(response, 409, "Analisis cerita harus selesai sebelum rencana disetujui.", { code: "analysis-required" });
+  const parsed = storyEpisodePlanApprovalSchema.safeParse(JSON.parse(row.plan_json));
+  if (!parsed.success) return apiError(response, 400, "Lengkapi episode manual dan pastikan finale menyelesaikan konflik utama.", { code: "invalid-story-plan-approval", issues: parsed.error.issues });
+  db.prepare("UPDATE story_generation_drafts SET approved_plan_json = ?, updated_at = ? WHERE id = ? AND approved_plan_json IS NULL")
+    .run(JSON.stringify(parsed.data), new Date().toISOString(), row.id);
+  response.json({ approved: true, replay: false, plan: parsed.data });
+});
+
+app.post("/api/story-generation/drafts/:id/story-bible/generate", async (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const body = storyBibleRequestSchema.safeParse(request.body);
+  if (!body.success) return apiError(response, 400, "Request Story Bible tidak valid.", { code: "invalid-story-bible-request", issues: body.error.issues });
+  const id = String(request.params.id);
+  const row = storyGenerationDraftRow(id);
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (!row.approved_plan_json) return apiError(response, 409, "Setujui episode plan sebelum membuat Story Bible.", { code: "approved-plan-required" });
+  if (row.approved_bible_json) return apiError(response, 409, "Story Bible sudah disetujui dan tidak dapat ditimpa.", { code: "approved-bible-locked" });
+  if (row.bible_draft_json && !body.data.replaceExisting) return response.json({ bibleDraft: JSON.parse(row.bible_draft_json) as StoryBibleDraft, existing: true, replay: true });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const episodes = storyEpisodePlanApprovalSchema.parse(JSON.parse(row.approved_plan_json));
+  const inputHash = storyGenerationHash({ source, episodes, model: body.data.model ?? null, replaceExisting: Boolean(body.data.replaceExisting) });
+  const cached = storyGenerationRequest(body.data.requestId, id, "bible", inputHash);
+  if (cached.state === "conflict") return apiError(response, 409, "Request ID sudah dipakai untuk Story Bible berbeda.", { code: "idempotency-conflict" });
+  if (cached.state === "replay") return response.json({ ...cached.result, replay: true });
+  const result = await withStoryAi(request, response, body.data.model, async (context, signal) => {
+    const generated = await generateStoryBibleContent(db, context.mode, context.production, context.provider, source, episodes, id, { signal, onPhase: (phase) => { activeAiGenerationPhase = phase; } });
+    const bibleDraft = buildStoryBibleDraft(source, episodes, generated.value, id);
+    const valid = validateBibleForSource(bibleDraft, source, episodes);
+    if (!valid.success) throw new StoryGenerationOutputError("Story Bible tidak cocok dengan source dan approved plan.", valid.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+    const resultData = { bibleDraft: valid.data, model: generated.model };
+    saveStoryGenerationRequest(body.data.requestId, id, "bible", inputHash, resultData, () => {
+      db.prepare("UPDATE story_generation_drafts SET bible_draft_json = ?, approved_bible_json = NULL, episodes_json = '{}', updated_at = ? WHERE id = ? AND approved_plan_json IS NOT NULL")
+        .run(JSON.stringify(valid.data), new Date().toISOString(), id);
+    });
+    return resultData;
+  });
+  if (result) response.json({ ...result, replay: false });
+});
+
+app.put("/api/story-generation/drafts/:id/story-bible", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const body = storyBibleEditSchema.safeParse(request.body);
+  if (!body.success) return apiError(response, 400, "Story Bible draft tidak valid.", { code: "invalid-story-bible", issues: body.error.issues });
+  const row = storyGenerationDraftRow(String(request.params.id));
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (row.approved_bible_json) return apiError(response, 409, "Story Bible yang sudah disetujui tidak dapat ditimpa.", { code: "approved-bible-locked" });
+  if (!row.approved_plan_json) return apiError(response, 409, "Setujui episode plan terlebih dahulu.", { code: "approved-plan-required" });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const episodes = storyEpisodePlanApprovalSchema.parse(JSON.parse(row.approved_plan_json));
+  const valid = validateBibleForSource(body.data.draft, source, episodes);
+  if (!valid.success) return apiError(response, 400, "Story Bible tidak cocok dengan source dan approved plan.", { code: "story-bible-mismatch", issues: valid.issues });
+  db.prepare("UPDATE story_generation_drafts SET bible_draft_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(valid.data), new Date().toISOString(), row.id);
+  response.json({ bibleDraft: valid.data });
+});
+
+app.post("/api/story-generation/drafts/:id/story-bible/approve", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const id = String(request.params.id);
+  const row = storyGenerationDraftRow(id);
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (row.approved_bible_json) return response.json({ approved: true, replay: true, seriesId: row.series_id, bible: JSON.parse(row.approved_bible_json) as StoryBibleDraft });
+  if (!row.approved_plan_json) return apiError(response, 409, "Setujui episode plan terlebih dahulu.", { code: "approved-plan-required" });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const episodes = storyEpisodePlanApprovalSchema.parse(JSON.parse(row.approved_plan_json));
+  const candidate = request.body?.draft ?? (row.bible_draft_json ? JSON.parse(row.bible_draft_json) : null);
+  const valid = validateBibleForSource(candidate, source, episodes);
+  if (!valid.success) return apiError(response, 400, "Tinjau dan simpan Story Bible valid sebelum menyetujui.", { code: "invalid-story-bible-approval", issues: valid.issues });
+  const bible = valid.data;
+  const sourceSeriesHash = storyGenerationHash(seriesIdentity(bible.series));
+  const now = new Date().toISOString();
+  let seriesId = "";
+  try {
+    withTransaction(() => {
+      const current = storyGenerationDraftRow(id);
+      if (!current || current.approved_bible_json) throw new Error("approved-bible-locked");
+      const existing = db.prepare("SELECT * FROM story_series WHERE slug = ?").get(bible.series.slug) as StorySeriesRow | undefined;
+      if (existing && existing.source_series_sha256 !== sourceSeriesHash) throw new Error("series-conflict");
+      seriesId = existing?.id ?? randomUUID();
+      if (!existing) db.prepare("INSERT INTO story_series (id, slug, title, source_series_sha256, data_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(seriesId, bible.series.slug, bible.series.title, sourceSeriesHash, JSON.stringify(bible.series), now, now);
+      db.prepare("UPDATE story_generation_drafts SET bible_draft_json = ?, approved_bible_json = ?, series_id = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(bible), JSON.stringify(bible), seriesId, now, id);
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "series-conflict") return apiError(response, 409, "Slug Story Series sudah digunakan dengan Story Bible berbeda; data lama tidak ditimpa.", { code: "series-conflict" });
+    if (error instanceof Error && error.message === "approved-bible-locked") return apiError(response, 409, "Story Bible sudah disetujui.", { code: "approved-bible-locked" });
+    throw error;
+  }
+  response.status(201).json({ approved: true, replay: false, seriesId, bible });
+});
+
+app.post("/api/story-generation/drafts/:id/episodes/:episodeNumber/generate", async (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const body = storyEpisodeRequestSchema.safeParse(request.body);
+  if (!body.success) return apiError(response, 400, "Request episode generation tidak valid.", { code: "invalid-story-episode-request", issues: body.error.issues });
+  const id = String(request.params.id);
+  const episodeNumber = Number(request.params.episodeNumber);
+  if (!Number.isInteger(episodeNumber) || episodeNumber < 1 || episodeNumber > 20) return apiError(response, 400, "Nomor episode tidak valid.", { code: "invalid-episode-number" });
+  const row = storyGenerationDraftRow(id);
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (!row.approved_bible_json || !row.series_id) return apiError(response, 409, "Setujui Story Bible sebelum membuat storyboard episode.", { code: "approved-bible-required" });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const approvedPlan = storyEpisodePlanApprovalSchema.parse(JSON.parse(row.approved_plan_json!));
+  const plan = approvedPlan.find((episode) => episode.episodeNumber === episodeNumber);
+  if (!plan) return apiError(response, 404, "Episode tidak ditemukan di approved plan.", { code: "episode-not-in-plan" });
+  const budget = storyFlowBudget(plan.estimatedDurationSeconds, source.dailyCreditsAvailable);
+  if (!budget.withinEightClipLimit) return apiError(response, 409, `Episode ${episodeNumber} berdurasi ${plan.estimatedDurationSeconds} detik dan membutuhkan ${budget.plannedClips} klip Flow (${budget.estimatedCredits} kredit), melewati batas 8 klip per episode. Strategi editing manual belum didukung; edit plan menjadi maksimal 64 detik sebelum generate.`, { code: "flow-clip-limit", budget });
+  if (!budget.withinDailyBudget) return apiError(response, 409, `Episode ${episodeNumber} membutuhkan ${budget.estimatedCredits} kredit, melebihi kapasitas harian yang Anda masukkan (${source.dailyCreditsAvailable}). Tidak ada kredit yang dibelanjakan otomatis.`, { code: "daily-budget-insufficient", budget });
+  const currentSeriesRow = storySeriesRow(row.series_id);
+  if (!currentSeriesRow) return apiError(response, 409, "Approved Story Bible tidak ditemukan di Series Library.", { code: "approved-bible-missing" });
+  const series = JSON.parse(currentSeriesRow.data_json) as StorySeries;
+  const episodeDrafts = JSON.parse(row.episodes_json) as Record<string, { package: StorySeriesPackage; adaptationNotes: string[]; model: string; createdAt: string }>;
+  const currentDraft = episodeDrafts[String(episodeNumber)];
+  const storedEpisode = db.prepare("SELECT * FROM story_series_episodes WHERE series_id = ? AND episode_number = ?").get(row.series_id, episodeNumber) as StorySeriesEpisodeRow | undefined;
+  if (storedEpisode && body.data.replaceExisting) return apiError(response, 409, "Episode sudah masuk production pipeline dan tidak dapat ditimpa. Buat draft baru untuk perubahan besar.", { code: "episode-already-imported" });
+  if (currentDraft && !body.data.replaceExisting) return response.json({ ...currentDraft, existing: true, replay: true });
+  if (episodeNumber > 1) {
+    const priorDraft = episodeDrafts[String(episodeNumber - 1)];
+    const priorStored = priorDraft ? null : db.prepare("SELECT package_json FROM story_series_episodes WHERE series_id = ? AND episode_number = ?").get(row.series_id, episodeNumber - 1) as { package_json: string } | undefined;
+    if (!priorDraft && !priorStored) return apiError(response, 409, `Generate Episode ${episodeNumber - 1} terlebih dahulu untuk continuity handoff.`, { code: "previous-episode-required" });
+  }
+  const previous = episodeNumber > 1
+    ? episodeDrafts[String(episodeNumber - 1)]?.package.episode
+      ?? (() => { const previousRow = db.prepare("SELECT package_json FROM story_series_episodes WHERE series_id = ? AND episode_number = ?").get(row.series_id, episodeNumber - 1) as { package_json: string } | undefined; return previousRow ? (JSON.parse(previousRow.package_json) as StorySeriesPackage).episode : null; })()
+    : null;
+  const previousEpisode = previous ? { title: previous.title, synopsis: previous.synopsis, continuityHandoff: previous.continuityHandoff } : null;
+  const inputHash = storyGenerationHash({ source, plan, series, previousEpisode, model: body.data.model ?? null, replaceExisting: Boolean(body.data.replaceExisting) });
+  const cached = storyGenerationRequest(body.data.requestId, id, `episode-${episodeNumber}`, inputHash);
+  if (cached.state === "conflict") return apiError(response, 409, "Request ID sudah dipakai untuk episode atau input berbeda.", { code: "idempotency-conflict" });
+  if (cached.state === "replay") return response.json({ ...cached.result, replay: true });
+  const result = await withStoryAi(request, response, body.data.model, async (context, signal) => {
+    const generated = await generateStoryEpisodeContent(db, context.mode, context.production, context.provider, { source, plan, series, previousEpisode }, { signal, onPhase: (phase) => { activeAiGenerationPhase = phase; } });
+    if (generated.value.scenes.length !== budget.plannedClips) throw new StoryGenerationOutputError(`Episode harus memakai tepat ${budget.plannedClips} klip untuk target ${plan.estimatedDurationSeconds} detik.`, [{ path: "scenes", message: "Jumlah scene/klip tidak cocok dengan estimasi." }]);
+    const episode = {
+      episodeNumber,
+      title: plan.title,
+      synopsis: plan.synopsis,
+      targetDurationSeconds: plan.estimatedDurationSeconds,
+      previousEpisodeSummary: previous?.synopsis ?? null,
+      openingHook: plan.openingHook,
+      endingCliffhanger: plan.endingCliffhanger,
+      scenes: generated.value.scenes,
+      continuityHandoff: generated.value.continuityHandoff,
+    };
+    const packageResult = storySeriesPackageSchema.safeParse({
+      schemaVersion: "story-series.v1",
+      packageType: "series-with-episode",
+      series,
+      episode,
+      productionBudget: {
+        creditsPerClip: 10,
+        dailyCreditsAvailable: source.dailyCreditsAvailable,
+        plannedClips: generated.value.scenes.length,
+        estimatedCredits: generated.value.scenes.length * 10,
+        reserveCredits: source.dailyCreditsAvailable - generated.value.scenes.length * 10,
+      },
+    });
+    if (!packageResult.success) throw new StoryGenerationOutputError("Episode draft tidak cocok dengan story-series.v1.", packageResult.error.issues.slice(0, 20).map((issue) => ({ path: issue.path.join("."), message: issue.message })));
+    const createdAt = new Date().toISOString();
+    const resultData = { package: packageResult.data, adaptationNotes: generated.value.adaptationNotes, model: generated.model, createdAt };
+    saveStoryGenerationRequest(body.data.requestId, id, `episode-${episodeNumber}`, inputHash, resultData, () => {
+      const latest = storyGenerationDraftRow(id);
+      if (!latest) throw new Error("story-draft-not-found");
+      const latestEpisodes = JSON.parse(latest.episodes_json) as Record<string, unknown>;
+      if (latestEpisodes[String(episodeNumber)] && !body.data.replaceExisting) throw new Error("episode-draft-conflict");
+      latestEpisodes[String(episodeNumber)] = resultData;
+      db.prepare("UPDATE story_generation_drafts SET episodes_json = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(latestEpisodes), createdAt, id);
+    });
+    return resultData;
+  });
+  if (result) response.json({ ...result, existing: false, replay: false });
+});
+
+app.put("/api/story-generation/drafts/:id/episodes/:episodeNumber", (request, response) => {
+  if (!localSettingsOnly(request, response) || !sameOriginRequest(request, response)) return;
+  const id = String(request.params.id);
+  const episodeNumber = Number(request.params.episodeNumber);
+  const row = storyGenerationDraftRow(id);
+  if (!row) return apiError(response, 404, "Story draft tidak ditemukan.", { code: "story-draft-not-found" });
+  if (!Number.isInteger(episodeNumber) || episodeNumber < 1 || !row.approved_bible_json || !row.series_id) return apiError(response, 400, "Episode draft tidak valid.", { code: "invalid-episode-draft" });
+  if (db.prepare("SELECT 1 FROM story_series_episodes WHERE series_id = ? AND episode_number = ?").get(row.series_id, episodeNumber)) return apiError(response, 409, "Episode sudah diimpor; prompt dan storyboard lama tidak ditimpa.", { code: "episode-already-imported" });
+  const parsed = storySeriesPackageSchema.safeParse(request.body?.package);
+  if (!parsed.success) return apiError(response, 400, "Episode package story-series.v1 tidak valid.", { code: "invalid-story-series", issues: parsed.error.issues });
+  const source = storySourceSchema.parse(JSON.parse(row.source_json));
+  const plan = storyEpisodePlanApprovalSchema.parse(JSON.parse(row.approved_plan_json!)).find((episode) => episode.episodeNumber === episodeNumber);
+  const series = JSON.parse((storySeriesRow(row.series_id)!).data_json) as StorySeries;
+  const input = parsed.data;
+  if (!plan || input.episode.episodeNumber !== episodeNumber || input.episode.title !== plan.title || input.episode.targetDurationSeconds !== plan.estimatedDurationSeconds || storyGenerationHash(seriesIdentity(input.series)) !== storyGenerationHash(seriesIdentity(series))) {
+    return apiError(response, 409, "Episode number/title/duration dan Story Bible harus tetap cocok dengan approved plan.", { code: "episode-package-mismatch" });
+  }
+  const episodes = JSON.parse(row.episodes_json) as Record<string, { package: StorySeriesPackage; adaptationNotes: string[]; model: string; createdAt: string }>;
+  const prior = episodes[String(episodeNumber)];
+  episodes[String(episodeNumber)] = { package: input, adaptationNotes: prior?.adaptationNotes ?? [], model: prior?.model ?? "manual-edit", createdAt: new Date().toISOString() };
+  db.prepare("UPDATE story_generation_drafts SET episodes_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(episodes), new Date().toISOString(), id);
+  response.json({ package: input });
+});
+
 app.get("/api/story-series", (_request, response) => {
   const rows = db.prepare("SELECT id FROM story_series ORDER BY updated_at DESC, title COLLATE NOCASE").all() as Array<{ id: string }>;
   response.json(rows.flatMap(({ id }) => {
@@ -1574,7 +2012,7 @@ app.get("/api/story-series", (_request, response) => {
 });
 
 app.get("/api/story-series/:id", (request, response) => {
-  const series = storySeriesDetail(String(request.params.id));
+  const series = storySeriesDetail(String(request.params.id), true);
   if (!series) return apiError(response, 404, "Story Series tidak ditemukan.");
   response.json(series);
 });

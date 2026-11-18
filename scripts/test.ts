@@ -53,6 +53,7 @@ import { motionBeatFromAction, updateMotionBeat } from "../src/domain/motion-bea
 import { seedVolcanoVisualSample } from "../src/domain/volcano-visual-sample";
 import { buildManualResearchPackage, manualProjectInputSchema } from "../src/domain/manual-project";
 import { adaptStorySeriesEpisode, storySeriesPackageSchema } from "../src/domain/story-series";
+import { storyAnalysisSchema, storyFlowBudget, storySourceSchema } from "../src/domain/story-generation";
 
 const samples = ["mountain-formation", "volcano-formation", "space-orbit", "animal-habitat", "lightning-charge", "kenapa-air-laut-asin", "bagaimana-bumi-melindungi-kita", "bagaimana-pelangi-terbentuk"];
 const storySeriesFixtureResult = storySeriesPackageSchema.safeParse(JSON.parse(await readFile(new URL("../fixtures/story-series/bilik-empat-episode-01.json", import.meta.url), "utf8")));
@@ -117,6 +118,16 @@ assert.equal(appRouteHref({ view: "settings", section: "general" }), "/settings"
 assert.equal(appRouteHref({ view: "settings", section: "ai-generation" }), "/settings?section=ai-generation", "AI Generation settings section serializes in URL");
 assert.equal(appRouteHref({ view: "series-library", slug: "bilik-empat" }), "/series?slug=bilik-empat", "series continuation route serializes in URL");
 assert.equal(appRouteHref({ view: "series-detail", seriesId: "series-123" }), "/series/series-123", "Story Bible detail serializes in URL");
+assert.deepEqual(parseAppRoute("http://localhost/series/generate/draft-123"), { view: "series-generation", draftId: "draft-123" }, "story generation draft survives direct URL navigation");
+assert.equal(appRouteHref({ view: "series-generation", draftId: "draft-123" }), "/series/generate/draft-123", "story generation draft URL serializes");
+const exactStoryText = " Source line one.\r\nSource line two. ";
+const storySourceResult = storySourceSchema.safeParse({ title: "Test story", storyText: exactStoryText, language: "id-ID", targetDurationSeconds: 62, dailyCreditsAvailable: 100, animationStyleId: "cinematic-2d-motion-comic", additionalInstructions: "", sourceUrl: "", rightsNotes: "" });
+assert.equal(storySourceResult.success, true);
+if (storySourceResult.success) assert.equal(storySourceResult.data.storyText, exactStoryText, "source story body retains whitespace and CRLF exactly");
+assert.equal(storySourceSchema.safeParse({ ...(storySourceResult.success ? storySourceResult.data : {}), animationStyleId: "stylized-3d-cartoon" }).success, false, "Generate from Story rejects 3D preset fallback");
+assert.equal(storyAnalysisSchema.safeParse({ schemaVersion: "story-series.v1" }).success, false, "analysis schema remains distinct from production story-series.v1");
+assert.deepEqual(storyFlowBudget(62, 100), { creditsPerClip: 10, dailyCreditsAvailable: 100, plannedClips: 8, estimatedCredits: 80, reserveCredits: 20, withinEightClipLimit: true, withinDailyBudget: true });
+assert.deepEqual(storyFlowBudget(70, 100), { creditsPerClip: 10, dailyCreditsAvailable: 100, plannedClips: 9, estimatedCredits: 90, reserveCredits: 10, withinEightClipLimit: false, withinDailyBudget: true }, "longer target reports actual clips and credits instead of assuming one 8s clip");
 assert.equal(normalizeWorkspaceStep("visual"), "video-editor", "legacy stored visual step migrates without project rewrite");
 assert.equal(normalizeWorkspaceStep("editor"), "video-editor", "legacy stored editor step migrates without project rewrite");
 assert.equal(workspaceSteps.length, 6, "workflow has six steps");

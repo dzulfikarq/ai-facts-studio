@@ -8,22 +8,22 @@ import { buildVisualStoryboard, visualStoryboardSchema, type VisualStoryboard } 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const assetId = z.string().regex(/^upload-[a-f0-9]{64}\.(png|jpg|webp)$/).optional();
 
-const characterSchema = z.object({
+export const storySeriesCharacterSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), name: text(120), role: text(120),
   physicalDescription: text(2000), outfit: text(1200), distinguishingFeatures: z.array(text(500)).max(20),
   personality: text(1200), referenceImagePrompt: text(12000), continuityRules: z.array(text(1000)).max(30),
   referenceAssetId: assetId,
 }).strict();
-const locationSchema = z.object({
+export const storySeriesLocationSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), name: text(120), description: text(2000), fixedLayout: text(2000),
   referenceImagePrompt: text(12000), continuityRules: z.array(text(1000)).max(30), referenceAssetId: assetId,
 }).strict();
-const propSchema = z.object({
+export const storySeriesPropSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), name: text(120), visualDescription: text(2000),
   referenceImagePrompt: text(12000), referenceAssetId: assetId,
 }).strict();
 
-const seriesSchema = z.object({
+export const storySeriesSchema = z.object({
   slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80), title: text(120),
   genre: z.array(text(60)).min(1).max(12), language: z.string().regex(/^[a-z]{2}-[A-Z]{2}$/),
   logline: text(1000), synopsis: text(6000), plannedEpisodeCount: z.number().int().min(1).max(100),
@@ -38,10 +38,10 @@ const seriesSchema = z.object({
     continuityRules: z.array(text(1500)).max(60),
     episodeOutlines: z.array(z.object({ episodeNumber: z.number().int().positive().max(100), title: text(160), summary: text(3000), endingHook: text(2000) }).strict()).min(1).max(100),
   }).strict(),
-  characters: z.array(characterSchema).max(40), locations: z.array(locationSchema).max(40), props: z.array(propSchema).max(80),
+  characters: z.array(storySeriesCharacterSchema).max(40), locations: z.array(storySeriesLocationSchema).max(40), props: z.array(storySeriesPropSchema).max(80),
 }).strict();
 
-const sceneSchema = z.object({
+export const storySeriesSceneSchema = z.object({
   sceneId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,99}$/), order: z.number().int().positive().max(30),
   title: text(120), durationSeconds: z.number().positive().max(120), dramaticPurpose: text(2000),
   narration: text(2000), onScreenText: z.string().max(120),
@@ -52,10 +52,10 @@ const sceneSchema = z.object({
   continuityNotes: z.array(text(1200)).max(30),
 }).strict();
 
-const episodeSchema = z.object({
+export const storySeriesEpisodeSchema = z.object({
   episodeNumber: z.number().int().positive().max(100), title: text(160), synopsis: text(6000),
   targetDurationSeconds: z.number().int().positive().max(120), previousEpisodeSummary: z.string().max(6000).nullable(),
-  openingHook: text(2000), endingCliffhanger: text(2000), scenes: z.array(sceneSchema).min(1).max(30),
+  openingHook: text(2000), endingCliffhanger: text(2000), scenes: z.array(storySeriesSceneSchema).min(1).max(30),
   continuityHandoff: z.object({
     revealedFacts: z.array(text(1500)).max(40), unresolvedMysteries: z.array(text(1500)).max(40),
     characterStates: z.array(z.object({ characterId: z.string().max(80), state: text(1500) }).strict()).max(40),
@@ -71,7 +71,7 @@ const productionBudgetSchema = z.object({
 
 export const storySeriesPackageSchema = z.object({
   schemaVersion: z.literal("story-series.v1"), packageType: z.literal("series-with-episode"),
-  series: seriesSchema, episode: episodeSchema, productionBudget: productionBudgetSchema,
+  series: storySeriesSchema, episode: storySeriesEpisodeSchema, productionBudget: productionBudgetSchema,
 }).strict().superRefine((input, ctx) => {
   const { series, episode, productionBudget } = input;
   const entityIds = new Set<string>();

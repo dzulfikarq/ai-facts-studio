@@ -59,7 +59,7 @@ const viteUrl = `http://127.0.0.1:${vitePort}`;
 const apiLogs: string[] = [];
 const apiServer = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: root,
-  env: { ...process.env, NODE_ENV: "test", HOST: "127.0.0.1", PORT: String(apiPort), VITE_PORT: String(vitePort), DATA_DIR: path.join(tempDir, "data"), DAILY_JOB_LIMIT: "1", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
+  env: { ...process.env, NODE_ENV: "test", STORY_GENERATION_TEST_MOCK_AI: "true", STORY_GENERATION_TEST_MOCK_SETTINGS: "true", HOST: "127.0.0.1", PORT: String(apiPort), VITE_PORT: String(vitePort), DATA_DIR: path.join(tempDir, "data"), DAILY_JOB_LIMIT: "1", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 for (const stream of [apiServer.stdout, apiServer.stderr]) stream?.on("data", (chunk: Buffer) => {
@@ -138,11 +138,89 @@ try {
 
   browser = await openBrowser("chrome", { logLevel: "error" });
   const page = await browser.newPage({ context: () => null, logLevel: "error", indent: 0, pageIndex: 0, onBrowserLog: () => {}, onLog: () => {} } as never);
+  const captureViewport = async (filename: string) => {
+    const client = (page as unknown as { _client: () => { send: (method: string, params?: Record<string, unknown>) => Promise<{ value: any }> } })._client();
+    const viewport = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight }));
+    const image = (await client.send("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false, clip: { ...viewport, scale: 1 } })).value;
+    await writeFile(path.join(evidenceDir, filename), Buffer.from(image.data, "base64"));
+  };
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "project dashboard");
   const storySeriesJson = await readFile("fixtures/story-series/bilik-empat-episode-01.json", "utf8");
   await page.goto({ url: `${viteUrl}/series`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-generation-start form"))), "Generate from Story source form");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLSelectElement>('.series-form-field select')?.value), "cinematic-2d-motion-comic", "new story source defaults to locked hand-painted 2D horror style");
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLOptionElement>('.series-form-field select option')].some((option) => option.value === "stylized-3d-cartoon")), false, "Generate from Story does not offer 3D style fallback");
+  const storyAiAttemptsBeforeBrowser = generationAttemptCount();
+  await page.evaluate(() => {
+    const form = document.querySelector<HTMLFormElement>(".series-generation-start form")!;
+    const title = form.querySelector<HTMLInputElement>(".series-form-field input")!;
+    const source = form.querySelectorAll<HTMLTextAreaElement>(".series-form-field textarea")[0]!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(title, "Browser mock story");
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(source, "A short source story. A door opens; the protagonist resolves the source-supported conflict.");
+    source.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".series-generation-start button")].find((button) => button.type === "submit")?.click());
+  await waitFor(() => page.evaluate(() => location.pathname.startsWith("/series/generate/") && Boolean(document.querySelector(".series-source-copy"))), "durable source story workspace route");
+  assert.equal(await page.evaluate(() => document.querySelector(".series-source-copy")?.textContent?.includes("A short source story.")), true, "workspace shows preserved original source");
+  const clickStoryAction = async (label: string) => {
+    const clicked = await page.evaluate((text) => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim().startsWith(text) && !item.disabled);
+      button?.click();
+      return Boolean(button);
+    }, label);
+    assert.equal(clicked, true, `Story workflow action available: ${label}`);
+  };
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLSelectElement>(".series-ai-controls select")?.value)), "test-only mock AI provider setting");
+  await clickStoryAction("Analisis Cerita");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-plan-card .series-form-field input"))), "mock analysis episode-plan preview");
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>(".series-plan-card .series-form-field input")!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Browser reviewed episode");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await clickStoryAction("Setujui Episode Plan");
+  await waitFor(() => page.evaluate(() => Boolean([...document.querySelectorAll("h2")].find((heading) => heading.textContent === "Story Bible"))), "approved plan Story Bible stage");
+  await clickStoryAction("Generate Story Bible");
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLTextAreaElement>('.series-json-field textarea')?.value.includes('"story-bible.v1"'))), "mock Story Bible candidate");
+  await clickStoryAction("Saya sudah meninjau · Setujui Story Bible");
+  await waitFor(() => page.evaluate(() => Boolean([...document.querySelectorAll("h2")].find((heading) => heading.textContent === "Generate Selected Episode"))), "approved Story Bible episode stage");
+  await clickStoryAction("Generate Episode 1");
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".series-plan-card .series-form-field textarea").length === 24), "eight scenes with editable Flow, negative, and reference prompts");
+  const browserFlowPrompts = await page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".series-plan-card .series-form-field")].filter((label) => label.textContent?.includes("Google Flow animation prompt")).map((label) => label.querySelector("textarea")?.value ?? ""));
+  assert.equal(browserFlowPrompts.length, 8);
+  assert.ok(browserFlowPrompts.every((prompt) => prompt.includes("hand-painted") && prompt.includes("No 3D")), "mock browser prompts keep 2D style lock");
+  await captureViewport("story-generation-episode-review.png");
+  await page.evaluate(() => {
+    const label = [...document.querySelectorAll<HTMLLabelElement>(".series-plan-card .series-form-field")].find((item) => item.textContent?.includes("Google Flow animation prompt"))!;
+    const prompt = label.querySelector<HTMLTextAreaElement>("textarea")!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(prompt, `${prompt.value} Browser-reviewed prompt edit.`);
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await clickStoryAction("Simpan draft & prompt");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll(".workflow-alert.success")].some((item) => item.textContent?.includes("Episode draft dan prompt tersimpan"))), "persisted editable Flow prompt");
+  assert.equal(generationAttemptCount(), storyAiAttemptsBeforeBrowser, "mock Development workflow makes no Gemini request or credit call");
+  const generationUrl = await page.evaluate(() => location.href);
+  await page.goto({ url: generationUrl, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-source-copy") && document.querySelector(".series-plan-card .series-form-field textarea"))), "reloaded story, plan, and episode draft");
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".series-plan-card .series-form-field")].find((label) => label.textContent?.includes("Google Flow animation prompt"))?.querySelector("textarea")?.value.includes("Browser-reviewed prompt edit")), true, "Flow prompt edit survives browser reload");
+  for (const width of [390, 360, 320]) {
+    await page.setViewport({ width, height: 844, deviceScaleFactor: 1 });
+    const pageWidth = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      offenders: [...document.querySelectorAll<HTMLElement>("body *")].map((element) => ({ name: `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/g, ".")}`, right: element.getBoundingClientRect().right, width: element.getBoundingClientRect().width })).filter((element) => element.right > window.innerWidth).sort((a, b) => b.right - a.right).slice(0, 5),
+      bounds: ["body", ".app-shell", "main", ".page", ".series-page", ".series-panel"].map((selector) => { const element = document.querySelector<HTMLElement>(selector); if (!element) return { selector, missing: true }; const rect = element.getBoundingClientRect(); return { selector, left: rect.left, right: rect.right, width: rect.width, boxSizing: getComputedStyle(element).boxSizing, padding: getComputedStyle(element).padding, margin: getComputedStyle(element).margin, minWidth: getComputedStyle(element).minWidth }; }),
+    }));
+    assert.equal(pageWidth.scrollWidth <= width, true, `Generate from Story has no horizontal overflow at ${width}px: ${JSON.stringify(pageWidth)}`);
+    if (width === 390) await captureViewport("story-generation-mobile.png");
+  }
+
+  await page.goto({ url: `${viteUrl}/series`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-mode-switch"))), "Story Series mode selector");
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".series-mode-switch button")].find((button) => button.textContent?.startsWith("Import JSON"))?.click());
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLTextAreaElement>(".series-json-field textarea"))), "Story Series import preview page");
   await page.evaluate((json) => {
     const input = document.querySelector<HTMLTextAreaElement>(".series-json-field textarea")!;
@@ -234,12 +312,6 @@ try {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }, { query: selector, nextValue: value });
-  const captureViewport = async (filename: string) => {
-    const client = (page as unknown as { _client: () => { send: (method: string, params?: Record<string, unknown>) => Promise<{ value: any }> } })._client();
-    const viewport = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY, width: window.innerWidth, height: window.innerHeight }));
-    const image = (await client.send("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false, clip: { ...viewport, scale: 1 } })).value;
-    await writeFile(path.join(evidenceDir, filename), Buffer.from(image.data, "base64"));
-  };
   const assertResponsiveNoOverflow = async (view: string) => {
     for (const width of [1440, 1280, 1024, 768, 390, 360, 320]) {
       await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
@@ -757,6 +829,7 @@ try {
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".editor-field")].find((label) => label.textContent?.includes("Tampilan gambar"))?.querySelector("select")?.value === "cover"), "fit selector reflects local raster transform");
+  await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Belum disimpan"), "fit transform marks storyboard dirty before save");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(async () => {
     const latest = await fetch(`${apiUrl}/api/projects/${mountainProject.id}`).then((response) => response.json());

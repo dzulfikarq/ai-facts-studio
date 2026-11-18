@@ -68,7 +68,7 @@ function setPersistedAiMode(mode: "development" | "production") {
 }
 const server = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
   cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: "test", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", OPENCODE_SERVER_URL: "http://localhost:4096", OPENCODE_SERVER_PASSWORD: "smoke-password", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), VITE_PORT: String(vitePort), DATA_DIR: dataPath },
+  env: { ...process.env, NODE_ENV: "test", STORY_GENERATION_TEST_MOCK_AI: "true", TTS_MOCK_PROVIDER: "0", GEMINI_API_KEY: "", GEMINI_TTS_FREE_TIER_ONLY: "false", GEMINI_TEXT_MODEL: "", GEMINI_TEXT_FREE_TIER_ONLY: "false", HF_TOKEN: "", HF_IMAGE_GENERATION_ENABLED: "false", HF_IMAGE_ALLOW_PAID: "false", AI_GENERATION_DAILY_REQUEST_LIMIT: "2", OPENCODE_SERVER_URL: "http://localhost:4096", OPENCODE_SERVER_PASSWORD: "smoke-password", DAILY_JOB_LIMIT: "3", HOST: "127.0.0.1", PORT: String(port), VITE_PORT: String(vitePort), DATA_DIR: dataPath },
   stdio: "pipe",
 });
 server.stdout?.pipe(process.stdout);
@@ -191,6 +191,143 @@ try {
   const rollbackRetry = await importStorySeries(rollbackPackage, rollbackRequestId);
   assert.equal(rollbackRetry.status, 201, "same request can retry after transaction rollback");
   assert.equal(queryCount("SELECT COUNT(*) AS count FROM ai_generation_attempts"), aiAttemptsBeforeStoryImport, "Story Series import makes no AI calls");
+
+  const storySource = {
+    title: "The Long House",
+    storyText: "Exact source line one.\r\nLong story EP2: the final door opens.\nKeep punctuation — and spacing.",
+    language: "id-ID",
+    targetDurationSeconds: 62,
+    dailyCreditsAvailable: 100,
+    animationStyleId: "cinematic-2d-motion-comic",
+    additionalInstructions: "Preserve the source ending.",
+    sourceUrl: "https://example.test/story",
+    rightsNotes: "Test fixture; rights review required.",
+  };
+  const storyDraftRequestId = randomUUID();
+  const createStoryDraft = async (source: unknown, requestId = storyDraftRequestId) => {
+    const response = await fetch(`${baseUrl}/api/story-generation/drafts`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ requestId, source }) });
+    return { status: response.status, body: await response.json() };
+  };
+  const createdStoryDraft = await createStoryDraft(storySource);
+  assert.equal(createdStoryDraft.status, 201, "source story saves before any AI action");
+  const storyDraftId = createdStoryDraft.body.id as string;
+  assert.equal(createdStoryDraft.body.source.storyText, storySource.storyText, "source story text is preserved byte-for-byte as a JS string");
+  const createReplay = await createStoryDraft(storySource);
+  assert.equal(createReplay.status, 200);
+  assert.equal(createReplay.body.id, storyDraftId, "source create retry returns the durable draft");
+  const createConflict = await createStoryDraft({ ...storySource, storyText: `${storySource.storyText} changed` });
+  assert.equal(createConflict.status, 409, "source request ID cannot be reused with changed story");
+  const setLongerTarget = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/production-settings`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ targetDurationSeconds: 70, dailyCreditsAvailable: 100 }) });
+  assert.equal(setLongerTarget.status, 200, "production target can be corrected before analysis");
+  const changedTargetDraft = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}`).then((response) => response.json());
+  assert.equal(changedTargetDraft.source.targetDurationSeconds, 70);
+  assert.equal(changedTargetDraft.source.storyText, storySource.storyText, "target adjustment never changes source story text");
+  const restoreTarget = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/production-settings`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ targetDurationSeconds: 62, dailyCreditsAvailable: 100 }) });
+  assert.equal(restoreTarget.status, 200);
+
+  const storyAiPostFor = async (draftId: string, route: string, body: unknown) => {
+    const response = await fetch(`${baseUrl}/api/story-generation/drafts/${draftId}/${route}`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  };
+  const storyAiPost = (route: string, body: unknown) => storyAiPostFor(storyDraftId, route, body);
+  const storyAiAttemptsBefore = queryCount("SELECT COUNT(*) AS count FROM ai_generation_attempts");
+  const analysisRequestId = randomUUID();
+  const analysisRequest = { requestId: analysisRequestId, model: "mock/story-model" };
+  const analysisResponse = await storyAiPost("analyze", analysisRequest);
+  assert.equal(analysisResponse.status, 200, "test-only mock AI produces a validated story analysis");
+  assert.equal(analysisResponse.body.analysis.schemaVersion, "story-analysis.v1");
+  assert.equal(analysisResponse.body.analysis.recommendedEpisodeCount, 2, "mock recommends story-structure episode count");
+  assert.equal(analysisResponse.body.plan.length, 2);
+  const analysisRetry = await storyAiPost("analyze", analysisRequest);
+  assert.equal(analysisRetry.body.analysis.schemaVersion, "story-analysis.v1", "analysis retry returns stored result");
+
+  const reviewedPlan = analysisResponse.body.plan as Array<Record<string, unknown>>;
+  reviewedPlan[0] = { ...reviewedPlan[0], title: "The Long House · Revised", synopsis: "User-reviewed episode one synopsis." };
+  const savePlanResponse = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/plan`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ episodes: reviewedPlan }) });
+  assert.equal(savePlanResponse.status, 200, "user can edit and persist the episode recommendation");
+  const approvePlanResponse = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/approve-plan`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl } });
+  assert.equal(approvePlanResponse.status, 200, "user approval locks reviewed plan");
+  const lockedPlanEdit = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/plan`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ episodes: reviewedPlan }) });
+  assert.equal(lockedPlanEdit.status, 409, "approved episode plan cannot be silently overwritten");
+
+  const bibleResponse = await storyAiPost("story-bible/generate", { requestId: randomUUID(), model: "mock/story-model" });
+  assert.equal(bibleResponse.status, 200, "test-only mock AI generates a validated Story Bible draft");
+  assert.equal(bibleResponse.body.bibleDraft.schemaVersion, "story-bible.v1");
+  assert.equal(bibleResponse.body.bibleDraft.series.visualStyle.presetId, "cinematic-2d-motion-comic", "default generated Story Bible keeps 2D horror preset");
+  const reviewedBible = structuredClone(bibleResponse.body.bibleDraft);
+  reviewedBible.series.synopsis += " Human-reviewed note.";
+  const saveBibleResponse = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/story-bible`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ draft: reviewedBible }) });
+  assert.equal(saveBibleResponse.status, 200, "Story Bible edits persist before approval");
+  const approveBibleResponse = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/story-bible/approve`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ draft: reviewedBible }) });
+  assert.equal(approveBibleResponse.status, 201, "approved Bible is durably saved to reusable Story Series Library");
+  const approvedBibleResult = await approveBibleResponse.json();
+  const generatedSeriesId = approvedBibleResult.seriesId as string;
+  const savedSourceDetail = await fetch(`${baseUrl}/api/story-series/${generatedSeriesId}`).then((response) => response.json());
+  assert.equal(savedSourceDetail.sourceStory.storyText, storySource.storyText, "series reload retains exact original source separately");
+  assert.equal(savedSourceDetail.sourceStory.sourceUrl, storySource.sourceUrl);
+  assert.equal(savedSourceDetail.sourceStory.rightsNotes, storySource.rightsNotes);
+
+  const episodeOneRequestId = randomUUID();
+  const episodeOne = await storyAiPost("episodes/1/generate", { requestId: episodeOneRequestId, model: "mock/story-model" });
+  assert.equal(episodeOne.status, 200, "selected episode generates through mocked AI");
+  assert.equal(episodeOne.body.package.schemaVersion, "story-series.v1", "episode production uses existing story-series.v1 contract");
+  assert.equal(episodeOne.body.package.episode.scenes.length, 8, "generated episode stays within eight clips");
+  assert.equal(episodeOne.body.package.episode.scenes.reduce((sum: number, scene: { durationSeconds: number }) => sum + scene.durationSeconds, 0), 62, "scene timings exactly fill selected episode target");
+  assert.ok(episodeOne.body.package.episode.scenes.every((scene: { durationSeconds: number }) => scene.durationSeconds <= 8), "each Flow clip stays at or below eight seconds");
+  assert.equal(episodeOne.body.package.productionBudget.estimatedCredits, 80);
+  assert.equal(episodeOne.body.package.productionBudget.reserveCredits, 20);
+  assert.ok(episodeOne.body.package.episode.scenes.every((scene: { googleFlow: { prompt: string } }) => scene.googleFlow.prompt.includes("hand-painted") && scene.googleFlow.prompt.includes("No 3D")), "Flow prompts preserve the locked 2D style");
+  const episodeOneRetry = await storyAiPost("episodes/1/generate", { requestId: episodeOneRequestId, model: "mock/story-model" });
+  assert.deepEqual(episodeOneRetry.body.package, episodeOne.body.package, "episode generation retry replays same saved draft");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM story_generation_requests WHERE request_id = ?", episodeOneRequestId), 1, "episode retry does not create duplicate request records");
+
+  const generatedEpisodeTwo = await storyAiPost("episodes/2/generate", { requestId: randomUUID(), model: "mock/story-model" });
+  assert.equal(generatedEpisodeTwo.status, 200, "next selected episode can generate after episode one handoff");
+  assert.equal(generatedEpisodeTwo.body.package.episode.previousEpisodeSummary, "User-reviewed episode one synopsis.", "episode two uses approved plan and prior episode summary");
+  assert.match(generatedEpisodeTwo.body.package.episode.continuityHandoff.nextEpisodeSetup, /The Long House · Revised/);
+  const reloadedDraft = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}`).then((response) => response.json());
+  assert.equal(reloadedDraft.source.storyText, storySource.storyText, "reload keeps story source unchanged");
+  assert.equal(reloadedDraft.approvedPlan[0].title, "The Long House · Revised", "reload keeps manually reviewed plan");
+  assert.equal(Object.keys(reloadedDraft.episodeDrafts).length, 2, "reload keeps both selected episode drafts");
+  assert.equal(queryCount("SELECT COUNT(*) AS count FROM ai_generation_attempts"), storyAiAttemptsBefore, "mocked Development story workflow records no Gemini request or quota use");
+
+  const editedEpisodePackage = structuredClone(reloadedDraft.episodeDrafts["1"].package);
+  editedEpisodePackage.episode.scenes[0].googleFlow.prompt += " Human prompt edit; preserve this wording.";
+  const promptSave = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}/episodes/1`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ package: editedEpisodePackage }) });
+  assert.equal(promptSave.status, 200, "generated Flow prompt remains editable as draft");
+  const savedEpisodePackage = await fetch(`${baseUrl}/api/story-generation/drafts/${storyDraftId}`).then((response) => response.json());
+  assert.match(savedEpisodePackage.episodeDrafts["1"].package.episode.scenes[0].googleFlow.prompt, /Human prompt edit/);
+  const importedGeneratedOne = await importStorySeries(editedEpisodePackage, randomUUID());
+  assert.equal(importedGeneratedOne.status, 201, "generated episode enters existing Story Series import adapter");
+  assert.equal(importedGeneratedOne.body.project.visualStoryboard.scenes.length, 8);
+  assert.ok(importedGeneratedOne.body.project.visualStoryboard.scenes[0].flowPrompt.includes("Traditional flat 2D hand-painted horror animation"));
+  assert.match(importedGeneratedOne.body.project.visualStoryboard.scenes[0].storySeries.googleFlow.authoredPrompt, /Human prompt edit/);
+  assert.equal(importedGeneratedOne.body.project.visualStoryboard.scenes[0].flowStatus, "prompt-ready", "storyboard remains a draft and generates no Flow media");
+  assert.equal(importedGeneratedOne.body.project.visualAssets.length, 0, "episode generation makes no image asset or automatic media");
+  const importedGeneratedTwo = await importStorySeries(generatedEpisodeTwo.body.package, randomUUID());
+  assert.equal(importedGeneratedTwo.status, 201, "continuation episode uses same production pipeline");
+  const generatedSeriesAfterImport = await fetch(`${baseUrl}/api/story-series/${generatedSeriesId}`).then((response) => response.json());
+  assert.equal(generatedSeriesAfterImport.episodeCount, 2, "generated episodes persist in reusable series library");
+
+  const longSource = { ...storySource, title: "Long target story", targetDurationSeconds: 70 };
+  const longDraftResult = await createStoryDraft(longSource, randomUUID());
+  assert.equal(longDraftResult.status, 201);
+  const longDraftId = longDraftResult.body.id as string;
+  const longAnalysis = await storyAiPostFor(longDraftId, "analyze", { requestId: randomUUID(), model: "mock/story-model" });
+  assert.equal(longAnalysis.body.plan[0].estimatedFlowClips, 9, "70-second target reports nine clips, not eight fabricated clips");
+  assert.equal(longAnalysis.body.plan[0].estimatedCredits, 90);
+  const longPlanSave = await fetch(`${baseUrl}/api/story-generation/drafts/${longDraftId}/plan`, { method: "PUT", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ episodes: longAnalysis.body.plan }) });
+  assert.equal(longPlanSave.status, 200);
+  const longPlanApproval = await fetch(`${baseUrl}/api/story-generation/drafts/${longDraftId}/approve-plan`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl } });
+  assert.equal(longPlanApproval.status, 200, "over-limit plan can be reviewed and approved while episode generation remains blocked");
+  const longBible = await storyAiPostFor(longDraftId, "story-bible/generate", { requestId: randomUUID(), model: "mock/story-model" });
+  assert.equal(longBible.status, 200);
+  const longBibleApproval = await fetch(`${baseUrl}/api/story-generation/drafts/${longDraftId}/story-bible/approve`, { method: "POST", headers: { "content-type": "application/json", origin: baseUrl }, body: JSON.stringify({ draft: longBible.body.bibleDraft }) });
+  assert.equal(longBibleApproval.status, 201);
+  const blockedLongEpisode = await storyAiPostFor(longDraftId, "episodes/1/generate", { requestId: randomUUID(), model: "mock/story-model" });
+  assert.equal(blockedLongEpisode.status, 409);
+  assert.equal(blockedLongEpisode.body.code, "flow-clip-limit", "over-64-second episode is blocked before AI generation");
+  assert.equal(blockedLongEpisode.body.budget.plannedClips, 9);
 
   viteServer = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
     cwd: process.cwd(),

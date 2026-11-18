@@ -696,7 +696,7 @@ function App() {
     setMessage("");
   }
 
-  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" }>) {
+  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>) {
     if (busy || ttsBusy || ttsLoading) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
@@ -2206,7 +2206,7 @@ function App() {
           </button>
           <nav className="topbar-nav" aria-label="Navigasi utama">
             <button type="button" className={`nav-home ${view === "dashboard" ? "active" : ""}`} onClick={() => void goToDashboard()} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "dashboard" ? "page" : undefined} aria-label="Beranda"><House aria-hidden="true" size={17} /><span>Beranda</span></button>
-            <button type="button" className={`nav-home ${view === "series-library" || view === "series-detail" ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "series-library" || view === "series-detail" ? "page" : undefined} aria-label="Story Series"><BookOpen aria-hidden="true" size={17}/><span>Series</span></button>
+            <button type="button" className={`nav-home ${view === "series-library" || view === "series-detail" || view === "series-generation" ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} disabled={busy || ttsBusy || ttsLoading} aria-current={view === "series-library" || view === "series-detail" || view === "series-generation" ? "page" : undefined} aria-label="Story Series"><BookOpen aria-hidden="true" size={17}/><span>Series</span></button>
           </nav>
         </div>
         <div className="topbar-actions">
@@ -2220,7 +2220,7 @@ function App() {
       {message && <div className="toast" role="status"><span>{message}</span><button onClick={() => setMessage("")} aria-label="Tutup">×</button></div>}
 
       {view === "dashboard" && <Dashboard projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
-      {(view === "series-library" || view === "series-detail") && <StorySeriesPage route={route} busy={busy || ttsBusy || ttsLoading} onNavigate={(target) => void openStorySeries(target)} onOpenProject={(id) => void openProject(id)} />}
+      {(view === "series-library" || view === "series-detail" || view === "series-generation") && <StorySeriesPage route={route} busy={busy || ttsBusy || ttsLoading} onNavigate={(target) => void openStorySeries(target)} onOpenProject={(id) => void openProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
         <div className="page-heading"><div><div className="eyebrow">BUAT VIDEO</div><h1>Create video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
           <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung api</button>

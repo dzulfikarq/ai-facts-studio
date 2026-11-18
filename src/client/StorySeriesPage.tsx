@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BookOpen, Film, ImagePlus, Upload } from "lucide-react";
 import type { AppRoute } from "./routes";
 import { appRouteHref } from "./routes";
+import { StoryGenerationStart, StoryGenerationWorkspace } from "./StoryGenerationPage";
 import { adaptStorySeriesEpisode, storySeriesPackageSchema, type StorySeries, type StorySeriesPackage, type StorySeriesReferenceKind } from "../domain/story-series";
 
-type Route = Extract<AppRoute, { view: "series-library" | "series-detail" }>;
+type Route = Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>;
 type Episode = {
   id: string;
   episodeNumber: number;
@@ -27,6 +28,8 @@ type SeriesDetail = StorySeries & {
   locations: Array<EntityWithImage<StorySeries["locations"][number]>>;
   props: Array<EntityWithImage<StorySeries["props"][number]>>;
   episodes: Episode[];
+  generationDraftId?: string;
+  sourceStory?: { storyText: string; sourceUrl: string; rightsNotes: string };
 };
 type SeriesListItem = Pick<SeriesDetail, "id" | "slug" | "title" | "logline" | "plannedEpisodeCount" | "episodes"> & { episodeCount: number };
 
@@ -53,6 +56,7 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
   const [referenceBusyId, setReferenceBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [createMode, setCreateMode] = useState<"story" | "json">("story");
   const parsed = useMemo(() => {
     if (!draft.trim()) return null;
     try {
@@ -70,6 +74,7 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
 
   useEffect(() => {
     let current = true;
+    if (route.view === "series-generation") return () => { current = false; };
     setLoading(true);
     setError("");
     const url = route.view === "series-detail" ? `/api/story-series/${encodeURIComponent(route.seriesId)}` : "/api/story-series";
@@ -122,6 +127,8 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
     onNavigate(target);
   }
 
+  if (route.view === "series-generation") return <StoryGenerationWorkspace draftId={route.draftId} onNavigate={onNavigate} onOpenProject={onOpenProject} />;
+
   if (route.view === "series-detail") {
     if (loading && !detail) return <section className="page layout-container series-page" role="status">Memuat Story Series…</section>;
     if (!detail) return <section className="page layout-container series-page"><p className="workflow-alert attention">{error || "Story Series tidak ditemukan."}</p><a className="button button-light" href="/series" onClick={(event) => handleLink(event, { view: "series-library", slug: null })}><ArrowLeft size={16}/>Kembali ke Series</a></section>;
@@ -132,9 +139,10 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
       { kind: "props", items: detail.props },
     ];
     return <section className="page layout-container series-page">
-      <div className="series-page-actions"><a className="button button-light" href="/series" onClick={(event) => handleLink(event, { view: "series-library", slug: null })}><ArrowLeft size={16}/>Series Library</a><a className="button button-primary" href={appRouteHref(continueRoute)} onClick={(event) => handleLink(event, continueRoute)}>Import episode JSON</a></div>
+      <div className="series-page-actions"><a className="button button-light" href="/series" onClick={(event) => handleLink(event, { view: "series-library", slug: null })}><ArrowLeft size={16}/>Series Library</a><div className="series-page-actions">{detail.generationDraftId && <a className="button button-primary" href={appRouteHref({ view: "series-generation", draftId: detail.generationDraftId })} onClick={(event) => handleLink(event, { view: "series-generation", draftId: detail.generationDraftId! })}>Continue Generate from Story</a>}<a className="button button-light" href={appRouteHref(continueRoute)} onClick={(event) => handleLink(event, continueRoute)}>Import episode JSON</a></div></div>
       <header className="series-heading"><div><span className="eyebrow">STORY SERIES · {detail.genre.join(" · ").toUpperCase()}</span><h1>{detail.title}</h1><p>{detail.logline}</p></div><span className="project-total">{detail.episodes.length}/{detail.plannedEpisodeCount} episodes</span></header>
       {error && <p className="workflow-alert danger" role="alert">{error}</p>}{notice && <p className="workflow-alert success" role="status">{notice}</p>}
+      {detail.sourceStory && <section className="series-panel"><span className="eyebrow">SOURCE & RIGHTS · ORIGINAL TEXT STORED SEPARATELY</span><p><strong>Source URL:</strong> {detail.sourceStory.sourceUrl || "Not provided"}</p><p><strong>Rights notes:</strong> {detail.sourceStory.rightsNotes || "Not provided; review rights before publication."}</p><details><summary>View preserved source story</summary><p className="series-source-copy">{detail.sourceStory.storyText}</p></details><small>Copied stories are not automatically copyright-free.</small></section>}
       <section className="series-overview-grid">
         <article className="series-panel"><span className="eyebrow">STORY BIBLE</span><h2>Setting</h2><p>{detail.storyBible.setting}</p><h3>Central mystery</h3><p>{detail.storyBible.centralMystery}</p><h3>Hidden truth</h3><p>{detail.storyBible.hiddenTruth}</p></article>
         <article className="series-panel"><span className="eyebrow">WORLD RULES</span><ul>{detail.storyBible.worldRules.map((rule, index) => <li key={index}>{rule}</li>)}</ul><h3>Continuity rules</h3><ul>{detail.storyBible.continuityRules.map((rule, index) => <li key={index}>{rule}</li>)}</ul></article>
@@ -156,10 +164,11 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
 
   const parsedPackage = parsed?.success ? parsed.data : null;
   return <section className="page layout-container series-page">
-    <header className="series-heading"><div><span className="eyebrow">FICTION PRODUCTION</span><h1>Story Series</h1><p>Import Claude Free JSON tanpa AI call. Episode lanjut memakai Story Bible dan pipeline produksi yang sama.</p></div><BookOpen aria-hidden="true" size={32}/></header>
+    <header className="series-heading"><div><span className="eyebrow">FICTION PRODUCTION</span><h1>Story Series</h1><p>Analisis, episode plan, dan Story Bible butuh aksi AI eksplisit serta approval pengguna. Import JSON tetap deterministik.</p></div><BookOpen aria-hidden="true" size={32}/></header>
     {route.slug && <div className="workflow-alert success" role="status">Lanjutkan series <strong>{route.slug}</strong>: unggah JSON episode berikutnya dengan Story Bible yang sama.</div>}
     {error && <p className="workflow-alert danger" role="alert">{error}</p>}{notice && <p className="workflow-alert success" role="status">{notice}</p>}
-    <div className="series-library-layout">
+    <div className="series-mode-switch" role="group" aria-label="Pilih cara membuat Story Series"><button type="button" aria-pressed={createMode === "story"} className={createMode === "story" ? "selected" : ""} onClick={() => setCreateMode("story")}>Generate from Story<span>Analisis source dan rencanakan episode dengan AI.</span></button><button type="button" aria-pressed={createMode === "json"} className={createMode === "json" ? "selected" : ""} onClick={() => setCreateMode("json")}>Import JSON<span>Validasi package story-series.v1 tanpa AI.</span></button></div>
+    {createMode === "story" ? <StoryGenerationStart onOpenDraft={(id) => onNavigate({ view: "series-generation", draftId: id })} /> : <div className="series-library-layout">
       <section className="series-panel series-import-panel"><div className="series-section-heading"><div><span className="eyebrow">IMPORT PREVIEW</span><h2>Episode package</h2><p>Validasi lokal dulu; simpan baru setelah Anda konfirmasi.</p></div><Upload aria-hidden="true" size={21}/></div>
         <button type="button" className="button button-light series-file-picker" onClick={() => packageInput.current?.click()} disabled={busy || appBusy}><Upload aria-hidden="true" size={15}/>Pilih JSON</button><input ref={packageInput} className="series-file-input" type="file" accept=".json,application/json" disabled={busy || appBusy} onChange={(event) => {
           const file = event.currentTarget.files?.[0];
@@ -176,10 +185,10 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
           </details>
           <button type="button" className="button button-primary full-button" onClick={() => void importPackage()} disabled={busy || appBusy || !promptPreview.scenes.length || Boolean(promptPreview.error)}>{busy || appBusy ? "Importing episode…" : "Import episode to Video Workspace"}</button></div>}
       </section>
-      <section className="series-panel series-library-panel"><div className="series-section-heading"><div><span className="eyebrow">SAVED SERIES</span><h2>Series Library</h2></div><span className="count-chip">{loading ? "…" : seriesList.length}</span></div>
-        {loading ? <p role="status">Memuat series…</p> : seriesList.length ? <div className="series-library-list">{seriesList.map((item) => <a className="series-library-card" key={item.id} href={appRouteHref({ view: "series-detail", seriesId: item.id })} onClick={(event) => handleLink(event, { view: "series-detail", seriesId: item.id })}><span className="series-library-icon"><BookOpen aria-hidden="true" size={19}/></span><span><strong>{item.title}</strong><small>{item.episodeCount}/{item.plannedEpisodeCount} episodes · {item.slug}</small><span>{item.logline}</span></span><b aria-hidden="true">→</b></a>)}</div> : <div className="workflow-empty"><strong>No saved series yet</strong><span>Import first Story Series package to start.</span></div>}
-      </section>
-    </div>
+    </div>}
+    <section className="series-panel series-library-panel"><div className="series-section-heading"><div><span className="eyebrow">SAVED SERIES</span><h2>Series Library</h2></div><span className="count-chip">{loading ? "…" : seriesList.length}</span></div>
+      {loading ? <p role="status">Memuat series…</p> : seriesList.length ? <div className="series-library-list">{seriesList.map((item) => <a className="series-library-card" key={item.id} href={appRouteHref({ view: "series-detail", seriesId: item.id })} onClick={(event) => handleLink(event, { view: "series-detail", seriesId: item.id })}><span className="series-library-icon"><BookOpen aria-hidden="true" size={19}/></span><span><strong>{item.title}</strong><small>{item.episodeCount}/{item.plannedEpisodeCount} episodes · {item.slug}</small><span>{item.logline}</span></span><b aria-hidden="true">→</b></a>)}</div> : <div className="workflow-empty"><strong>No saved series yet</strong><span>Approve a Story Bible or import first package to start.</span></div>}
+    </section>
   </section>;
 }
 

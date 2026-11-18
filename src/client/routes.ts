@@ -8,6 +8,7 @@ export type AppRoute =
   | { view: "create" }
   | { view: "series-library"; slug: string | null }
   | { view: "series-detail"; seriesId: string }
+  | { view: "series-generation"; draftId: string }
   | { view: "settings"; section: SettingsSection }
   | { view: "workspace"; projectId: string; step: WorkspaceStep; sceneId: string | null };
 
@@ -15,6 +16,13 @@ export function parseAppRoute(input: string | URL): AppRoute {
   const url = input instanceof URL ? input : new URL(input, "http://localhost");
   if (url.pathname === "/create") return { view: "create" };
   if (url.pathname === "/series" || url.pathname === "/series/") return { view: "series-library", slug: url.searchParams.get("slug") };
+  const generationMatch = url.pathname.match(/^\/series\/generate\/([^/]+)\/?$/);
+  if (generationMatch) {
+    try {
+      const draftId = decodeURIComponent(generationMatch[1]!);
+      if (draftId && !draftId.includes("/")) return { view: "series-generation", draftId };
+    } catch { return { view: "dashboard" }; }
+  }
   const seriesMatch = url.pathname.match(/^\/series\/([^/]+)\/?$/);
   if (seriesMatch) {
     try {
@@ -43,6 +51,7 @@ export function appRouteHref(route: AppRoute): string {
   if (route.view === "create") return "/create";
   if (route.view === "series-library") return route.slug ? `/series?slug=${encodeURIComponent(route.slug)}` : "/series";
   if (route.view === "series-detail") return `/series/${encodeURIComponent(route.seriesId)}`;
+  if (route.view === "series-generation") return `/series/generate/${encodeURIComponent(route.draftId)}`;
   if (route.view === "settings") return route.section === "general" ? "/settings" : `/settings?section=${route.section}`;
   const path = `/projects/${encodeURIComponent(route.projectId)}${route.step === "video-editor" ? "/editor" : ""}`;
   const query = new URLSearchParams();

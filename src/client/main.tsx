@@ -701,17 +701,13 @@ function App() {
     setMessage("");
   }
 
-  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>, sectionId?: "series-library" | "saved-story-drafts") {
+  async function openStorySeries(target: Extract<AppRoute, { view: "series-library" | "series-detail" | "series-generation" }>) {
     if (busy || ttsBusy || ttsLoading) return;
     if (!await confirmLeaveCreate()) return;
     if (!await saveBeforeLeavingWorkspace()) return;
     setCreateDraftUnsaved(false);
     commitRoute(target);
     setMessage("");
-    if (sectionId) {
-      window.history.replaceState(window.history.state, "", `${appRouteHref(target)}#${sectionId}`);
-      window.requestAnimationFrame(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }));
-    }
   }
 
   async function openSettings(section: SettingsSection = "general") {
@@ -2205,6 +2201,13 @@ function App() {
   const currentJob = project?.latestJobContentCurrent && project.latestJob?.rendererVersion === RENDERER_VERSION ? project.latestJob : null;
   const createOutroId = selectedCreateOutroId === undefined ? outroLibrary.defaultOutroId : selectedCreateOutroId;
   const createOutroAsset = createOutroId ? outroLibrary.outros.find((asset) => asset.id === createOutroId) ?? null : null;
+  const topbarContext = route.view === "dashboard" ? dashboardSection === "queue" ? "Video Queue" : dashboardSection === "completed" ? "Completed" : "Dashboard"
+    : route.view === "create" ? "Create Video"
+      : route.view === "series-library" ? "Story Series"
+        : route.view === "series-detail" ? "Series details"
+          : route.view === "series-generation" ? "Generate from Story"
+            : route.view === "settings" ? "Settings"
+              : project?.researchPackage.title || "Video Workspace";
 
   return <div className={`app-shell sidebar-app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""} ${isSeriesRoute ? "series-app-shell" : ""} ${view === "create" ? "create-app-shell" : ""}`}>
     <aside className="app-sidebar">
@@ -2213,8 +2216,6 @@ function App() {
         <button type="button" className={`app-sidebar-link ${isDashboardRoute ? "active" : ""}`} onClick={() => void goToDashboard()} aria-current={view === "workspace" ? "location" : isDashboardRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><House aria-hidden="true" size={18}/><span>Dashboard</span></button>
         <button type="button" className={`app-sidebar-link ${view === "create" ? "active" : ""}`} onClick={() => void openCreate()} aria-current={view === "create" ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><Sparkles aria-hidden="true" size={18}/><span>AI Facts</span></button>
         <button type="button" className={`app-sidebar-link ${isSeriesRoute ? "active" : ""}`} onClick={() => void openStorySeries({ view: "series-library", slug: null })} aria-current={isSeriesRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><Layers3 aria-hidden="true" size={18}/><span>Story Series</span></button>
-        <button type="button" className="app-sidebar-link" onClick={() => void openStorySeries({ view: "series-library", slug: null }, "series-library")} disabled={busy || ttsBusy || ttsLoading}><Film aria-hidden="true" size={18}/><span>Series Library</span></button>
-        <button type="button" className="app-sidebar-link" onClick={() => void openStorySeries({ view: "series-library", slug: null }, "saved-story-drafts")} disabled={busy || ttsBusy || ttsLoading}><FileText aria-hidden="true" size={18}/><span>Drafts</span></button>
         <span className="app-sidebar-divider"/>
         <span className="app-sidebar-label">Production</span>
         <button type="button" className={`app-sidebar-link ${isQueueRoute ? "active" : ""}`} onClick={() => void goToDashboard("queue")} aria-current={isQueueRoute ? "page" : undefined} disabled={busy || ttsBusy || ttsLoading}><Play aria-hidden="true" size={18}/><span>Video Queue</span></button>
@@ -2231,6 +2232,10 @@ function App() {
     </aside>
     <main className={`main-area sidebar-main-area ${isSeriesRoute ? "series-main-area" : ""}`}>
       <header className={`topbar ${isSeriesRoute ? "series-topbar" : ""}`}>
+        <div className="topbar-context">
+          <span className="topbar-context-mark"><Sparkles aria-hidden="true" size={17}/></span>
+          <span className="topbar-context-copy"><small>AI FACTS STUDIO</small><strong>{topbarContext}</strong></span>
+        </div>
         <div className="topbar-actions">
           {view === "workspace" && activeStep !== "video-editor" && !saved && <button type="button" className="button button-primary topbar-save" onClick={() => void saveProject()} disabled={busy} aria-label="Simpan perubahan" title="Simpan perubahan"><SaveIcon aria-hidden="true" size={16} /><span>Simpan</span></button>}
           <ThemeSwitcher preference={theme} onChange={setTheme} />
@@ -2245,10 +2250,10 @@ function App() {
         <div className="page-heading create-page-heading"><div className="create-heading-copy"><div className="eyebrow">BUAT VIDEO</div><h1>Create Video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div></div>
         <div className="create-mode-switch" role="group" aria-label="Mode pembuatan project">
           <button type="button" aria-pressed={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>
-            <span className="create-mode-icon"><Sparkles aria-hidden="true" size={18}/></span><span className="create-mode-copy"><strong>Generate with AI</strong><small>Riset dan storyboard draft dibuat setelah Anda klik.</small></span>
+            <Sparkles aria-hidden="true" size={17}/>Generate with AI
           </button>
           <button type="button" aria-pressed={createMode === "manual"} className={createMode === "manual" ? "selected" : ""} onClick={() => setCreateMode("manual")}>
-            <span className="create-mode-icon"><FileText aria-hidden="true" size={18}/></span><span className="create-mode-copy"><strong>Buat Manual</strong><small>Tanpa AI. Susun storyboard sendiri di project.</small></span>
+            <FileText aria-hidden="true" size={17}/>Buat Manual
           </button>
         </div>
         <div className="create-workspace-grid">
@@ -2614,7 +2619,6 @@ function SettingsPage({ section, onSection, status, projects, projectsLoaded, se
 
   return <section className="page layout-container settings-page">
     <header className="settings-page-heading">
-      <span className="settings-heading-icon"><SettingsIcon aria-hidden="true" size={21}/></span>
       <div><span className="eyebrow">WORKSPACE SETTINGS</span><h1>Settings</h1><p>Manage appearance, AI generation, and project defaults.</p></div>
     </header>
     <div className="settings-layout">

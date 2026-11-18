@@ -149,7 +149,8 @@ try {
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "project dashboard");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Dashboard", "dashboard highlights its global sidebar item");
-  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].map((button) => button.textContent?.trim())), ["Dashboard", "AI Facts", "Story Series", "Series Library", "Drafts", "Video Queue", "Completed", "Settings", "Help & Support"], "sidebar matches reference navigation structure");
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].map((button) => button.textContent?.trim())), ["Dashboard", "AI Facts", "Story Series", "Video Queue", "Completed", "Settings", "Help & Support"], "sidebar omits redundant Series Library and Drafts links");
+  assert.equal(await page.evaluate(() => document.querySelector(".topbar-context-copy strong")?.textContent?.trim()), "Dashboard", "top bar identifies current page");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link:last-child")?.disabled), true, "unavailable Help & Support is not a fake live route");
   assert.equal(await page.evaluate(() => Boolean(document.querySelector(".app-sidebar-quota"))), true, "sidebar shows live render quota card");
   await page.goto({ url: `${viteUrl}/?section=queue`, timeout: 90_000 });
@@ -202,11 +203,6 @@ try {
     ];
   });
   assert.ok(languageDurationBounds[0]?.[0] === languageDurationBounds[1]?.[0] && languageDurationBounds[0]?.[1] === languageDurationBounds[1]?.[1], `language and duration controls align vertically: ${JSON.stringify(languageDurationBounds)}`);
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "Series Library")?.click());
-  await waitFor(() => page.evaluate(() => location.hash === "#series-library"), "Series Library sidebar section target");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "Drafts")?.click());
-  await waitFor(() => page.evaluate(() => location.hash === "#saved-story-drafts"), "Drafts sidebar section target");
-  await page.evaluate(() => { history.replaceState(history.state, "", "/series"); window.scrollTo(0, 0); });
   assert.equal(await page.evaluate(() => document.querySelector<HTMLSelectElement>('.series-form-field select')?.value), "cinematic-2d-motion-comic", "new story source defaults to locked hand-painted 2D horror style");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLOptionElement>('.series-form-field select option')].some((option) => option.value === "stylized-3d-cartoon")), false, "Generate from Story does not offer 3D style fallback");
   await page.setViewport({ width: 1672, height: 941, deviceScaleFactor: 1 });
@@ -224,6 +220,7 @@ try {
   await waitFor(() => page.evaluate(() => document.documentElement.dataset.themePreference === "system"), "Story Series returns to system theme");
   for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 900 }, { width: 768, height: 900 }, { width: 375, height: 844 }, { width: 320, height: 844 }]) {
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
+    await assertSharedPageShell(`Story Series at ${width}px`);
     const layout = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -333,6 +330,7 @@ try {
   assert.equal(await page.evaluate(() => [...document.querySelectorAll<HTMLLabelElement>(".series-plan-card .series-form-field")].find((label) => label.textContent?.includes("Google Flow animation prompt"))?.querySelector("textarea")?.value.includes("Browser-reviewed prompt edit")), true, "Flow prompt edit survives browser reload");
   for (const width of [390, 360, 320]) {
     await page.setViewport({ width, height: 844, deviceScaleFactor: 1 });
+    await assertSharedPageShell(`Generate from Story at ${width}px`);
     const pageWidth = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
@@ -441,10 +439,54 @@ try {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }, { query: selector, nextValue: value });
+  async function assertSharedPageShell(view: string) {
+    const layout = await page.evaluate(() => {
+      const container = document.querySelector<HTMLElement>(".page.layout-container");
+      const main = document.querySelector<HTMLElement>(".main-area");
+      const topbar = document.querySelector<HTMLElement>(".topbar");
+      if (!container || !main || !topbar) return null;
+      const containerStyle = getComputedStyle(container);
+      const topbarStyle = getComputedStyle(topbar);
+      const containerRect = container.getBoundingClientRect();
+      const mainRect = main.getBoundingClientRect();
+      const title = container.querySelector<HTMLElement>("h1,.workspace-heading .title-input");
+      const titleStyle = title ? getComputedStyle(title) : null;
+      return {
+        width: innerWidth,
+        margins: [parseFloat(containerStyle.marginLeft), parseFloat(containerStyle.marginRight)],
+        padding: [parseFloat(containerStyle.paddingLeft), parseFloat(containerStyle.paddingRight)],
+        pageInsets: [containerRect.left - mainRect.left, mainRect.right - containerRect.right],
+        topbarPadding: [parseFloat(topbarStyle.paddingLeft), parseFloat(topbarStyle.paddingRight)],
+        topbarMinHeight: parseFloat(topbarStyle.minHeight),
+        title: title && titleStyle ? {
+          offset: title.getBoundingClientRect().left - containerRect.left,
+          fontSize: parseFloat(titleStyle.fontSize),
+          fontWeight: titleStyle.fontWeight,
+          lineHeight: titleStyle.lineHeight,
+          margin: [parseFloat(titleStyle.marginTop), parseFloat(titleStyle.marginBottom)],
+        } : null,
+      };
+    });
+    assert.ok(layout, `${view} renders shared page shell`);
+    const gutter = Math.min(56, Math.max(18, layout.width * 0.04));
+    assert.ok(layout.margins.every((value) => Math.abs(value - gutter) < 0.1), `${view} uses shared page gutter: ${JSON.stringify(layout)}`);
+    assert.deepEqual(layout.padding, [0, 0], `${view} adds no inner horizontal page padding`);
+    assert.ok(layout.pageInsets.every((value) => Math.abs(value - gutter) < 0.1), `${view} content aligns to shared page edges: ${JSON.stringify(layout)}`);
+    assert.ok(layout.topbarPadding.every((value) => Math.abs(value - gutter) < 0.1), `${view} topbar aligns to page gutter: ${JSON.stringify(layout)}`);
+    assert.equal(layout.topbarMinHeight, layout.width <= 560 ? 44 : layout.width <= 1100 ? 48 : 60, `${view} uses shared responsive topbar height`);
+    if (layout.title) {
+      const expectedSize = Math.max(28, Math.min(32, layout.width * 0.022));
+      assert.ok(Math.abs(layout.title.offset) < 0.1, `${view} title aligns to page content: ${JSON.stringify(layout.title)}`);
+      assert.ok(Math.abs(layout.title.fontSize - expectedSize) < 0.1, `${view} uses shared page title size: ${JSON.stringify(layout.title)}`);
+      assert.equal(layout.title.fontWeight, "700", `${view} uses shared page title weight`);
+      assert.deepEqual(layout.title.margin, [6, 8], `${view} uses shared page title margins`);
+    }
+  }
   const assertResponsiveNoOverflow = async (view: string) => {
     for (const width of [1440, 1280, 1024, 768, 390, 375, 360, 320]) {
       await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
       await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await assertSharedPageShell(`${view} at ${width}px`);
       const metrics = await page.evaluate(() => ({
         width: innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
@@ -475,6 +517,12 @@ try {
   await captureViewport("create-light-desktop.png");
   await assertResponsiveNoOverflow("Create Video");
   assert.equal(await page.evaluate(() => Boolean(document.querySelector(".create-heading-actions,.create-hero-art") || [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api")))), false, "Create Video omits unused header art and sample shortcut");
+  const createModeSwitch = await page.evaluate(() => {
+    const group = document.querySelector<HTMLElement>(".create-mode-switch");
+    const selected = group?.querySelector<HTMLButtonElement>("button.selected");
+    return group && selected ? { width: group.getBoundingClientRect().width, columns: getComputedStyle(group).gridTemplateColumns.split(" ").length, buttonHeight: selected.getBoundingClientRect().height, selectedBackground: getComputedStyle(selected).backgroundColor } : null;
+  });
+  assert.ok(createModeSwitch && createModeSwitch.width <= 390 && createModeSwitch.columns === 2 && createModeSwitch.buttonHeight === 40, `Create Video uses compact Story Series segmented switch: ${JSON.stringify(createModeSwitch)}`);
   assert.equal(await page.evaluate(() => {
     const aiAdvanced = document.querySelector(".ai-advanced-flow")?.closest(".create-primary-column");
     const importAdvanced = document.querySelector(".create-import-advanced")?.closest(".create-options-column");
@@ -568,6 +616,7 @@ try {
   assert.equal(generationAttemptCount(), aiAttemptsBeforeManualCreate, "manual project create makes no AI research-generation request");
   await page.goto({ url: `${viteUrl}/projects/${manualProject.id}`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".scene-editor") && document.querySelectorAll(".scene-row").length === 1)), "manual project reload restores Materials & Storyboard");
+  await assertSharedPageShell("Manual workspace");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Dashboard", "project workspace keeps global sidebar and parent item active");
   const originalManualSceneId = manualProject.researchPackage.scenes[0].id as string;
   await clickButton(".storyboard-actions button", "add scene to manual project");
@@ -992,6 +1041,7 @@ try {
 
   for (const width of [1280, 1024, 768, 390, 360, 320]) {
     await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
+    await assertSharedPageShell(`Video Editor at ${width}px`);
     const viewport = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));
     assert.ok(viewport.scrollWidth <= viewport.width, `editor has no page overflow at ${width}px: ${JSON.stringify(viewport)}`);
     if (width === 390 || width === 360) await captureViewport(`video-editor-${width}px.png`);

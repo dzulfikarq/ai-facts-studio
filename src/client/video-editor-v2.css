@@ -215,7 +215,7 @@
   .editor-active .main-area { height: auto; min-height: 100dvh; overflow: visible; }
   .editor-active .topbar { position: sticky; }
   .video-editor-step-panel { display: block; }
-  .video-editor-workspace { flex: none; display: block; overflow: visible; padding-inline: 12px !important; }
+  .video-editor-workspace { flex: none; display: block; overflow: visible; }
   .video-editor-v2 { height: auto; min-height: 0; }
   .video-editor-layout { overflow: visible; }
   .video-editor-toolbar { align-items: flex-start; flex-direction: column; }
@@ -237,7 +237,6 @@
   .editor-inspector-content { grid-template-columns: minmax(0,1fr); }
 }
 @media (max-width: 520px) {
-  .video-editor-workspace { margin-inline: 0 !important; padding: 4px 8px 12px !important; }
   .video-editor-title-group { gap: 6px; }
   .video-editor-title input { font-size: 14px; }
   .editor-save-state { font-size: 12px; }

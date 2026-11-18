@@ -15,7 +15,7 @@ import type { VisualAsset } from "../domain/visual-assets";
 import { isAnimatedMediaFile, type SceneMedia } from "../domain/scene-media";
 import type { OutroLibraryAsset, OutroSelection } from "../domain/outro";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
-import { DEFAULT_ANIMATION_STYLE_ID, getAnimationStylePreset, type AnimationStyleId } from "../domain/animation-styles";
+import { animationStylePromptIsStale, DEFAULT_ANIMATION_STYLE_ID, getAnimationStylePreset, type AnimationStyleId } from "../domain/animation-styles";
 import type { OpenverseImage, ReusableSceneInput, TablerIconEntry } from "../domain/asset-library";
 import type { AssetPlacement, ReusableSceneEntry } from "./SmartAssetLibraryDialog";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
@@ -1353,10 +1353,16 @@ function App() {
   }
 
   async function applyFlowStyleLock(prompts: Array<{ sceneId: string; prompt: string }>) {
-    if (!project || busy) return;
-    if (project.visualStoryboard.scenes.some((scene) => scene.flowPrompt) && !await askConfirmation({
+    if (!project || busy || !prompts.length) return;
+    const previewScenes = prompts.flatMap(({ sceneId, prompt }) => {
+      const scene = project.visualStoryboard.scenes.find((item) => item.sceneId === sceneId);
+      return scene ? [{ sceneId, title: scene.headline, prompt }] : [];
+    });
+    if (!previewScenes.length) return;
+    if (!await askConfirmation({
       title: "Buat ulang prompt Google Flow?",
-      message: "Prompt scene terpilih akan dibuat ulang memakai Gaya Animasi dan Style Lock project. Media, visual, serta approval tidak diubah.",
+      message: "Tinjau prompt lengkap per scene sebelum menerapkan. Belum ada media, visual, atau approval yang diubah.",
+      content: <div className="flow-prompt-review"><strong>{previewScenes.length} prompt · {getAnimationStylePreset(project.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID).name}</strong>{previewScenes.map((item) => <details key={item.sceneId}><summary>{item.sceneId} · {item.title}</summary><textarea readOnly rows={8} value={item.prompt} aria-label={`Pratinjau prompt Google Flow ${item.sceneId}`}/></details>)}</div>,
       confirmLabel: "Buat ulang prompt",
       cancelLabel: "Pertahankan prompt",
       tone: "warning",
@@ -1366,7 +1372,10 @@ function App() {
       const prompt = byScene.get(scene.sceneId);
       if (!prompt) return scene;
       const hasImage = compositionForVisualScene(current.visualStoryboard, scene).layers.some((layer) => layer.nodes.some((node) => node.type === "image" || node.type === "group" && node.children.some((child) => child.type === "image")));
-        return { ...scene, flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowPromptAnimationStyleId: scene.flowVisualMode === "animated-video" ? current.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID : undefined, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
+      const storySeries = scene.storySeries && !scene.storySeries.googleFlow.authoredPrompt && scene.flowPrompt
+        ? { ...scene.storySeries, googleFlow: { ...scene.storySeries.googleFlow, authoredPrompt: scene.flowPrompt } }
+        : scene.storySeries;
+      return { ...scene, ...(storySeries ? { storySeries } : {}), flowPrompt: prompt, flowPromptMode: scene.flowVisualMode, flowPromptAnimationStyleId: scene.flowVisualMode === "animated-video" ? current.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID : undefined, flowStatus: hasImage || scene.sceneMedia ? scene.flowStatus : "prompt-ready" };
     }) } } : current);
     setSaved(false);
     setMessage(`${prompts.length} prompt Google Flow diperbarui. Media, visual, dan approval tidak berubah.`);
@@ -1376,7 +1385,7 @@ function App() {
     if (!project || !research) return;
     const storyboard = project.visualStoryboard;
     const animationStyleId = project.animationStyleId ?? DEFAULT_ANIMATION_STYLE_ID;
-    const prompts = storyboard.scenes.filter((scene) => scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && scene.flowPrompt && scene.flowPromptAnimationStyleId !== animationStyleId).map((scene) => {
+    const prompts = storyboard.scenes.filter((scene) => scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && animationStylePromptIsStale(scene.flowPrompt, scene.flowPromptAnimationStyleId, animationStyleId)).map((scene) => {
       const index = storyboard.scenes.findIndex((item) => item.sceneId === scene.sceneId);
       const previous = storyboard.scenes.slice(0, index).reverse().find((item) => item.flowPrompt || compositionForVisualScene(storyboard, item).layers.some((layer) => layer.nodes.some((node) => node.type === "image")));
       return {

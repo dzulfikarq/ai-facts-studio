@@ -141,6 +141,31 @@ try {
   await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "project dashboard");
+  const storySeriesJson = await readFile("fixtures/story-series/bilik-empat-episode-01.json", "utf8");
+  await page.goto({ url: `${viteUrl}/series`, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => Boolean(document.querySelector<HTMLTextAreaElement>(".series-json-field textarea"))), "Story Series import preview page");
+  await page.evaluate((json) => {
+    const input = document.querySelector<HTMLTextAreaElement>(".series-json-field textarea")!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(input, json);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, storySeriesJson);
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".series-flow-prompt-list textarea").length === 8), "all eight Story Series Flow prompt previews");
+  const storyPrompts = await page.evaluate(() => [...document.querySelectorAll<HTMLTextAreaElement>(".series-flow-prompt-list textarea")].map((input) => input.value));
+  assert.ok(storyPrompts.every((prompt) => prompt.includes("Traditional flat 2D hand-painted horror animation") && prompt.includes("Absolutely no 3D rendering, CGI")), "import preview applies the hand-painted anti-CGI lock to all eight prompts");
+  assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".series-import-preview .button-primary")?.disabled), false, "episode import stays available after prompt preview is built");
+  for (const width of [390, 360, 320]) {
+    await page.setViewport({ width, height: 844, deviceScaleFactor: 1 });
+    const pageWidth = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      offenders: [...document.querySelectorAll<HTMLElement>("body *")].map((element) => ({ name: `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/g, ".")}`, right: Math.round(element.getBoundingClientRect().right), width: Math.round(element.getBoundingClientRect().width) }))
+        .filter((element) => element.right > window.innerWidth + 1).sort((a, b) => b.right - a.right).slice(0, 5),
+    }));
+    assert.equal(pageWidth.scrollWidth <= width, true, `Story Series prompt preview has no horizontal overflow at ${width}px: ${JSON.stringify(pageWidth)}`);
+  }
+  await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await page.goto({ url: viteUrl, timeout: 90_000 });
+  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "return to project dashboard without importing preview");
 
   const clickProject = async (title: string) => {
     const found = await page.evaluate((projectTitle) => {
@@ -420,6 +445,8 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-animation-style-stale")?.textContent?.includes("2 prompt lama") === true), "project settings show stale animation prompts");
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-animation-style-stale button")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".confirm-submit")?.textContent?.includes("Buat ulang prompt") === true), "prompt regeneration requires explicit confirmation");
+  assert.equal(await page.evaluate(() => document.querySelectorAll<HTMLTextAreaElement>(".flow-prompt-review textarea").length), 2, "confirmation previews every regenerated prompt before apply");
+  assert.match(await page.evaluate(() => document.querySelector<HTMLTextAreaElement>(".flow-prompt-review textarea")?.value ?? ""), /stylized-3d-cartoon/);
   await page.evaluate(() => document.querySelector<HTMLButtonElement>(".confirm-submit")?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() !== "Tersimpan"), "regenerated prompt marks project unsaved");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());

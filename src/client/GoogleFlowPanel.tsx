@@ -5,7 +5,7 @@ import type { ResearchPackage } from "../domain/research";
 import type { GoogleFlowStyleLock, GoogleFlowMatchScene } from "../domain/google-flow";
 import { googleFlowPromptPack, matchGoogleFlowFiles, recommendedGoogleFlowFilename, stableGoogleFlowSceneToken, validGoogleFlowAssignments } from "../domain/google-flow";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
-import { DEFAULT_ANIMATION_STYLE_ID, getAnimationStylePreset, type AnimationStyleId } from "../domain/animation-styles";
+import { animationStylePromptIsStale, DEFAULT_ANIMATION_STYLE_ID, getAnimationStylePreset, type AnimationStyleId } from "../domain/animation-styles";
 import type { VisualAsset } from "../domain/visual-assets";
 import type { VisualStoryboard, VisualStoryboardScene } from "../domain/visual-storyboard";
 import { compositionForVisualScene } from "../domain/visual-storyboard";
@@ -62,8 +62,8 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, animation
   const promptReady = Boolean(promptDraft?.sceneId === scene.sceneId || scene.flowPrompt && scene.flowPromptMode === scene.flowVisualMode);
   const prompt = promptDraft?.sceneId === scene.sceneId ? promptDraft.value : scene.flowPromptMode === scene.flowVisualMode ? scene.flowPrompt ?? "" : "";
   const currentAnimationStyle = getAnimationStylePreset(animationStyleId);
-  const staleStyleScenes = storyboard.scenes.filter((item) => item.flowPromptMode === "animated-video" && item.flowVisualMode === "animated-video" && item.flowPrompt && item.flowPromptAnimationStyleId !== animationStyleId);
-  const staleStylePrompt = Boolean(scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && scene.flowPrompt && scene.flowPromptAnimationStyleId !== animationStyleId);
+  const staleStyleScenes = storyboard.scenes.filter((item) => item.flowPromptMode === "animated-video" && item.flowVisualMode === "animated-video" && animationStylePromptIsStale(item.flowPrompt, item.flowPromptAnimationStyleId, animationStyleId));
+  const staleStylePrompt = scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && animationStylePromptIsStale(scene.flowPrompt, scene.flowPromptAnimationStyleId, animationStyleId);
   const sceneIdentities = storyboard.scenes.map((item): GoogleFlowMatchScene => ({
     sceneId: item.sceneId, sceneNumber: item.sceneNumber, headline: item.headline,
     sceneToken: item.sceneToken ?? stableGoogleFlowSceneToken(item.sceneId),
@@ -126,7 +126,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, animation
   const makePack = () => googleFlowPromptPack(research.title, storyboard.styleLock, storyboard.scenes.map((item) => ({
     sceneId: item.sceneId, sceneNumber: item.sceneNumber, sceneToken: item.sceneToken ?? stableGoogleFlowSceneToken(item.sceneId),
     recommendedFilename: item.recommendedFilename ?? recommendedGoogleFlowFilename(item), headline: item.headline,
-    narrationText: item.narrationText, prompt: item.flowPrompt && item.flowPromptMode === item.flowVisualMode && (item.flowVisualMode !== "animated-video" || item.flowPromptAnimationStyleId === animationStyleId) ? item.flowPrompt : buildPrompt(item),
+    narrationText: item.narrationText, prompt: item.flowPrompt && item.flowPromptMode === item.flowVisualMode && (item.flowVisualMode !== "animated-video" || !animationStylePromptIsStale(item.flowPrompt, item.flowPromptAnimationStyleId, animationStyleId)) ? item.flowPrompt : buildPrompt(item),
   })));
   const copy = async (value: string) => {
     try { await navigator.clipboard.writeText(value); setCopied(true); setFlowNotice("Prompt disalin."); }
@@ -274,7 +274,7 @@ export function GoogleFlowPanel({ research, storyboard, scene, assets, animation
     <details className="editor-advanced google-flow-project-tools">
       <summary>Advanced · prompt pack, Style Lock, batch import</summary>
       <div className="google-flow-project-actions">
-          <button type="button" className="button button-light" onClick={() => onPreparePrompts(storyboard.scenes.filter((item) => !item.flowPrompt || item.flowPromptMode !== item.flowVisualMode).map((item) => ({ sceneId: item.sceneId, prompt: buildPrompt(item) })))} disabled={busy}><FileImage size={15} aria-hidden="true"/> Siapkan Semua Prompt Google Flow</button>
+          <button type="button" className="button button-light" onClick={() => onPreparePrompts(storyboard.scenes.filter((item) => !item.flowPrompt || item.flowPromptMode !== item.flowVisualMode || item.flowVisualMode === "animated-video" && animationStylePromptIsStale(item.flowPrompt, item.flowPromptAnimationStyleId, animationStyleId)).map((item) => ({ sceneId: item.sceneId, prompt: buildPrompt(item) })))} disabled={busy}><FileImage size={15} aria-hidden="true"/> Siapkan Semua Prompt Google Flow</button>
         <button type="button" className="button button-light" onClick={() => void copy(makePack().markdown)}><Copy size={15} aria-hidden="true"/> Copy Semua Prompt</button>
         <button type="button" className="button button-light" onClick={() => download("md")}><Download size={15} aria-hidden="true"/> Export Markdown</button>
          <button type="button" className="button button-light" onClick={() => download("json")}><Download size={15} aria-hidden="true"/> Export JSON</button>

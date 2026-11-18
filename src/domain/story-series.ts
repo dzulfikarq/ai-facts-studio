@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { animationStyleIdSchema } from "./animation-styles";
+import { animationStyleIdSchema, getAnimationStylePreset } from "./animation-styles";
 import { defaultMotionPlan, defaultVisualComposition } from "./visual-defaults";
+import { buildIllustrationPrompt } from "./illustration-prompt";
 import { parseResearchPackage, type ResearchPackage } from "./research";
 import { buildVisualStoryboard, visualStoryboardSchema, type VisualStoryboard } from "./visual-storyboard";
 
@@ -162,6 +163,7 @@ export function adaptStorySeriesEpisode(input: StorySeriesPackage): { researchPa
   if (!parsed.success) throw new Error(`Research Package hasil adapter tidak valid: ${parsed.error.issues.slice(0, 4).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
   const researchPackage = parsed.data;
   const base = buildVisualStoryboard(researchPackage);
+  const animationStyle = getAnimationStylePreset(input.series.visualStyle.presetId);
   const reference = (entry: { id: string; name: string; referenceImagePrompt: string; referenceAssetId?: string }, description: string, continuityRules: string[], details: Record<string, unknown> = {}) => ({
     id: entry.id,
     name: entry.name,
@@ -191,14 +193,15 @@ export function adaptStorySeriesEpisode(input: StorySeriesPackage): { researchPa
   });
   const allReferenceAssets = [...input.series.characters, ...input.series.locations, ...input.series.props]
     .flatMap((entry) => entry.referenceAssetId ? [entry.referenceAssetId] : []);
-  const visualStoryboard = visualStoryboardSchema.parse({
+  const storyboard = visualStoryboardSchema.parse({
     ...base,
     styleLock: {
       ...base.styleLock,
-      illustrationStyle: input.series.visualStyle.description.slice(0, 160),
+      illustrationStyle: animationStyle.name,
       colorPalette: input.series.visualStyle.colorPalette.join("; ").slice(0, 500),
-      lighting: input.series.visualStyle.description.slice(0, 300),
-      visualComplexity: "Cinematic 2D motion comic; preserve authored layout and continuity.",
+      lighting: "Flat graphic lighting with hand-painted shadows; no realistic or volumetric lighting.",
+      visualComplexity: "Traditional flat 2D hand-painted surfaces with visible brush texture; every object stays illustrated, never modeled.",
+      outlineShapeStyle: "Visible illustrated outlines, organic brush edges, and hand-painted shadows; keep one consistent 2D drawing style.",
       compositionGuidelines: "Portrait 9:16. Keep lower third calm for separately rendered subtitles. No generated text.",
       consistencyInstructions: (input.series.visualStyle.consistencyRules.join(" ") || input.series.visualStyle.description).slice(0, 500),
       referenceAssetIds: [...new Set(allReferenceAssets)].slice(0, 8),
@@ -227,7 +230,7 @@ export function adaptStorySeriesEpisode(input: StorySeriesPackage): { researchPa
           cameraMovement: source.visual.cameraMovement,
           lighting: source.visual.lighting,
           environmentMotion: source.visual.environmentMotion,
-          googleFlow: { negativePrompt: source.googleFlow.negativePrompt, referenceInstructions: source.googleFlow.referenceInstructions },
+          googleFlow: { authoredPrompt: source.googleFlow.prompt, negativePrompt: source.googleFlow.negativePrompt, referenceInstructions: source.googleFlow.referenceInstructions },
           audio: source.audio,
           references: {
             characters: findEntities("characters", source.references.characterIds),
@@ -236,6 +239,25 @@ export function adaptStorySeriesEpisode(input: StorySeriesPackage): { researchPa
           },
           continuityNotes: source.continuityNotes,
         },
+      };
+    }),
+  });
+  const visualStoryboard = visualStoryboardSchema.parse({
+    ...storyboard,
+    scenes: storyboard.scenes.map((scene, index) => {
+      const previous = storyboard.scenes[index - 1];
+      return {
+        ...scene,
+        flowPrompt: buildIllustrationPrompt({
+          research: researchPackage,
+          storyboard,
+          scene,
+          styleLock: storyboard.styleLock,
+          mode: "animated-video",
+          animationStyleId: animationStyle.id,
+          ...(previous ? { previousReference: { sceneNumber: previous.sceneNumber, name: previous.headline, style: animationStyle.name } } : {}),
+        }),
+        flowPromptAnimationStyleId: animationStyle.id,
       };
     }),
   });

@@ -224,11 +224,12 @@ Known V2 limits: Video Editor has no scene reorder/duplicate controls; scene ord
 
 ### Animation Style Gallery V1
 
-- Create Video shows one shared six-card **Gaya Animasi** gallery for Generate with AI and Buat Manual. `expressive-2d-cartoon` is the default; stable IDs, never display labels, identify presets. Selection remains in the Create draft across mode changes and is stored on new projects.
-- Preset registry and Google Flow prompt configuration live in `src/domain/animation-styles.ts`. IDs: `expressive-2d-cartoon`, `2d-motion-graphics`, `2d-cinematic`, `2d-hand-drawn`, `2d-paper-cutout`, `stylized-3d-cartoon`.
-- Gallery uses six text-only preset cards. No posters, videos, or preview dialog; every preset remains selectable and keeps its prompt/style behavior.
+- Create Video shows one shared seven-card **Gaya Animasi** gallery for Generate with AI and Buat Manual. `expressive-2d-cartoon` is the default; stable IDs, never display labels, identify presets. Selection remains in the Create draft across mode changes and is stored on new projects.
+- Preset registry and Google Flow prompt configuration live in `src/domain/animation-styles.ts`. IDs: `expressive-2d-cartoon`, `2d-motion-graphics`, `2d-cinematic`, `cinematic-2d-motion-comic`, `2d-hand-drawn`, `2d-paper-cutout`, `stylized-3d-cartoon`.
+- Gallery uses seven text-only preset cards. No posters, videos, or preview dialog; every preset remains selectable and keeps its prompt/style behavior.
 - Project style lives in SQLite project JSON as `animationStyleId`; legacy projects without this field use `expressive-2d-cartoon` in UI and future prompt generation without rewriting existing prompt, visual, or render data. Video Editor → Pengaturan Video changes this project-level value only.
 - Animated prompts use the existing `buildIllustrationPrompt()` and Google Flow per-scene/prompt-pack actions. Preset-specific style, motion, and negative instructions augment scene facts/action/duration, vertical 9:16, cross-scene continuity, and compatible project Style Lock. Preset requirements take priority over conflicting default lock text; the 3D preset does not prohibit 3D.
+- Stable preset ID `cinematic-2d-motion-comic` is displayed as **Cinematic 2D Hand-Painted Horror**. Its Story Series builder treats preset art direction and negative instructions as authoritative across every scene, while retaining authored JSON prompts as scene-direction metadata. Same-ID prompts with obsolete style instructions are marked stale. Story Series import and bulk regeneration show full per-scene prompt previews before applying; prompt edits do not generate media or change existing media/approval.
 - Each generated animated prompt stores `flowPromptAnimationStyleId` separately from project style. Changing project style never regenerates prompts, removes imported media, resets approvals, or changes narration/timing/outro. Old or mismatched prompts show a stale-style notice and explicit per-scene/batch **Buat Ulang Prompt dengan Gaya Baru** action. Regeneration changes prompt text/metadata only; current media, visuals, and approvals remain.
 - Gallery and settings use shared theme/control tokens, native keyboard-operable buttons/select, visible focus, equal-height responsive 3/2/1-column text cards, and an inline selected badge. Verify documented desktop/mobile widths and Light/Dark/System.
 
@@ -248,6 +249,7 @@ Known V2 limits: Video Editor has no scene reorder/duplicate controls; scene ord
 ### Story Series library and fiction review
 
 - Story Series Library (`/series`) provides local JSON validation and import preview before commit; importing uses the deterministic Research Package → Visual Storyboard → project adapter and makes no AI call.
+- Story Series import preview includes generated Google Flow prompts for every episode scene. Apply requires no Flow generation; scene prompts use the selected animation preset and retain the original authored prompt separately.
 - Series detail (`/series/:id`) presents Story Bible, timeline, episode outline/project links, production budgets, and uploadable character/location/prop reference images. `?slug=` deep-links the next-episode import flow.
 - Fiction remains separate from factual citations and source warnings. Review still requires manual story/continuity approval and preserves existing scene-quality, visual-approval, preview, and render gates.
 - Video Editor → Visual exposes imported Flow prompts, scene direction, continuity references, audio cues, and local reference-image guidance. Review shows episode budget and continuity handoff.

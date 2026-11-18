@@ -5,7 +5,7 @@ import type { AnyZodObject } from "remotion";
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Film, ImagePlus, Pause, Play, Plus, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import { applyVisualStoryboard, compositionForVisualScene, illustrationSourceForScene, type VisualQualityGate, type VisualStoryboard, type VisualStoryboardScene } from "../domain/visual-storyboard";
 import type { GoogleFlowStyleLock } from "../domain/google-flow";
-import { ANIMATION_STYLE_PRESETS, type AnimationStyleId } from "../domain/animation-styles";
+import { animationStylePromptIsStale, ANIMATION_STYLE_PRESETS, type AnimationStyleId } from "../domain/animation-styles";
 import { buildIllustrationPrompt } from "../domain/illustration-prompt";
 import { captionSegmentsForScene, captionSegmentsSchema } from "../domain/captions";
 import { durationInFrames, FPS, sceneTimes, timelineDuration } from "../domain/timeline";
@@ -170,7 +170,7 @@ export function VideoEditorV2({ research, storyboard, animationStyleId, onAnimat
   const uploadInput = useRef<HTMLInputElement>(null);
   const motionClipGesture = useRef<{ pointerId: number; actionId: string; startX: number; railWidth: number; startTimeSec: number; timingScale: number } | null>(null);
   const selectedScene = storyboard.scenes.find((scene) => scene.sceneId === selectedSceneId) ?? storyboard.scenes[0]!;
-  const staleAnimationPromptCount = storyboard.scenes.filter((scene) => scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && scene.flowPrompt && scene.flowPromptAnimationStyleId !== animationStyleId).length;
+  const staleAnimationPromptCount = storyboard.scenes.filter((scene) => scene.flowVisualMode === "animated-video" && scene.flowPromptMode === "animated-video" && animationStylePromptIsStale(scene.flowPrompt, scene.flowPromptAnimationStyleId, animationStyleId)).length;
   const selectedComposition = useMemo(() => compositionForVisualScene(storyboard, selectedScene), [storyboard, selectedScene]);
   const registerBatchLauncher = useCallback((open: (() => void) | null) => setBatchLauncher(() => open), []);
   const selectedMotionAction = selectedMotionBeatRef?.sceneId === selectedScene.sceneId

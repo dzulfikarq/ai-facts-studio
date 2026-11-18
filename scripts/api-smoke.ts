@@ -131,7 +131,9 @@ try {
   assert.equal(importedStory.body.project.researchPackage.category, "Fiksi", "Story Series imports use dedicated fiction category");
   assert.equal(importedStory.body.project.storySeries.episodeId, importedStory.body.episodeId);
   assert.equal(importedStory.body.project.researchPackage.scenes.length, storyPackage.episode.scenes.length);
-  assert.equal(importedStory.body.project.visualStoryboard.scenes[0].flowPrompt, storyPackage.episode.scenes[0].googleFlow.prompt, "import API preserves authored Google Flow prompt");
+  assert.equal(importedStory.body.project.visualStoryboard.scenes.length, 8, "import API creates prompts for every episode scene");
+  assert.ok(importedStory.body.project.visualStoryboard.scenes.every((scene: { flowPrompt: string; flowPromptAnimationStyleId: string }) => scene.flowPrompt.includes("Traditional flat 2D hand-painted horror animation") && scene.flowPrompt.includes("Absolutely no 3D rendering, CGI") && scene.flowPromptAnimationStyleId === "cinematic-2d-motion-comic"), "import API applies one non-3D hand-painted style lock to all scenes");
+  assert.equal(importedStory.body.project.visualStoryboard.scenes[0].storySeries.googleFlow.authoredPrompt, storyPackage.episode.scenes[0].googleFlow.prompt, "import API preserves authored scene direction separately from generated prompt");
   assert.deepEqual(importedStory.body.project.visualStoryboard.scenes[0].storySeries.audio, storyPackage.episode.scenes[0].audio, "import API preserves audio cues");
   const storyDetail = await fetch(`${baseUrl}/api/story-series/${storySeriesId}`).then((response) => response.json());
   assert.equal(storyDetail.episodeCount, 1, "series detail reports imported episode count");

@@ -87,7 +87,7 @@ export const storySeriesSceneMetadataSchema = z.object({
   visualDescription: z.string().max(3000),
   primaryAction: z.string().max(2000), shotType: z.string().max(300), cameraMovement: z.string().max(500),
   lighting: z.string().max(1200), environmentMotion: z.string().max(1200),
-  googleFlow: z.object({ negativePrompt: z.string().max(12000), referenceInstructions: z.string().max(12000) }).strict(),
+  googleFlow: z.object({ authoredPrompt: z.string().max(12000).optional(), negativePrompt: z.string().max(12000), referenceInstructions: z.string().max(12000) }).strict(),
   audio: z.object({ ambience: z.array(z.string().max(500)).max(20), soundEffects: z.array(z.string().max(500)).max(30), musicMood: z.string().max(1200) }).strict(),
   references: z.object({
     characters: z.array(storySeriesReferenceSchema).max(20),

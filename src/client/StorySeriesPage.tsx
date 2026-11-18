@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BookOpen, Film, ImagePlus, Upload } from "lucide-react";
 import type { AppRoute } from "./routes";
 import { appRouteHref } from "./routes";
-import { storySeriesPackageSchema, type StorySeries, type StorySeriesPackage, type StorySeriesReferenceKind } from "../domain/story-series";
+import { adaptStorySeriesEpisode, storySeriesPackageSchema, type StorySeries, type StorySeriesPackage, type StorySeriesReferenceKind } from "../domain/story-series";
 
 type Route = Extract<AppRoute, { view: "series-library" | "series-detail" }>;
 type Episode = {
@@ -62,6 +62,11 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
       return { success: false as const, error: { issues: [{ path: [], message: "JSON tidak dapat dibaca." }] } };
     }
   }, [draft]);
+  const promptPreview = useMemo(() => {
+    if (!parsed?.success) return { scenes: [], error: "" };
+    try { return { scenes: adaptStorySeriesEpisode(parsed.data).visualStoryboard.scenes, error: "" }; }
+    catch (cause) { return { scenes: [], error: cause instanceof Error ? cause.message : "Preview prompt gagal dibuat." }; }
+  }, [parsed]);
 
   useEffect(() => {
     let current = true;
@@ -78,7 +83,7 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
   }, [route]);
 
   async function importPackage() {
-    if (!parsed?.success || busy || appBusy) return;
+    if (!parsed?.success || !promptPreview.scenes.length || promptPreview.error || busy || appBusy) return;
     setBusy(true);
     setError("");
     setNotice("");
@@ -165,7 +170,11 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
         }}/>
         <label className="series-json-field"><span>Story Series v1 JSON</span><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setRequestId(crypto.randomUUID()); setError(""); setNotice(""); }} spellCheck={false} aria-label="Story Series v1 JSON" placeholder="Pilih file .json atau tempel package di sini"/><small>Maks 1 MB. Import deterministik; tidak menghubungi Claude, Gemini, atau generator gambar.</small></label>
         {parsed && !parsed.success && <div className="workflow-alert attention" role="alert"><strong>Package belum valid</strong><ul>{parsed.error.issues.slice(0, 8).map((issue, index) => <li key={index}>{issue.path.join(".") || "JSON"}: {issue.message}</li>)}</ul></div>}
-        {parsedPackage && <div className="series-import-preview"><div><span className="status-chip">VALID · STORY SERIES V1</span><h3>{parsedPackage.series.title} · Episode {String(parsedPackage.episode.episodeNumber).padStart(2, "0")}</h3><p>{parsedPackage.episode.title} · {parsedPackage.episode.scenes.length} scenes · {parsedPackage.episode.targetDurationSeconds}s · {parsedPackage.series.genre.join(" / ")}</p></div><dl><div><dt>Production estimate</dt><dd>{parsedPackage.productionBudget.estimatedCredits.toLocaleString("id-ID")} credits</dd></div><div><dt>Reserve</dt><dd>{parsedPackage.productionBudget.reserveCredits.toLocaleString("id-ID")} credits</dd></div><div><dt>Continuity refs</dt><dd>{parsedPackage.series.characters.length} characters · {parsedPackage.series.locations.length} locations · {parsedPackage.series.props.length} props</dd></div><div><dt>Flow & audio cues</dt><dd>{parsedPackage.episode.scenes.length} prompts · {parsedPackage.episode.scenes.reduce((total, scene) => total + scene.audio.soundEffects.length + scene.audio.ambience.length, 0)} cues</dd></div></dl><details><summary>Story Bible & episode preview</summary><p><strong>Logline:</strong> {parsedPackage.series.logline}</p><p><strong>Setting:</strong> {parsedPackage.series.storyBible.setting}</p><p><strong>Opening hook:</strong> {parsedPackage.episode.openingHook}</p><p><strong>Cliffhanger:</strong> {parsedPackage.episode.endingCliffhanger}</p><p><strong>Previous episode:</strong> {parsedPackage.episode.previousEpisodeSummary || "Episode pertama"}</p></details><button type="button" className="button button-primary full-button" onClick={() => void importPackage()} disabled={busy || appBusy}>{busy || appBusy ? "Importing episode…" : "Import episode to Video Workspace"}</button></div>}
+        {parsedPackage && <div className="series-import-preview"><div><span className="status-chip">VALID · STORY SERIES V1</span><h3>{parsedPackage.series.title} · Episode {String(parsedPackage.episode.episodeNumber).padStart(2, "0")}</h3><p>{parsedPackage.episode.title} · {parsedPackage.episode.scenes.length} scenes · {parsedPackage.episode.targetDurationSeconds}s · {parsedPackage.series.genre.join(" / ")}</p></div><dl><div><dt>Production estimate</dt><dd>{parsedPackage.productionBudget.estimatedCredits.toLocaleString("id-ID")} credits</dd></div><div><dt>Reserve</dt><dd>{parsedPackage.productionBudget.reserveCredits.toLocaleString("id-ID")} credits</dd></div><div><dt>Continuity refs</dt><dd>{parsedPackage.series.characters.length} characters · {parsedPackage.series.locations.length} locations · {parsedPackage.series.props.length} props</dd></div><div><dt>Flow & audio cues</dt><dd>{parsedPackage.episode.scenes.length} prompts · {parsedPackage.episode.scenes.reduce((total, scene) => total + scene.audio.soundEffects.length + scene.audio.ambience.length, 0)} cues</dd></div></dl><details><summary>Story Bible & episode preview</summary><p><strong>Logline:</strong> {parsedPackage.series.logline}</p><p><strong>Setting:</strong> {parsedPackage.series.storyBible.setting}</p><p><strong>Opening hook:</strong> {parsedPackage.episode.openingHook}</p><p><strong>Cliffhanger:</strong> {parsedPackage.episode.endingCliffhanger}</p><p><strong>Previous episode:</strong> {parsedPackage.episode.previousEpisodeSummary || "Episode pertama"}</p></details>
+          <details className="series-flow-prompt-preview" open><summary>Pratinjau prompt Google Flow · {promptPreview.scenes.length}/{parsedPackage.episode.scenes.length} scene · style lock diterapkan</summary>
+            {promptPreview.error ? <p className="workflow-alert danger" role="alert">{promptPreview.error}</p> : <div className="series-flow-prompt-list">{promptPreview.scenes.map((scene) => <details key={scene.sceneId}><summary>Scene {String(scene.sceneNumber).padStart(2, "0")} · {scene.headline} · {scene.sceneId}</summary><textarea readOnly rows={8} value={scene.flowPrompt ?? ""} aria-label={`Pratinjau prompt Google Flow ${scene.sceneId}`}/></details>)}</div>}
+          </details>
+          <button type="button" className="button button-primary full-button" onClick={() => void importPackage()} disabled={busy || appBusy || !promptPreview.scenes.length || Boolean(promptPreview.error)}>{busy || appBusy ? "Importing episode…" : "Import episode to Video Workspace"}</button></div>}
       </section>
       <section className="series-panel series-library-panel"><div className="series-section-heading"><div><span className="eyebrow">SAVED SERIES</span><h2>Series Library</h2></div><span className="count-chip">{loading ? "…" : seriesList.length}</span></div>
         {loading ? <p role="status">Memuat series…</p> : seriesList.length ? <div className="series-library-list">{seriesList.map((item) => <a className="series-library-card" key={item.id} href={appRouteHref({ view: "series-detail", seriesId: item.id })} onClick={(event) => handleLink(event, { view: "series-detail", seriesId: item.id })}><span className="series-library-icon"><BookOpen aria-hidden="true" size={19}/></span><span><strong>{item.title}</strong><small>{item.episodeCount}/{item.plannedEpisodeCount} episodes · {item.slug}</small><span>{item.logline}</span></span><b aria-hidden="true">→</b></a>)}</div> : <div className="workflow-empty"><strong>No saved series yet</strong><span>Import first Story Series package to start.</span></div>}

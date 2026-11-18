@@ -29,12 +29,12 @@ export const animationStyleRegistry = {
     },
   },
   "cinematic-2d-motion-comic": {
-    name: "Cinematic 2D Motion Comic",
-    description: "Horor sinematik 2D semi-realistis, painterly, terkontrol; bukan 3D atau kartun anak.",
+    name: "Cinematic 2D Hand-Painted Horror",
+    description: "Horor sinematik 2D datar dengan tekstur kuas, bayangan lukis, dan gerak terbatas; bukan CGI atau objek model.",
     prompt: {
-      style: "Cinematic semi-realistic 2D motion comic with painterly textures, subtle film grain, cinematic chiaroscuro lighting, serious horror atmosphere, and consistent character/environment design. Never use 3D.",
-      motion: "Animate one stated action with controlled, deliberate movement and at most one dominant camera move. Preserve silhouettes, identity, layout, and continuity; avoid lip-sync unless explicitly requested.",
-      negative: "Avoid 3D, CGI, photorealistic live action, childish cartoon style, bright cheerful colors, identity drift, extra limbs, text, subtitles, watermark, rapid cuts, excessive camera shake, gore, and style changes between frames.",
+      style: "Traditional flat 2D hand-painted horror animation. Visible brush textures, illustrated outlines, hand-painted shadows, muted dark teal and dirty green palette, graphic painted lighting, flat illustrated surfaces, and mature eerie animated-film atmosphere. Every object stays drawn, never modeled; preserve identical hand-painted 2D style across every frame.",
+      motion: "Use subtle limited 2D animation: move only the stated scene action and secondary water/light details where present. Preserve the original painted perspective and layout; allow only gentle 2D pan, tilt, or push-in/out explicitly requested by the scene. No realistic camera orbit, 3D parallax, or invented action.",
+      negative: "Absolutely no 3D rendering, CGI, Unreal Engine, Blender render, photorealism, realistic reflections, glossy plastic, physically simulated lighting, volumetric lighting, realistic camera orbit, Pixar-style animation, clay render, childish cartoon style, modeled objects, style drift, subtitles, text, or watermark.",
     },
   },
   "2d-hand-drawn": {
@@ -82,4 +82,10 @@ export const ANIMATION_STYLE_PRESETS: AnimationStylePreset[] = ANIMATION_STYLE_I
 export function getAnimationStylePreset(id?: string | null): AnimationStylePreset {
   const safeId = id && Object.hasOwn(animationStyleRegistry, id) ? id as AnimationStyleId : DEFAULT_ANIMATION_STYLE_ID;
   return { id: safeId, ...animationStyleRegistry[safeId] };
+}
+
+export function animationStylePromptIsStale(prompt: string | undefined, savedStyleId: string | undefined, currentStyleId?: string | null) {
+  if (!prompt) return false;
+  const current = getAnimationStylePreset(currentStyleId);
+  return savedStyleId !== current.id || !Object.values(current.prompt).every((instruction) => prompt.includes(instruction));
 }

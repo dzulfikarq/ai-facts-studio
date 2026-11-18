@@ -9,6 +9,7 @@ import { openBrowser } from "@remotion/renderer";
 import { DatabaseSync } from "node:sqlite";
 import { applyVisualStoryboard, visualStoryboardQualityGate } from "../src/domain/visual-storyboard";
 import { buildManualResearchPackage } from "../src/domain/manual-project";
+import { seedVolcanoVisualSample } from "../src/domain/volcano-visual-sample";
 
 const root = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-facts-video-editor-"));
@@ -473,6 +474,7 @@ try {
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && document.querySelector(".ai-generate-panel") !== null), "Create Video route");
   await captureViewport("create-light-desktop.png");
   await assertResponsiveNoOverflow("Create Video");
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector(".create-heading-actions,.create-hero-art") || [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api")))), false, "Create Video omits unused header art and sample shortcut");
   assert.equal(await page.evaluate(() => {
     const aiAdvanced = document.querySelector(".ai-advanced-flow")?.closest(".create-primary-column");
     const importAdvanced = document.querySelector(".create-import-advanced")?.closest(".create-options-column");
@@ -1509,32 +1511,29 @@ try {
   await runLocal("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", mp4Path, "-frames:v", "1", "-y", mp4FramePath]);
   assert.ok((await readFile(mp4FramePath)).length > 1000, "rendered MP4 decodes to a non-empty image frame");
 
-  await page.goto({ url: viteUrl, timeout: 90_000 });
-  await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample shortcut");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "AI Facts")?.click());
-  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api") && !button.disabled)), "Create Video sample shortcut is enabled");
-  const sampleOpened = await page.evaluate(() => {
-    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("Gunakan sample gunung api"));
-    button?.click();
-    return Boolean(button);
-  });
-  assert.equal(sampleOpened, true, "Create Video volcano sample shortcut remains usable");
   const volcanoTitle = "Bagaimana Gunung Api Terbentuk dan Meletus?";
-  await waitFor(() => page.evaluate((title) => document.querySelector<HTMLInputElement>(".workspace-heading .title-input, .video-editor-title input")?.value === title, volcanoTitle), "volcano sample opens in workspace");
-  const volcanoProject = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<{ id: string; researchPackage: { title: string } }>) => projects.find((item) => item.researchPackage.title === volcanoTitle));
-  assert.ok(volcanoProject, "dashboard sample shortcut creates a saved volcano project");
-  projectIds.push(volcanoProject!.id);
-  const volcanoBeforeEditor = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`).then((response) => response.json());
+  const volcanoPackageResponse = await fetch(`${apiUrl}/api/sample?topic=volcano-formation`);
+  assert.equal(volcanoPackageResponse.status, 200, "sample package endpoint returns volcano fixture");
+  const volcanoPackage = await volcanoPackageResponse.json();
+  assert.equal(volcanoPackage.title, volcanoTitle);
+  const volcanoCreateResponse = await fetch(`${apiUrl}/api/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: volcanoPackage, creationMode: "sample" }) });
+  assert.equal(volcanoCreateResponse.status, 201, `sample project creation: ${await volcanoCreateResponse.clone().text()}`);
+  const volcanoCreated = await volcanoCreateResponse.json();
+  const volcanoProject = { id: volcanoCreated.id, researchPackage: volcanoCreated.researchPackage };
+  projectIds.push(volcanoProject.id);
+  const volcanoSeeded = await fetch(`${apiUrl}/api/projects/${volcanoProject.id}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: volcanoCreated.researchPackage, visualStoryboard: seedVolcanoVisualSample(volcanoCreated.visualStoryboard) }) });
+  assert.equal(volcanoSeeded.status, 200, "sample visual world and Motion Beats persist");
+  const volcanoBeforeEditor = await fetch(`${apiUrl}/api/projects/${volcanoProject.id}`).then((response) => response.json());
   const volcanoGate = visualStoryboardQualityGate(volcanoBeforeEditor.researchPackage, volcanoBeforeEditor.visualStoryboard, volcanoBeforeEditor.visualAssets);
   assert.equal(volcanoGate.ready, false, "volcano sample keeps known Visual Storyboard review issues for editor-access regression");
-  const manualTiming = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`, {
+  const manualTiming = await fetch(`${apiUrl}/api/projects/${volcanoProject.id}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ researchPackage: volcanoBeforeEditor.researchPackage, visualStoryboard: volcanoBeforeEditor.visualStoryboard, narrationMode: "manual" }),
   });
   assert.equal(manualTiming.status, 200, "sample fixture explicitly chooses manual narration timing");
-  await page.goto({ url: `${viteUrl}/projects/${volcanoProject!.id}/editor`, timeout: 90_000 });
+  await page.goto({ url: `${viteUrl}/projects/${volcanoProject.id}/editor`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelector(".video-editor-v2") !== null), "volcano sample remains directly editable despite Visual quality issues");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length), 6, "unified Video Editor timeline keeps all Motion Beats visible");
-  await page.goto({ url: `${viteUrl}/projects/${volcanoProject!.id}?step=visual`, timeout: 90_000 });
+  await page.goto({ url: `${viteUrl}/projects/${volcanoProject.id}?step=visual`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => location.pathname.endsWith("/editor") && document.querySelectorAll(".editor-motion-clip").length === 6), "legacy Visual link exposes six Motion Beats in Video Editor");
   await clickButton(".editor-inspector-toggle", "volcano Video Editor inspector");
   await waitFor(() => page.evaluate(() => document.querySelector<HTMLButtonElement>(".editor-inspector-toggle")?.getAttribute("aria-expanded") === "true"), "volcano inspector opens");
@@ -1559,7 +1558,7 @@ try {
   await waitFor(() => page.evaluate((before) => document.querySelector<SVGCircleElement>('[data-motion-path-point="0"]')?.getAttribute("aria-valuetext") !== before, volcanoPathStart), "volcano draft path supports keyboard editing");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".video-editor-toolbar-actions button")].find((button) => button.textContent?.includes("Simpan"))?.click());
   await waitFor(() => page.evaluate(() => document.querySelector(".editor-save-state")?.textContent?.trim() === "Tersimpan"), "volcano Motion Beat edit saves");
-  const volcanoSaved = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`).then((response) => response.json());
+  const volcanoSaved = await fetch(`${apiUrl}/api/projects/${volcanoProject.id}`).then((response) => response.json());
   assert.equal(volcanoSaved.visualStoryboard.scenes.reduce((count: number, scene: { motionActions: unknown[] }) => count + scene.motionActions.length, 0), 6, "all six sample beats persist");
   assert.ok(volcanoSaved.visualStoryboard.scenes.every((scene: { composition: unknown }) => JSON.stringify(scene.composition) === JSON.stringify(volcanoSaved.visualStoryboard.visualWorld.composition)), "all sample scenes persist same shared world");
   assert.notEqual(volcanoSaved.visualStoryboard.scenes[2].motionActions[0].path[0].x, 535, "sample path edit persists without an image asset");
@@ -1567,7 +1566,7 @@ try {
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample reload");
   await clickProject(volcanoTitle);
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".editor-motion-clip").length === 6), "reloaded volcano editor shows all six Motion Beats");
-  const volcanoReloaded = await fetch(`${apiUrl}/api/projects/${volcanoProject!.id}`).then((response) => response.json());
+  const volcanoReloaded = await fetch(`${apiUrl}/api/projects/${volcanoProject.id}`).then((response) => response.json());
   assert.equal(volcanoReloaded.visualStoryboard.scenes[2].motionActions[0].path[0].x, volcanoSaved.visualStoryboard.scenes[2].motionActions[0].path[0].x, "edited volcano path survives project reload");
    assert.ok(await page.evaluate(() => [...document.querySelectorAll(".editor-info-box strong")].some((item) => item.textContent?.includes("Shared VisualWorld"))), "shared draft Visual World remains visible after reload");
   console.log(`PASS: Remotion editor scene switch, scrub, Flow prompt/style-lock/import/batch/reload, shared Visual World persistence, Motion Beat timeline/path editing, raster transform/motion preview, approval, fact review, full preview, MP4 fixture, and volcano sample direct-to-editor persistence. Evidence: ${evidenceDir}`);

@@ -2242,9 +2242,7 @@ function App() {
       {view === "dashboard" && <Dashboard section={dashboardSection} projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {(view === "series-library" || view === "series-detail" || view === "series-generation") && <StorySeriesPage route={route} busy={busy || ttsBusy || ttsLoading} onNavigate={(target) => void openStorySeries(target)} onOpenProject={(id) => void openProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
-        <div className="page-heading create-page-heading"><div className="create-heading-copy"><div className="eyebrow">BUAT VIDEO</div><h1>Create Video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
-          <div className="create-heading-actions"><div className="create-hero-art" aria-hidden="true"><div className="series-clapperboard"><div className="series-clapperboard-top"/><div className="series-clapperboard-body"><Film size={32}/></div></div></div><button className="button button-light" onClick={() => void loadSample()} disabled={busy}><Sparkles aria-hidden="true" size={16}/> Gunakan sample gunung api</button></div>
-        </div>
+        <div className="page-heading create-page-heading"><div className="create-heading-copy"><div className="eyebrow">BUAT VIDEO</div><h1>Create Video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div></div>
         <div className="create-mode-switch" role="group" aria-label="Mode pembuatan project">
           <button type="button" aria-pressed={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>
             <span className="create-mode-icon"><Sparkles aria-hidden="true" size={18}/></span><span className="create-mode-copy"><strong>Generate with AI</strong><small>Riset dan storyboard draft dibuat setelah Anda klik.</small></span>

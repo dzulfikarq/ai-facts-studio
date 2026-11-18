@@ -628,7 +628,8 @@ assert.equal((galleryMarkup.match(/<article class="animation-style-card/g) ?? []
 assert.equal((galleryMarkup.match(/<button\b/g) ?? []).length, 7, "each preset has one selection button");
 assert.match(galleryMarkup, /data-animation-style-id="expressive-2d-cartoon"/);
 assert.match(galleryMarkup, /aria-pressed="true"/);
-assert.doesNotMatch(galleryMarkup, /<(?:img|video|dialog)\b|preview|showcase/i, "gallery is text-only without preview UI");
+assert.equal((galleryMarkup.match(/class="animation-style-preview"/g) ?? []).length, 7, "each preset uses a symbolic icon mark");
+assert.doesNotMatch(galleryMarkup, /<(?:img|video|dialog)\b|animation-style-preview-button|showcase/i, "gallery has no fabricated artwork, media, or preview controls");
 const oversizedPreviousReference = { sceneNumber: 1, name: "Previous scene", style: mountainStoryboard.styleLock.illustrationStyle, prompt: `PREVIOUS_PROMPT_MUST_NOT_BE_COPIED ${"previous prompt content ".repeat(600)}` };
 const followupPrompt = buildIllustrationPrompt({ research: mountain, storyboard: mountainStoryboard, scene: mountainStoryboard.scenes[1]!, previousReference: oversizedPreviousReference });
 assert.ok(followupPrompt.length <= 12000, "previous Flow prompt is not recursively copied into the next scene prompt");

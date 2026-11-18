@@ -125,7 +125,7 @@ try {
     return Boolean(select && !select.disabled && select.value === id && [...select.options].some((option) => option.textContent === "Tanpa Outro"));
   }, outroAssetId!), "Create Video shows library default and Tanpa Outro option");
   await waitFor(() => page.evaluate((file) => Boolean(document.querySelector(`.create-outro-selected video[src*="${file}"]`)), outroFile!), "Create Video previews selected moving Outro");
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('.create-mode-switch [role="tab"]')].find((button) => button.textContent?.includes("Import Research Package"))?.click());
+  await page.evaluate(() => { const details = document.querySelector<HTMLDetailsElement>(".create-import-advanced"); if (details) details.open = true; });
   await page.evaluate((value) => {
     const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Editor Research Package JSON"]');
     if (!input) return false;

@@ -441,12 +441,15 @@ try {
     return true;
   }, { query: selector, nextValue: value });
   const assertResponsiveNoOverflow = async (view: string) => {
-    for (const width of [1440, 1280, 1024, 768, 390, 360, 320]) {
+    for (const width of [1440, 1280, 1024, 768, 390, 375, 360, 320]) {
       await page.setViewport({ width, height: width <= 390 ? 844 : 900, deviceScaleFactor: 1 });
       await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
       const metrics = await page.evaluate(() => ({
         width: innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
+        createColumns: document.querySelector<HTMLElement>(".create-workspace-grid") ? getComputedStyle(document.querySelector<HTMLElement>(".create-workspace-grid")!).gridTemplateColumns.trim().split(/\s+/).length : 0,
+        styleColumns: document.querySelector<HTMLElement>(".animation-style-grid") ? getComputedStyle(document.querySelector<HTMLElement>(".animation-style-grid")!).gridTemplateColumns.trim().split(/\s+/).length : 0,
+        createTopOffsets: (() => { const form = document.querySelector(".create-primary-column")?.getBoundingClientRect(); const options = document.querySelector(".create-options-column")?.getBoundingClientRect(); return form && options ? [form.top, options.top] : null; })(),
         offenders: [...document.querySelectorAll<HTMLElement>("body *")].filter((element) => {
           const rect = element.getBoundingClientRect();
           return rect.width > 0 && rect.right > innerWidth + 1;
@@ -454,6 +457,12 @@ try {
       }));
       if (view === "Settings" && width === 360) await captureViewport("settings-360px.png");
       assert.ok(metrics.scrollWidth <= metrics.width, `${view} overflows at ${width}px: ${JSON.stringify(metrics)}`);
+      if (view === "Create Video") {
+        assert.equal(metrics.createColumns, width <= 900 ? 1 : 2, `Create Video uses expected columns at ${width}px`);
+        assert.equal(metrics.styleColumns, width <= 560 ? 1 : 2, `animation styles use expected columns at ${width}px`);
+        if (width > 900) assert.ok(metrics.createTopOffsets && Math.abs(metrics.createTopOffsets[0] - metrics.createTopOffsets[1]) < 1, `Create Video columns align at ${width}px`);
+        if ([1024, 768, 375, 320].includes(width)) await captureViewport(`create-${width}px.png`);
+      }
     }
   };
 
@@ -464,6 +473,14 @@ try {
   await waitFor(() => page.evaluate(() => location.pathname === "/create" && document.querySelector(".ai-generate-panel") !== null), "Create Video route");
   await captureViewport("create-light-desktop.png");
   await assertResponsiveNoOverflow("Create Video");
+  assert.equal(await page.evaluate(() => {
+    const aiAdvanced = document.querySelector(".ai-advanced-flow")?.closest(".create-primary-column");
+    const importAdvanced = document.querySelector(".create-import-advanced")?.closest(".create-options-column");
+    return Boolean(aiAdvanced && importAdvanced);
+  }), true, "Create Video places each Advanced workflow in its matching column");
+  await page.evaluate(() => { const details = document.querySelector<HTMLDetailsElement>(".create-import-advanced"); if (details) details.open = true; });
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector(".create-import-advanced[open] .json-editor"))), true, "Research Package import accordion opens in options column");
+  await page.evaluate(() => { const details = document.querySelector<HTMLDetailsElement>(".create-import-advanced"); if (details) details.open = false; });
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
   await captureViewport("create-light-mobile.png");
   await page.evaluate(() => { const gallery = document.querySelector(".animation-style-gallery"); if (gallery) window.scrollTo(0, window.scrollY + gallery.getBoundingClientRect().top - 76); });
@@ -1495,13 +1512,13 @@ try {
   await page.goto({ url: viteUrl, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelectorAll(".project-card-open").length >= 2), "dashboard before volcano sample shortcut");
   await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>(".app-sidebar-link")].find((button) => button.textContent?.trim() === "AI Facts")?.click());
-  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api"))), "Create Video sample shortcut");
+  await waitFor(() => page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.includes("Gunakan sample gunung api") && !button.disabled)), "Create Video sample shortcut is enabled");
   const sampleOpened = await page.evaluate(() => {
     const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("Gunakan sample gunung api"));
     button?.click();
     return Boolean(button);
   });
-  assert.equal(sampleOpened, true, "dashboard volcano sample button exists");
+  assert.equal(sampleOpened, true, "Create Video volcano sample shortcut remains usable");
   const volcanoTitle = "Bagaimana Gunung Api Terbentuk dan Meletus?";
   await waitFor(() => page.evaluate((title) => document.querySelector<HTMLInputElement>(".workspace-heading .title-input, .video-editor-title input")?.value === title, volcanoTitle), "volcano sample opens in workspace");
   const volcanoProject = await fetch(`${apiUrl}/api/projects`).then((response) => response.json()).then((projects: Array<{ id: string; researchPackage: { title: string } }>) => projects.find((item) => item.researchPackage.title === volcanoTitle));

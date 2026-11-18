@@ -2206,7 +2206,7 @@ function App() {
   const createOutroId = selectedCreateOutroId === undefined ? outroLibrary.defaultOutroId : selectedCreateOutroId;
   const createOutroAsset = createOutroId ? outroLibrary.outros.find((asset) => asset.id === createOutroId) ?? null : null;
 
-  return <div className={`app-shell sidebar-app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""} ${isSeriesRoute ? "series-app-shell" : ""}`}>
+  return <div className={`app-shell sidebar-app-shell ${view === "workspace" && activeStep === "video-editor" ? "editor-active" : ""} ${isSeriesRoute ? "series-app-shell" : ""} ${view === "create" ? "create-app-shell" : ""}`}>
     <aside className="app-sidebar">
       <button className="brand app-sidebar-brand" onClick={() => void goToDashboard()} aria-label="AI Facts Studio — Dashboard" disabled={busy || ttsBusy || ttsLoading}><span className="brand-mark"><Play aria-hidden="true" size={19} fill="currentColor"/></span><span><strong>AI Facts Studio</strong></span></button>
       <nav aria-label="Navigasi utama">
@@ -2242,54 +2242,58 @@ function App() {
       {view === "dashboard" && <Dashboard section={dashboardSection} projects={projects} loading={!projectsLoaded} busy={busy || ttsBusy || ttsLoading} onSample={() => void loadSample()} onOpen={(id) => void openProject(id)} onDelete={(id) => void deleteProject(id)} />}
       {(view === "series-library" || view === "series-detail" || view === "series-generation") && <StorySeriesPage route={route} busy={busy || ttsBusy || ttsLoading} onNavigate={(target) => void openStorySeries(target)} onOpenProject={(id) => void openProject(id)} />}
       {view === "create" && <section className="page layout-container create-page">
-        <div className="page-heading"><div><div className="eyebrow">BUAT VIDEO</div><h1>Create video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
-          <button className="button button-light" onClick={() => void loadSample()} disabled={busy}><span>✦</span> Gunakan sample gunung api</button>
+        <div className="page-heading create-page-heading"><div className="create-heading-copy"><div className="eyebrow">BUAT VIDEO</div><h1>Create Video</h1><p>Pilih Generate with AI atau Buat Manual. Import Research Package tersedia di Advanced; versi lama otomatis di-upgrade.</p></div>
+          <div className="create-heading-actions"><div className="create-hero-art" aria-hidden="true"><div className="series-clapperboard"><div className="series-clapperboard-top"/><div className="series-clapperboard-body"><Film size={32}/></div></div></div><button className="button button-light" onClick={() => void loadSample()} disabled={busy}><Sparkles aria-hidden="true" size={16}/> Gunakan sample gunung api</button></div>
         </div>
         <div className="create-mode-switch" role="group" aria-label="Mode pembuatan project">
           <button type="button" aria-pressed={createMode === "ai"} className={createMode === "ai" ? "selected" : ""} onClick={() => setCreateMode("ai")}>
-            <strong>Generate with AI</strong><span>Riset dan storyboard draft dibuat setelah Anda klik.</span>
+            <span className="create-mode-icon"><Sparkles aria-hidden="true" size={18}/></span><span className="create-mode-copy"><strong>Generate with AI</strong><small>Riset dan storyboard draft dibuat setelah Anda klik.</small></span>
           </button>
           <button type="button" aria-pressed={createMode === "manual"} className={createMode === "manual" ? "selected" : ""} onClick={() => setCreateMode("manual")}>
-            <strong>Buat Manual</strong><span>Tanpa AI. Susun storyboard sendiri di project.</span>
+            <span className="create-mode-icon"><FileText aria-hidden="true" size={18}/></span><span className="create-mode-copy"><strong>Buat Manual</strong><small>Tanpa AI. Susun storyboard sendiri di project.</small></span>
           </button>
         </div>
-        <AnimationStyleGallery selectedId={selectedCreateAnimationStyleId} onChange={(styleId) => {
-          setSelectedCreateAnimationStyleId(styleId);
-          setCreateDraftUnsaved(true);
-        }} disabled={busy} description="Pilihan gaya berlaku untuk Generate with AI dan Buat Manual." />
-        <section className="create-outro-choice" aria-labelledby="create-outro-title">
-          <div className="create-outro-copy"><h2 id="create-outro-title">Outro Video (Opsional)</h2><p>Default library terpilih untuk project baru. Pilih Tanpa Outro kapan saja.</p></div>
-          <label>Outro Video
-            <select aria-label="Outro Video (Opsional)" value={createOutroId ?? ""} onChange={(event) => setSelectedCreateOutroId(event.target.value || null)} disabled={!outroLibraryLoaded}>
-              <option value="">Tanpa Outro</option>
-              {outroLibrary.outros.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{asset.isDefault ? " · Default" : ""} · {asset.durationSec.toFixed(1)} dtk</option>)}
-            </select>
-          </label>
-          {createOutroAsset ? <div className="create-outro-selected">
-            <img src={createOutroAsset.posterUrl} alt=""/>
-            <div><strong>{createOutroAsset.name}</strong><span>{createOutroAsset.durationSec.toFixed(1)} dtk · {createOutroAsset.width} × {createOutroAsset.height}</span>
-              {createOutroAsset.localAvailable ? <video src={createOutroAsset.previewUrl} poster={createOutroAsset.posterUrl} controls playsInline preload="metadata" aria-label={`Pratinjau outro ${createOutroAsset.name}`}/> : <small role="alert">File outro tidak tersedia; tidak ada fallback otomatis.</small>}
-            </div>
-          </div> : <p className="create-outro-none">{outroLibraryLoaded ? "Tanpa Outro" : "Memuat Outro Library…"}</p>}
-          <button type="button" className="button button-light" onClick={() => void openSettings("outro-library")}>Kelola Outro Library</button>
-        </section>
-        <div hidden={createMode !== "ai"}><AiGenerationPanel
-          mode={aiGenerationSettings?.mode ?? null}
-          development={aiGenerationSettings?.providers.development ?? null}
-          production={aiGenerationSettings?.providers.production ?? null}
-          projectBusy={busy}
-          onGenerate={generateAiDraft}
-          onCreateProject={createAiProject}
-          onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
-          onUnsavedChange={setCreateDraftUnsaved}
-        /></div>
-        <div hidden={createMode !== "manual"}><ManualProjectPanel
-          projectBusy={busy}
-          onCreateProject={createManualProject}
-          onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
-          onUnsavedChange={setCreateDraftUnsaved}
-        /></div>
-        <details className="create-import-advanced"><summary>Advanced · Import Research Package JSON</summary><div className="create-import-content"><div className="import-card">
+        <div className="create-workspace-grid">
+          <div className="create-primary-column">
+            <div hidden={createMode !== "ai"}><AiGenerationPanel
+              mode={aiGenerationSettings?.mode ?? null}
+              development={aiGenerationSettings?.providers.development ?? null}
+              production={aiGenerationSettings?.providers.production ?? null}
+              projectBusy={busy}
+              onGenerate={generateAiDraft}
+              onCreateProject={createAiProject}
+              onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
+              onUnsavedChange={setCreateDraftUnsaved}
+            /></div>
+            <div hidden={createMode !== "manual"}><ManualProjectPanel
+              projectBusy={busy}
+              onCreateProject={createManualProject}
+              onOpenProject={(id, notice, initialStep) => void openProject(id, notice, false, initialStep)}
+              onUnsavedChange={setCreateDraftUnsaved}
+            /></div>
+          </div>
+          <aside className="create-options-column">
+            <AnimationStyleGallery selectedId={selectedCreateAnimationStyleId} onChange={(styleId) => {
+              setSelectedCreateAnimationStyleId(styleId);
+              setCreateDraftUnsaved(true);
+            }} disabled={busy} description="Pilihan gaya berlaku untuk Generate with AI dan Buat Manual." />
+            <section className="create-outro-choice" aria-labelledby="create-outro-title">
+              <div className="create-outro-heading"><span className="create-option-icon"><Film aria-hidden="true" size={19}/></span><div className="create-outro-copy"><h2 id="create-outro-title">Outro Video (Opsional)</h2><p>Default library terpilih untuk project baru. Pilih Tanpa Outro kapan saja.</p></div></div>
+              <label>Outro Video
+                <select aria-label="Outro Video (Opsional)" value={createOutroId ?? ""} onChange={(event) => setSelectedCreateOutroId(event.target.value || null)} disabled={!outroLibraryLoaded}>
+                  <option value="">Tanpa Outro</option>
+                  {outroLibrary.outros.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{asset.isDefault ? " · Default" : ""} · {asset.durationSec.toFixed(1)} dtk</option>)}
+                </select>
+              </label>
+              {createOutroAsset ? <div className="create-outro-selected">
+                <img src={createOutroAsset.posterUrl} alt=""/>
+                <div><strong>{createOutroAsset.name}</strong><span>{createOutroAsset.durationSec.toFixed(1)} dtk · {createOutroAsset.width} × {createOutroAsset.height}</span>
+                  {createOutroAsset.localAvailable ? <video src={createOutroAsset.previewUrl} poster={createOutroAsset.posterUrl} controls playsInline preload="metadata" aria-label={`Pratinjau outro ${createOutroAsset.name}`}/> : <small role="alert">File outro tidak tersedia; tidak ada fallback otomatis.</small>}
+                </div>
+              </div> : <p className="create-outro-none">{outroLibraryLoaded ? "Tanpa Outro" : "Memuat Outro Library…"}</p>}
+              <button type="button" className="button button-light" onClick={() => void openSettings("outro-library")}>Kelola Outro Library</button>
+            </section>
+            <details className="create-import-advanced"><summary><FileText aria-hidden="true" size={17}/>Advanced · Import Research Package JSON</summary><div className="create-import-content"><div className="import-card">
           <div className="import-toolbar"><div><strong>Import Research Package</strong><p>JSON tersimpan lokal. Konten dianggap data, tidak menjalankan script.</p></div>
             <label className="button button-light file-button">Pilih file JSON<input type="file" accept=".json,application/json" onChange={(event) => void importFile(event.target.files?.[0])} /></label>
           </div>
@@ -2297,7 +2301,9 @@ function App() {
           <div className="import-footer"><button className="button button-primary" disabled={busy || !jsonDraft.trim()} onClick={() => void createFromJson()}>Buat storyboard <b>→</b></button></div>
         </div>
         <div className="notice-line"><span className="notice-icon">ⓘ</span><span>Import bukan verifikasi fakta. Tinjau klaim, URL, dan timing sebelum render atau publikasi.</span></div>
-        </div></details>
+            </div></details>
+          </aside>
+        </div>
       </section>}
 
       {view === "settings" && <SettingsPage

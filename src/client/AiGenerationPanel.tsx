@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import type { ResearchPackage } from "../domain/research";
 import { aiGenerationInputSchema, buildDevelopmentPrompt, parseManualAiResultText, researchPackageWithConfirmedSources, type AiGenerationDraft, type AiGenerationInput } from "../domain/ai-generation";
 import type { WorkspaceStep } from "./workflow";
@@ -199,7 +200,7 @@ export function AiGenerationPanel({ mode, development, production, projectBusy, 
 
   return <div className="ai-generate-panel">
     <section className="ai-generation-form ai-settings-panel">
-      <div className="settings-panel-heading"><div><h2>Generate with AI</h2><p>Topik bebas → riset dan storyboard draft. Tidak ada TTS atau render otomatis.</p></div><span className={`settings-mode-badge ${mode ?? "development"}`}>{mode ? mode.toUpperCase() : "MEMUAT MODE"}</span></div>
+      <div className="settings-panel-heading create-form-heading"><span className="create-form-icon"><Sparkles aria-hidden="true" size={19}/></span><div><h2>Generate with AI</h2><p>Topik bebas → riset dan storyboard draft. Tidak ada TTS atau render otomatis.</p></div><span className={`settings-mode-badge ${mode ?? "development"}`}>{mode ? mode.toUpperCase() : "MEMUAT MODE"}</span></div>
       {!mode && <div className="workflow-empty" role="status">Memuat AI Generation Mode dari backend lokal…</div>}
       <div className="ai-form-grid">
          <label className="ai-topic-field"><span>Judul / topik <b>*</b></span><input maxLength={120} placeholder="Contoh: Kenapa langit berwarna biru?" value={input.topic} onChange={(event) => setInput((current) => ({ ...current, topic: event.target.value }))} disabled={!mode || locked} /></label>
@@ -224,16 +225,6 @@ export function AiGenerationPanel({ mode, development, production, projectBusy, 
           {generating && <span className="ai-progress-copy" role="status">{statusText[phase] ?? "Menyiapkan generation…"}</span>}
         </div>
         {!development?.configured && <div className="workflow-empty">{development?.disabledReason ?? "OpenCode status belum tersedia."} Manual prompt tetap bisa digunakan dari Advanced.</div>}
-        <details className="ai-advanced-flow">
-          <summary>Advanced · prompt manual / paste JSON</summary>
-          <div className="ai-manual-flow">
-            <div className="ai-manual-actions"><button type="button" className="button button-light" onClick={showManualPrompt} disabled={locked}>Buat Prompt Manual</button><span>Fallback manual; tidak memanggil provider dari aplikasi.</span></div>
-            {manualPrompt && <label><span>Prompt untuk ChatGPT / OpenCode</span><textarea className="manual-prompt" readOnly rows={8} value={manualPrompt} /><button type="button" className="button button-light" onClick={() => void copyPrompt()}>Copy Prompt</button></label>}
-            {waitingForOutput && <div className="workflow-alert attention" role="status">Menunggu output AI eksternal. Tempel JSON hasilnya di bawah.</div>}
-            <label><span>Paste AI Result / Research Package JSON</span><textarea className="manual-prompt-result" maxLength={maxAiResultCharacters} rows={10} spellCheck={false} placeholder="Paste JSON Research Package v1.0/v1.1 atau ai-generated content envelope." value={pasteResult} onChange={(event) => setPasteResult(event.target.value)} disabled={locked} /><small>Maksimal 1 MB.</small></label>
-            <button type="button" className="button button-light" onClick={() => void validateManualResult()} disabled={!pasteResult.trim() || locked}>Validate &amp; Create Project</button>
-          </div>
-        </details>
         </div>
       </section>}
 
@@ -257,6 +248,16 @@ export function AiGenerationPanel({ mode, development, production, projectBusy, 
       {!busy && <div className="ai-generation-status-row"><span className={`settings-status-pill ${status === "validation-failed" || status === "generation-failed" ? "unconfigured" : "configured"}`}>{statusText[status] ?? statusText["draft-input"]}</span></div>}
     </section>
 
+    {mode === "development" && <details className="ai-advanced-flow">
+      <summary>Advanced · Prompt Manual / Paste JSON</summary>
+      <div className="ai-manual-flow">
+        <div className="ai-manual-actions"><button type="button" className="button button-light" onClick={showManualPrompt} disabled={locked}>Buat Prompt Manual</button><span>Fallback manual; tidak memanggil provider dari aplikasi.</span></div>
+        {manualPrompt && <label><span>Prompt untuk ChatGPT / OpenCode</span><textarea className="manual-prompt" readOnly rows={8} value={manualPrompt} /><button type="button" className="button button-light" onClick={() => void copyPrompt()}>Copy Prompt</button></label>}
+        {waitingForOutput && <div className="workflow-alert attention" role="status">Menunggu output AI eksternal. Tempel JSON hasilnya di bawah.</div>}
+        <label><span>Paste AI Result / Research Package JSON</span><textarea className="manual-prompt-result" maxLength={maxAiResultCharacters} rows={10} spellCheck={false} placeholder="Paste JSON Research Package v1.0/v1.1 atau ai-generated content envelope." value={pasteResult} onChange={(event) => setPasteResult(event.target.value)} disabled={locked} /><small>Maksimal 1 MB.</small></label>
+        <button type="button" className="button button-light" onClick={() => void validateManualResult()} disabled={!pasteResult.trim() || locked}>Validate &amp; Create Project</button>
+      </div>
+    </details>}
     {pendingDraft && error && !busy && <button type="button" className="button button-primary" onClick={() => void saveValidatedProject(pendingDraft)} disabled={projectBusy}>Coba simpan ulang</button>}
   </div>;
 }

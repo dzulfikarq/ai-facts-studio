@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import { Pencil } from "lucide-react";
 import { buildManualResearchPackage, manualProjectInputSchema, type ManualProjectBrief, type ManualProjectInput } from "../domain/manual-project";
 import type { ResearchPackage } from "../domain/research";
 import type { WorkspaceStep } from "./workflow";
@@ -79,7 +80,7 @@ export function ManualProjectPanel({ projectBusy, onCreateProject, onOpenProject
 
   return <form className="manual-create-panel ai-generate-panel" onSubmit={(event) => void submit(event)}>
     <section className="ai-generation-form ai-settings-panel">
-      <div className="settings-panel-heading"><div><h2>Buat Manual</h2><p>Buat draft tanpa AI. Tulis storyboard sendiri setelah project dibuka.</p></div><span className="settings-mode-badge development">DRAFT MANUAL</span></div>
+      <div className="settings-panel-heading create-form-heading"><span className="create-form-icon"><Pencil aria-hidden="true" size={19}/></span><div><h2>Buat Manual</h2><p>Buat draft tanpa AI. Tulis storyboard sendiri setelah project dibuka.</p></div><span className="settings-mode-badge development">DRAFT MANUAL</span></div>
       <div className="ai-form-grid">
         <label className="ai-topic-field"><span>Judul / topik <b>*</b></span><input required minLength={3} maxLength={120} placeholder="Contoh: Kenapa langit berwarna biru?" value={input.topic} onChange={(event) => updateInput("topic", event.target.value)} disabled={locked} /></label>
         <label className="ai-choice-field"><span>Bahasa</span><select value={input.language} onChange={(event) => updateInput("language", event.target.value as ManualProjectInput["language"])} disabled={locked}><option value="id-ID">Bahasa Indonesia</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option></select></label>

@@ -171,6 +171,7 @@ try {
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector(".series-generation-start form") && document.querySelector(".series-estimate-panel"))), "Generate from Story dashboard cards");
   await waitFor(() => page.evaluate(() => Boolean(document.querySelector("#saved-story-drafts .series-empty-state, #saved-story-drafts .series-draft-list") && document.querySelector("#series-library .series-library-empty, #series-library .series-library-summary-list"))), "Story Series drafts and library load");
   assert.equal(await page.evaluate(() => document.querySelector(".series-hero h1")?.textContent), "Story Series", "Story Series page shows reference hierarchy");
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector(".series-hero-banner .series-hero h1") && document.querySelector(".series-hero-banner .series-mode-switch") && document.querySelector(".series-hero-banner .series-clapperboard-body svg"))), true, "Story Series title, actions, and clapperboard share illustrated banner");
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).paddingTop), "38px", "Story Series top spacing matches shared desktop page spacing");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>('.series-mode-switch button[aria-pressed="true"]')?.textContent?.includes("Generate from Story")), true, "Generate from Story remains active default mode");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".series-dashboard-aside > .series-panel").length), 3, "drafts, library, and live estimate occupy right dashboard column");
@@ -218,6 +219,14 @@ try {
     }));
     assert.equal(layout.scrollWidth <= width, true, `Story Series dashboard has no horizontal overflow at ${width}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.columns, width <= 1024 ? 1 : 2, `Story Series dashboard uses expected columns at ${width}px`);
+    if (width === 375) {
+      const illustration = await page.evaluate(() => {
+        const banner = document.querySelector<HTMLElement>(".series-hero-banner")!.getBoundingClientRect();
+        const clapper = document.querySelector<HTMLElement>(".series-clapperboard")!.getBoundingClientRect();
+        return { visibleWidth: clapper.width, bounds: [clapper.left, clapper.right], banner: [banner.left, banner.right], withinBanner: clapper.left >= banner.left && clapper.right <= banner.right };
+      });
+      assert.ok(illustration.visibleWidth >= 60 && illustration.withinBanner, `mobile clapperboard remains visible without crop: ${JSON.stringify(illustration)}`);
+    }
     if (width === 1440) await captureViewport("story-series-1440x900.png");
     if (width === 1024) await captureViewport("story-series-1024x900.png");
     if (width === 768) await captureViewport("story-series-768x900.png");

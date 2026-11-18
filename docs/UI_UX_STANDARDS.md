@@ -20,6 +20,7 @@
 ## Responsive and accessible behavior
 
 - Keep left/right page gutters equal and aligned to content area. Verify global sidebar and page layouts at 1440, 1280, 1024, 768, 390, 360, and 320px without page-level horizontal overflow; Story Series also verifies 1672×941 mockup comparison and 375px mobile. Keep six Inspector tabs reachable in a 3×2 grid and timelines internally scrollable on narrow screens.
+- Story Series hero keeps title, description, decorative clapperboard, and Generate/Import switch inside one lavender responsive banner. Keep illustration visible and uncropped on mobile; support Light/Dark/System.
 - Keep keyboard access, visible `:focus-visible` rings, accessible names, semantic status, native control behavior, and reduced-motion support.
 - Preserve Light, Dark, and System appearance on every page and dialog. Theme changes must not affect project or renderer data.
 - Settings section links must support direct URLs, refresh, and Back/Forward. Appearance offers Light/Dark/System cards. Outro Library/Create/Video Editor controls must preserve these themes, keyboard operation, focus visibility, and reduced motion; verify library/Create layout at documented widths.

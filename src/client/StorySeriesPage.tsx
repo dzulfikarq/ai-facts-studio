@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, BookOpen, ChevronRight, Clapperboard, Clock3, FileText, Film, ImagePlus, Layers3, Palette, Plus, Sparkles, Upload } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronRight, Clock3, FileText, Film, ImagePlus, Layers3, Palette, Play, Plus, Sparkles, Upload } from "lucide-react";
 import type { AppRoute } from "./routes";
 import { appRouteHref } from "./routes";
 import { initialStorySource, StoryGenerationStart, StoryGenerationWorkspace } from "./StoryGenerationPage";
@@ -194,8 +194,11 @@ export function StorySeriesPage({ route, busy: appBusy, onNavigate, onOpenProjec
   const parsedPackage = parsed?.success ? parsed.data : null;
   const preset = ANIMATION_STYLE_PRESETS.find((item) => item.id === sourcePreview.animationStyleId);
   return <section className="page layout-container series-page series-index-page">
-    <header className="series-hero"><div className="series-hero-copy"><span className="eyebrow">FICTION PRODUCTION</span><h1>Story Series</h1><p>Analisis, episode plan, dan Story Bible untuk memproduksi series fiksi dengan bantuan AI.</p></div><div className="series-hero-art" aria-hidden="true"><Clapperboard/><Sparkles className="series-hero-spark series-hero-spark-one"/><Sparkles className="series-hero-spark series-hero-spark-two"/></div></header>
-    <div className="series-mode-switch" role="group" aria-label="Pilih cara membuat Story Series"><button type="button" aria-pressed={createMode === "story"} className={createMode === "story" ? "selected" : ""} onClick={() => setCreateMode("story")}><Sparkles aria-hidden="true" size={17}/>Generate from Story</button><button type="button" aria-pressed={createMode === "json"} className={createMode === "json" ? "selected" : ""} onClick={() => setCreateMode("json")}><FileText aria-hidden="true" size={17}/>Import JSON</button></div>
+    <div className="series-hero-banner">
+      <header className="series-hero"><div className="series-hero-copy"><span className="eyebrow">FICTION PRODUCTION</span><h1>Story Series</h1><p>Analisis, episode plan, dan Story Bible untuk memproduksi series fiksi dengan bantuan AI.</p></div></header>
+      <div className="series-hero-art" aria-hidden="true"><div className="series-clapperboard"><span className="series-clapperboard-top"/><span className="series-clapperboard-body"><Play size={32} fill="currentColor"/></span></div><Sparkles className="series-hero-spark series-hero-spark-one"/><Sparkles className="series-hero-spark series-hero-spark-two"/></div>
+      <div className="series-mode-switch" role="group" aria-label="Pilih cara membuat Story Series"><button type="button" aria-pressed={createMode === "story"} className={createMode === "story" ? "selected" : ""} onClick={() => setCreateMode("story")}><Sparkles aria-hidden="true" size={17}/>Generate from Story</button><button type="button" aria-pressed={createMode === "json"} className={createMode === "json" ? "selected" : ""} onClick={() => setCreateMode("json")}><FileText aria-hidden="true" size={17}/>Import JSON</button></div>
+    </div>
     {route.slug && <div className="workflow-alert success" role="status">Lanjutkan series <strong>{route.slug}</strong>: unggah JSON episode berikutnya dengan Story Bible yang sama.</div>}
     {error && <p className="workflow-alert danger" role="alert">{error}</p>}{notice && <p className="workflow-alert success" role="status">{notice}</p>}
     <div className="series-dashboard-grid">

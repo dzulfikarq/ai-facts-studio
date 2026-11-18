@@ -899,13 +899,12 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 .series-main-area { min-width: 0; background: linear-gradient(180deg, color-mix(in srgb,var(--primary-soft) 36%,var(--background)) 0, var(--background) 280px); }
 .series-app-shell .series-topbar { min-height: 60px; padding-block: 8px; border-bottom-color: color-mix(in srgb,var(--primary) 10%,var(--border)); background: color-mix(in srgb,var(--surface) 90%,transparent); box-shadow: none; }
 .series-index-page { gap: 13px; }
-.series-hero-banner { position: relative; isolation: isolate; display: grid; justify-items: start; gap: 13px; min-height: 154px; overflow: hidden; box-sizing: border-box; padding: 15px 0 17px; border-radius: 16px; background: linear-gradient(112deg,color-mix(in srgb,var(--primary-soft) 44%,var(--surface)) 0%,color-mix(in srgb,var(--primary-soft) 58%,var(--surface)) 57%,color-mix(in srgb,var(--primary-soft) 77%,var(--surface)) 100%); }
+.series-hero-banner { position: relative; isolation: isolate; display: grid; justify-items: start; gap: 13px; min-height: 154px; overflow: hidden; box-sizing: border-box; padding: 0 0 17px; border-radius: 16px; background: linear-gradient(112deg,color-mix(in srgb,var(--primary-soft) 44%,var(--surface)) 0%,color-mix(in srgb,var(--primary-soft) 58%,var(--surface)) 57%,color-mix(in srgb,var(--primary-soft) 77%,var(--surface)) 100%); }
 .series-hero-banner::before,.series-hero-banner::after { position: absolute; z-index: -1; border-radius: 50%; content: ""; pointer-events: none; }
 .series-hero-banner::before { top: -142px; right: 3%; width: 58%; height: 260px; background: color-mix(in srgb,var(--surface) 45%,transparent); transform: rotate(-17deg); }
 .series-hero-banner::after { right: -8%; bottom: -156px; width: 63%; height: 260px; background: color-mix(in srgb,var(--primary-soft) 67%,transparent); transform: rotate(-17deg); }
 .series-hero { position: relative; z-index: 1; display: block; min-width: 0; padding: 0; border: 0; background: transparent; }
 .series-hero-copy { display: grid; gap: 1px; min-width: 0; }
-.series-hero .eyebrow { color: var(--primary-text); font-size: 11px; font-weight: 750; letter-spacing: .025em; }
 .series-hero p { max-width: min(700px,calc(100% - 170px)); margin: 0; color: var(--text-secondary); font-size: var(--font-size-body); line-height: 1.6; }
 .series-hero-art { position: absolute; top: 10px; right: clamp(28px,8%,112px); z-index: 0; display: grid; place-items: center; width: 148px; height: 104px; color: var(--primary); transform: rotate(6deg); }
 .series-clapperboard { position: relative; width: 120px; height: 94px; filter: drop-shadow(0 7px 8px color-mix(in srgb,var(--primary) 24%,transparent)); }
@@ -1015,7 +1014,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
 }
 @media (max-width: 700px) {
   .series-index-page { gap: 13px; }
-  .series-hero-banner { min-height: 154px; gap: 12px; padding: 15px 0 17px; }
+  .series-hero-banner { min-height: 154px; gap: 12px; padding: 0 0 17px; }
   .series-hero-copy { max-width: calc(100% - 78px); }
   .series-hero-art { top: 16px; right: 12px; width: 76px; height: 68px; opacity: .34; }
   .series-clapperboard { transform: scale(.58); }
@@ -1032,7 +1031,7 @@ body { min-width: 320px; background: var(--background); color: var(--text-primar
   .app-sidebar-link svg { width: 16px; height: 16px; }
   .sidebar-app-shell .topbar { min-height: 44px; }
   .series-index-page { gap: 12px; }
-  .series-hero-banner { min-height: 164px; gap: 11px; padding: 14px 0; }
+  .series-hero-banner { min-height: 164px; gap: 11px; padding: 0 0 14px; }
   .series-hero p { max-width: 100%; }
   .series-hero-copy { max-width: calc(100% - 86px); }
   .series-hero-art { top: 38px; right: 28px; width: 78px; height: 68px; opacity: .42; }

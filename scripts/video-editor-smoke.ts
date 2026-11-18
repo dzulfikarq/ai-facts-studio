@@ -153,6 +153,16 @@ try {
   assert.equal(await page.evaluate(() => document.querySelector(".topbar-context-copy strong")?.textContent?.trim()), "Dashboard", "top bar identifies current page");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link:last-child")?.disabled), true, "unavailable Help & Support is not a fake live route");
   assert.equal(await page.evaluate(() => Boolean(document.querySelector(".app-sidebar-quota"))), true, "sidebar shows live render quota card");
+  const dashboardHeadingBaseline = await page.evaluate(() => {
+    const page = document.querySelector<HTMLElement>(".page.layout-container")!;
+    const heading = document.querySelector<HTMLElement>(".dashboard-heading")!;
+    const eyebrow = getComputedStyle(heading.querySelector<HTMLElement>(".eyebrow")!);
+    const rect = heading.getBoundingClientRect();
+    return {
+      topOffset: rect.top - page.getBoundingClientRect().top,
+      eyebrow: { fontSize: eyebrow.fontSize, fontWeight: eyebrow.fontWeight, letterSpacing: eyebrow.letterSpacing, lineHeight: eyebrow.lineHeight },
+    };
+  });
   await page.goto({ url: `${viteUrl}/?section=queue`, timeout: 90_000 });
   await waitFor(() => page.evaluate(() => document.querySelector(".dashboard-page h1")?.textContent === "Video Queue"), "Video Queue dashboard filter");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Video Queue", "Video Queue highlights its sidebar item");
@@ -185,7 +195,20 @@ try {
     return Math.round(metrics[1]!.left - metrics[0]!.right);
   });
   assert.ok(estimateMetricGap >= 8, `production estimate cards have visible spacing: ${estimateMetricGap}px`);
-  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).paddingTop), "38px", "Story Series top spacing matches shared desktop page spacing");
+  const seriesHeadingMetrics = await page.evaluate(() => {
+    const page = document.querySelector<HTMLElement>(".series-index-page")!;
+    const banner = document.querySelector<HTMLElement>(".series-hero-banner")!;
+    const copy = document.querySelector<HTMLElement>(".series-hero-copy")!;
+    const eyebrow = getComputedStyle(copy.querySelector<HTMLElement>(".eyebrow")!);
+    return {
+      topOffset: copy.getBoundingClientRect().top - page.getBoundingClientRect().top,
+      pagePaddingTop: parseFloat(getComputedStyle(page).paddingTop),
+      bannerPaddingTop: parseFloat(getComputedStyle(banner).paddingTop),
+      eyebrow: { fontSize: eyebrow.fontSize, fontWeight: eyebrow.fontWeight, letterSpacing: eyebrow.letterSpacing, lineHeight: eyebrow.lineHeight },
+    };
+  });
+  assert.ok(Math.abs(seriesHeadingMetrics.topOffset - dashboardHeadingBaseline.topOffset) < 0.1, `Story Series heading starts at same top position as Dashboard: ${JSON.stringify({ series: seriesHeadingMetrics, dashboard: dashboardHeadingBaseline })}`);
+  assert.deepEqual(seriesHeadingMetrics.eyebrow, dashboardHeadingBaseline.eyebrow, "Story Series eyebrow uses shared page typography");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>('.series-mode-switch button[aria-pressed="true"]')?.textContent?.includes("Generate from Story")), true, "Generate from Story remains active default mode");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".series-dashboard-aside > .series-panel").length), 3, "drafts, library, and live estimate occupy right dashboard column");
   assert.equal(await page.evaluate(() => document.querySelector<HTMLButtonElement>(".app-sidebar-link.active")?.textContent?.trim()), "Story Series", "Story Series highlights its global sidebar item");
@@ -226,11 +249,16 @@ try {
       innerWidth: window.innerWidth,
       columns: getComputedStyle(document.querySelector<HTMLElement>(".series-dashboard-grid")!).gridTemplateColumns.split(" ").length,
       gutters: [parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).marginLeft), parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).marginRight)],
+      headingTopOffset: document.querySelector<HTMLElement>(".series-hero-copy")!.getBoundingClientRect().top - document.querySelector<HTMLElement>(".series-index-page")!.getBoundingClientRect().top,
+      pagePaddingTop: parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".series-index-page")!).paddingTop),
+      bannerPaddingTop: parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".series-hero-banner")!).paddingTop),
       expectedGutter: Math.min(56, Math.max(18, window.innerWidth * 0.04)),
     }));
     assert.equal(layout.scrollWidth <= width, true, `Story Series dashboard has no horizontal overflow at ${width}px: ${JSON.stringify(layout)}`);
     assert.equal(layout.columns, width <= 1024 ? 1 : 2, `Story Series dashboard uses expected columns at ${width}px`);
     assert.ok(layout.gutters.every((gutter) => Math.abs(gutter - layout.expectedGutter) < 0.1), `Story Series uses shared page gutters at ${width}px: ${JSON.stringify(layout)}`);
+    assert.ok(Math.abs(layout.headingTopOffset - layout.pagePaddingTop) < 0.1, `Story Series heading aligns to shared page top spacing at ${width}px: ${JSON.stringify(layout)}`);
+    assert.equal(layout.bannerPaddingTop, 0, `Story Series banner adds no extra top inset at ${width}px`);
     if (width === 375) {
       const illustration = await page.evaluate(() => {
         const banner = document.querySelector<HTMLElement>(".series-hero-banner")!.getBoundingClientRect();
